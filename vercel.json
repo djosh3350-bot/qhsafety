@@ -1,0 +1,7 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/OneSignalSDKWorker.js", "destination": "/public/OneSignalSDKWorker.js" },
+    { "source": "/OneSignalSDKUpdaterWorker.js", "destination": "/public/OneSignalSDKUpdaterWorker.js" }
+  ]
+}

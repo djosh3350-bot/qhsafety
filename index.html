@@ -1,0 +1,2548 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QHsafety</title>
+ 
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<script>
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    await OneSignal.init({
+      appId: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
+      notifyButton: { enable: false },
+      allowLocalhostAsSecureOrigin: true,
+    });
+  });
+</script>
+  <style>
+      .guidance-high-risk {
+      box-shadow: 0 0 20px rgba(239,83,80,0.9), 0 0 0 2px #ef5350;
+      border: 2px solid #ef5350 !important;
+      animation: pulseRed 1.5s ease-in-out infinite;
+    }
+    .guidance-high-priority {
+      box-shadow: 0 0 18px rgba(239,83,80,0.8), 0 0 0 2px #ef5350;
+      border: 2px solid #ef5350 !important;
+      animation: pulseRed 1.8s ease-in-out infinite;
+    }
+    .guidance-medium-risk {
+      box-shadow: 0 0 14px rgba(255,152,0,0.7), 0 0 0 2px #ff9800;
+      border: 2px solid #ff9800 !important;
+      animation: pulseOrange 2s ease-in-out infinite;
+    }
+    .guidance-critical {
+      box-shadow: 0 0 28px rgba(239,83,80,1), 0 0 0 3px #ef5350;
+      border: 3px solid #ef5350 !important;
+      animation: pulseRed 0.9s ease-in-out infinite;
+    }
+    @keyframes pulseRed {
+      0%   { box-shadow: 0 0 8px rgba(239,83,80,0.4), 0 0 0 2px #ef5350; }
+      50%  { box-shadow: 0 0 28px rgba(239,83,80,1),  0 0 0 2px #ef5350; }
+      100% { box-shadow: 0 0 8px rgba(239,83,80,0.4), 0 0 0 2px #ef5350; }
+    }
+    @keyframes pulseOrange {
+      0%   { box-shadow: 0 0 6px rgba(255,152,0,0.4), 0 0 0 2px #ff9800; }
+      50%  { box-shadow: 0 0 20px rgba(255,152,0,0.9), 0 0 0 2px #ff9800; }
+      100% { box-shadow: 0 0 6px rgba(255,152,0,0.4), 0 0 0 2px #ff9800; }
+    }
+    html, body { margin:0; padding:0; height:100%; width:100%; font-family:'DM Sans',sans-serif; box-sizing:border-box; }
+    #app { height:100%; width:100%; }
+    * { box-sizing:border-box; }
+    .grid-bg {
+      background-color:#f8f6f1;
+      background-image:linear-gradient(rgba(0,0,0,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,0,0,.04) 1px,transparent 1px);
+      background-size:24px 24px;
+    }
+    .highlight-yellow { background:linear-gradient(180deg,transparent 55%,#fff176 55%); }
+    .highlight-cyan   { background:linear-gradient(180deg,transparent 55%,#80deea 55%); }
+    .sidebar-item { transition:all 0.2s; }
+    .sidebar-item:hover, .sidebar-item.active { background:rgba(255,238,88,0.15); color:#ffee58; border-left:3px solid #ffee58; }
+    .card-hover { transition:transform 0.2s,box-shadow 0.2s; }
+    .card-hover:hover { transform:translateY(-2px); box-shadow:0 8px 24px rgba(0,0,0,.1); }
+    .fade-in { animation:fadeIn 0.4s ease; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    .mobile-bottom-nav {
+      position:fixed; bottom:0; left:0; right:0; height:64px; background:#2c3e50;
+      display:flex; align-items:center; justify-content:space-around; z-index:100;
+      padding-bottom:env(safe-area-inset-bottom); box-shadow:0 -2px 12px rgba(0,0,0,0.18);
+    }
+    .mobile-bottom-nav button {
+      flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      background:none; border:none; cursor:pointer; padding:6px 0; color:#ffffff66;
+      font-size:10px; font-family:'DM Sans',sans-serif; transition:color 0.2s;
+    }
+    .mobile-bottom-nav button.active { color:#ffee58; }
+    .mobile-bottom-nav button svg { width:22px; height:22px; }
+    .mobile-topbar {
+      position:sticky; top:0; z-index:90; background:#2c3e50;
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 16px; box-shadow:0 2px 8px rgba(0,0,0,0.15);
+    }
+    .drawer-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:200; opacity:0; pointer-events:none; transition:opacity 0.25s; }
+    .drawer-overlay.open { opacity:1; pointer-events:all; }
+    .drawer-panel { position:fixed; top:0; left:0; bottom:0; width:260px; background:#2c3e50; z-index:201; transform:translateX(-100%); transition:transform 0.28s cubic-bezier(0.4,0,0.2,1); display:flex; flex-direction:column; }
+    .drawer-panel.open { transform:translateX(0); }
+    .mobile-main { padding-bottom:calc(64px + env(safe-area-inset-bottom)); }
+    @media (min-width:768px) { .mobile-bottom-nav{display:none} .mobile-topbar{display:none} .drawer-overlay{display:none} .mobile-main{padding-bottom:0} }
+
+    #qh-modal-overlay {
+    position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;
+    display:flex;align-items:center;justify-content:center;padding:24px;
+    opacity:0;pointer-events:none;transition:opacity 0.2s;
+  }
+  #qh-modal-overlay.open { opacity:1;pointer-events:all; }
+  #qh-modal-box {
+    background:#fff;border-radius:20px;padding:32px;max-width:420px;width:100%;
+    box-shadow:0 24px 48px rgba(0,0,0,0.22);transform:scale(0.95);
+    transition:transform 0.2s;position:relative;
+  }
+  #qh-modal-overlay.open #qh-modal-box { transform:scale(1); }
+  .qh-modal-icon { width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px; }
+  .qh-modal-title { font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:#2c3e50; }
+  .qh-modal-body { font-size:14px;text-align:center;color:#5a6a7a;line-height:1.6;margin-bottom:24px; }
+  .qh-modal-input { width:100%;padding:12px 14px;border:2px solid #e0e0e0;border-radius:10px;font-size:15px;margin-bottom:20px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color 0.2s; }
+  .qh-modal-input:focus { border-color:#ef5350; }
+  .qh-modal-btns { display:flex;gap:10px;justify-content:center; }
+  .qh-modal-btn { flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all 0.15s; }
+  .qh-modal-btn:active { transform:scale(0.97); }
+  .qh-modal-btn-primary { background:#ef5350;color:#fff; }
+  .qh-modal-btn-primary:hover { background:#c62828; }
+  .qh-modal-btn-success { background:#66bb6a;color:#fff; }
+  .qh-modal-btn-success:hover { background:#388e3c; }
+  .qh-modal-btn-secondary { background:#f0f0f0;color:#5a6a7a; }
+  .qh-modal-btn-secondary:hover { background:#e0e0e0; }
+  
+.rounded-3xl { border-radius: 24px; }
+
+.card-hover:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+}
+
+button {
+  transition: all 0.2s ease;
+}
+
+button:active {
+  transform: scale(0.97);
+}
+  </style>
+</head>
+<body class="h-full w-full overflow-auto">
+  <!-- Custom Modal -->
+  <div id="qh-modal-overlay">
+    <div id="qh-modal-box">
+      <div class="qh-modal-icon" id="qh-modal-icon-wrap"></div>
+      <div class="qh-modal-title" id="qh-modal-title"></div>
+      <div class="qh-modal-body" id="qh-modal-body"></div>
+      <input class="qh-modal-input" id="qh-modal-input" style="display:none" placeholder="Type DELETE to confirm" />
+      <div class="qh-modal-btns" id="qh-modal-btns"></div>
+    </div>
+  </div>
+  <div id="app" class="h-full w-full"></div>
+  <script>
+    
+    const firebaseConfig = {
+      apiKey:"AIzaSyD4N8D_FT_Oy8umm_79tQJiy24uWxbJ_KA",
+      authDomain:"qhsafety-57c55.firebaseapp.com",
+      databaseURL:"https://qhsafety-57c55-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:"qhsafety-57c55",
+      storageBucket:"qhsafety-57c55.firebasestorage.app",
+      messagingSenderId:"666664597822",
+      appId:"1:666664597822:web:92f3f430aff2e20e49946f",
+      measurementId:"G-C11871B9MR"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db   = firebase.firestore();
+
+    // ── EMAILJS CONFIG ──
+    // Set up: https://www.emailjs.com  → create account → add Gmail service → create templates
+    const EJS = {
+  publicKey: 'UTo3HGspnevn_DA4e',
+  serviceId: 'service_abcgxwe',
+  studentNotifyTemplate: 'template_4682uol',
+  guidanceAlertTemplate: 'template_schi35q',
+  // Your provided Gmail for High-Risk alerts
+  guidanceEmail: 'djosh3350@gmail.com' 
+};
+  
+
+    // Initialize EmailJS
+    (function() {
+      try { emailjs.init(EJS.publicKey); } catch(e) { console.warn('EmailJS not initialized:', e); }
+    })();
+
+    // Send email via EmailJS (graceful — never crashes the app)
+    async function sendEmail(templateId, params) {
+      try {
+        if (!EJS.publicKey || EJS.publicKey === 'YOUR_EMAILJS_PUBLIC_KEY') {
+          console.warn('[QHsafety] EmailJS not configured. Set EJS keys to enable notifications.');
+          return;
+        }
+        await emailjs.send(EJS.serviceId, templateId, params);
+      } catch(e) {
+        console.warn('[QHsafety] Email notification failed (non-critical):', e);
+      }
+    }
+
+    // Notify student by email when guidance replies to their posting
+    async function notifyStudentOfGuidanceReply(studentEmail, postTitle, message) {
+      if (!studentEmail || studentEmail === 'Anonymous' || studentEmail.startsWith('anon_')) return;
+      await sendEmail(EJS.studentNotifyTemplate, {
+        to_email:    studentEmail,
+        to_name:     studentEmail.split('@')[0],
+        post_title:  postTitle,
+        guidance_message: message,
+        app_url:     window.location.href,
+        sent_at:     new Date().toLocaleString(),
+      });
+    }
+
+    // Notify student by email when guidance replies in their consultation chat
+    async function notifyStudentOfConsultationReply(studentEmail, consultReason, message) {
+      if (!studentEmail || studentEmail === 'Anonymous' || studentEmail.startsWith('anon_')) return;
+      await sendEmail(EJS.studentNotifyTemplate, {
+        to_email:    studentEmail,
+        to_name:     studentEmail.split('@')[0],
+        post_title:  `Consultation: ${consultReason}`,
+        guidance_message: message,
+        app_url:     window.location.href,
+        sent_at:     new Date().toLocaleString(),
+      });
+    }
+
+    // Notify guidance Gmail when a truly High AI-risk item is submitted
+    async function notifyGuidanceOfHighRisk(type, authorEmail, reason, description, aiScore, riskLevel, reasons) {
+      await sendEmail(EJS.guidanceAlertTemplate, {
+        to_email:    EJS.guidanceEmail,
+        to_name:     'Guidance Counselor',
+        alert_type:  type,       // 'Posting' or 'Consultation'
+        author:      authorEmail,
+        reason:      reason,
+        description: description,
+        ai_score:    aiScore,
+        risk_level:  riskLevel,
+        risk_reasons: (reasons || []).join(', '),
+        app_url:     window.location.href,
+        sent_at:     new Date().toLocaleString(),
+      });
+    }
+
+    const defaultConfig = {
+      hero_title:'QHsafety', hero_subtitle:'Protecting Quirino High School Students',
+      welcome_text:'Welcome Back', background_color:'#f8f6f1', surface_color:'#ffffff',
+      text_color:'#2c3e50', primary_action_color:'#ffee58', secondary_action_color:'#80deea',
+      font_family:'DM Sans', font_size:16
+    };
+    let config = {...defaultConfig};
+    let currentRole=null, currentUserEmail='', activeSidebarItem='Dashboard', darkMode=false, showCreateGuidanceForm=false;
+    let postings=[], showPostingForm=false, postingTitle='', postingContent='', postingError='', postingPriority='Medium';
+    let consultationPostings=[], showConsultationForm=false, consultationReason='', consultationDescription='', consultationPriority='Medium', consultationError='', consultationGradeLevel='';
+    let postingChatDraft={}, consultationChatDraft={}, expandedPost=null, expandedConsult=null;
+    let feedbackList=[], showFeedbackForm=false, feedbackRating=5, feedbackMessage='', feedbackError='';
+    let systemLogs=[], logFilter='all', postingSearchQuery='', mobileDrawerOpen=false;
+    let loginEmail='', loginPassword='', loginError='', isAuthenticated=false, selectedRoleForLogin=null;
+    let currentAuthFlow='login', signupEmail='', signupPassword='', signupConfirmPassword='', signupError='';
+    let showLandingSettings=false, showForgotPassword=false, forgotPasswordEmail='', forgotPasswordError='', forgotPasswordSuccess='';
+    let firestoreUnsubscribes=[];
+    let isAnonymous=false;
+    let appLang = localStorage.getItem('qh_lang') || 'en';
+    const app=document.getElementById('app');
+
+    const T = {
+      en: {
+        postings:'Postings', consultations:'Consultations', feedback:'Feedback',
+        settings:'Settings', dashboard:'Dashboard', problems:'Problems', logs:'Logs', users:'Users',
+        newPosting:'New Posting', newConsultation:'Request Consultation', leaveFeedback:'Leave Feedback',
+        publish:'Publish', cancel:'Cancel', submit:'Submit', delete:'Delete',
+        title:'Title', content:'Content', priority:'Priority Level', search:'Search postings...',
+        low:'Low', medium:'Medium', high:'High',
+        postGuide:'📋 <strong>Posting Guide:</strong> Share what you\'re going through honestly. You can post anonymously. The guidance office may reply with support directly on your post.',
+        noPostings:'No postings yet', noConsultations:'No consultations yet', noFeedback:'No feedback yet',
+        by:'By', markResolved:'Mark Resolved', markDone:'Mark Done',
+        appearance:'Appearance', darkMode:'Dark Mode', language:'Language', account:'Account',
+        logout:'Logout', leaveAnon:'Leave Anonymous Session',
+        welcomeBack:'Welcome Back', student:'Student', counselor:'Counselor', admin:'Administrator',
+        yourPosts:'Your posts', totalPosted:'Total posted', yourRequests:'Your requests',
+        totalRequests:'Total requests', yourFeedback:'Your feedback', totalFeedback:'Total submitted',
+        needAttention:'Need attention', welcomeMsg:'Welcome to QHsafety',
+        dashHint_student:'Submit postings, request consultations, and leave feedback.',
+        dashHint_guidance:'Monitor student postings, manage consultations, and review feedback.',
+        dashHint_admin:'View feedback, logs, and manage settings.',
+        guidanceReply:'Reply to this posting:', send:'Send',
+        msgFromGuidance:'💬 Message from Guidance Office',
+        reason:'Reason / Topic', descConcern:'Describe your concern in detail...',
+        submitRequest:'Submit Request', resolved:'✅ Resolved',
+        rating:'Rating', writeFeedback:'Write your feedback...',
+        deleteAllPostings:'Delete All Postings', deleteAllConsult:'Delete All Consultations', deleteAllFeedback:'Delete All Feedback',
+        signedInAs:'Signed in as Anonymous',
+        anonNote:'You are browsing anonymously. Your identity is not saved. Return on the same device to see your posts.',
+        loggedInAs:'Logged in as',
+        selectRole:'Select your role to get started:',
+        continueAnon:'Continue Anonymously',
+        anonSubtext:'Anonymous users can post and consult without an account. Your identity stays hidden.',
+        howToUse:'How to Use', howToUseDesc:'Submit reports, book consultations, and track your sessions securely.',
+        termsPrivacy:'Terms & Privacy', termsDesc:'Your data stays confidential and is only accessible to authorized guidance staff.',
+        weCare:'We Care', weCareDesc:'Every report is reviewed. Every student matters. Help is always one click away.',
+        aboutMission:'About Our Mission',
+        aboutDesc:'Supporting Quirino High School students through accessible guidance consultations, safety reporting, and proactive mental health awareness.',
+        langSetting:'Language / Wika',
+        logs:'Logs', users:'Users', by:'By', markDone:'Mark Done',
+      },
+      tl: {
+        postings:'Mga Post', consultations:'Mga Konsultasyon', feedback:'Feedback',
+        settings:'Mga Setting', dashboard:'Dashboard', problems:'Mga Problema', logs:'Logs', users:'Mga User',
+        newPosting:'Bagong Post', newConsultation:'Humiling ng Konsultasyon', leaveFeedback:'Mag-iwan ng Feedback',
+        publish:'I-publish', cancel:'Kanselahin', submit:'Isumite', delete:'Burahin',
+        title:'Pamagat', content:'Nilalaman', priority:'Antas ng Prioridad', search:'Hanapin ang post...',
+        low:'Mababa', medium:'Katamtaman', high:'Mataas',
+        postGuide:'📋 <strong>Gabay sa Pag-post:</strong> Ibahagi ang iyong nararamdaman nang tapat. Maaari kang mag-post nang hindi nagpapakilala. Maaaring sumagot ang gabay ng paaralan dito.',
+        noPostings:'Wala pang mga post', noConsultations:'Wala pang konsultasyon', noFeedback:'Wala pang feedback',
+        by:'Ni', markResolved:'Markahan bilang Nalutas', markDone:'Tapos Na',
+        appearance:'Hitsura', darkMode:'Madilim na Mode', language:'Wika', account:'Account',
+        logout:'Mag-logout', leaveAnon:'Umalis sa Anonymous na Session',
+        welcomeBack:'Maligayang Pagbabalik', student:'Estudyante', counselor:'Counselor', admin:'Administrator',
+        yourPosts:'Iyong mga post', totalPosted:'Kabuuang nai-post', yourRequests:'Iyong mga kahilingan',
+        totalRequests:'Kabuuang kahilingan', yourFeedback:'Iyong feedback', totalFeedback:'Kabuuang isinumite',
+        needAttention:'Nangangailangan ng pansin', welcomeMsg:'Maligayang pagdating sa QHsafety',
+        dashHint_student:'Mag-post, humiling ng konsultasyon, at mag-iwan ng feedback.',
+        dashHint_guidance:'Subaybayan ang mga post ng estudyante, pamahalaan ang mga konsultasyon.',
+        dashHint_admin:'Tingnan ang feedback, logs, at pamahalaan ang mga setting.',
+        guidanceReply:'Sumagot sa post na ito:', send:'Ipadala',
+        msgFromGuidance:'💬 Mensahe mula sa Gabay ng Paaralan',
+        reason:'Dahilan / Paksa', descConcern:'Ilarawan ang iyong alalahanin nang detalyado...',
+        submitRequest:'Isumite ang Kahilingan', resolved:'✅ Nalutas',
+        rating:'Rating', writeFeedback:'Isulat ang iyong feedback...',
+        deleteAllPostings:'Burahin Lahat ng Post', deleteAllConsult:'Burahin Lahat ng Konsultasyon', deleteAllFeedback:'Burahin Lahat ng Feedback',
+        signedInAs:'Naka-sign in bilang Anonymous',
+        anonNote:'Nagba-browse ka nang hindi nagpapakilala. Hindi nase-save ang iyong pagkakakilanlan. Bumalik sa parehong device para makita ang iyong mga post.',
+        loggedInAs:'Naka-login bilang',
+        selectRole:'Piliin ang iyong papel para magsimula:',
+        continueAnon:'Magpatuloy nang Anonymous',
+        anonSubtext:'Maaaring mag-post at kumonsulta ang mga anonymous user nang walang account. Nananatiling nakatago ang iyong pagkakakilanlan.',
+        howToUse:'Paano Gamitin', howToUseDesc:'Mag-submit ng ulat, mag-book ng konsultasyon, at subaybayan ang iyong mga session.',
+        termsPrivacy:'Mga Tuntunin at Privacy', termsDesc:'Ang iyong data ay kumpidensyal at accessible lamang ng mga awtorisadong tauhan ng gabay.',
+        weCare:'Nagmamalasakit Kami', weCareDesc:'Ang bawat ulat ay sinusuri. Mahalaga ang bawat estudyante. Laging isang click lang ang tulong.',
+        aboutMission:'Tungkol sa Aming Misyon',
+        aboutDesc:'Sinusuportahan ang mga estudyante ng Quirino High School sa pamamagitan ng accessible na gabay, pag-uulat ng kaligtasan, at kamalayan sa mental health.',
+        langSetting:'Language / Wika',
+        logs:'Mga Log', users:'Mga User',
+      }
+    };
+    function tr(key) { return (T[appLang]||T.en)[key] || T.en[key] || key; }
+
+    // This is the "Brain" of your app
+async function handleStudentReport(reportText) {
+    
+    // 1. Check for problems (The "Judge")
+    const isHighRisk = checkRiskLevel(reportText); 
+
+    if (isHighRisk === true) {
+        // 2. ONLY IF there is a problem, the notification starts!
+        console.log("Problem detected! Notifying Guidance...");
+        
+        const title = "🚨 Urgent: High Risk Report";
+        const message = "A student just submitted a high-risk report. Check the dashboard.";
+        
+        // This is where your OneSignal function is called
+        await sendOneSignalPush(title, message);
+    } else {
+        // No notification if everything is okay
+        console.log("Report received. No high risk detected.");
+    }
+}
+  
+  
+  
+    // ── ADVANCED AI RISK DETECTION (Claude API + Regex fallback) ──
+
+// Claude API-powered risk analysis — returns same shape as detectRisk
+async function detectRiskAI(text) {
+  try {
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 1800) })
+    });
+    const data = await response.json();
+    const raw = (data.content || []).map(i => i.text || '').join('').replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(raw);
+    // Validate shape
+    if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
+      return parsed;
+    }
+  } catch(e) {
+    console.warn('[QHsafety] AI risk detection fallback to regex:', e);
+  }
+  // Fallback to regex-based detection
+  return detectRiskRegex(text);
+}
+
+// The original regex engine — used as fallback when API is unavailable
+function detectRisk(text) {
+  return detectRiskRegex(text);
+}
+
+function detectRiskRegex(text) {
+  if (!text) return { score: 0, level: "Low", flagged: false, reasons: [] };
+
+  const t = text.toLowerCase().trim();
+  let score = 0;
+  let reasons = [];
+
+  // === HIGH RISK: Direct suicidal / homicidal intent ===
+  const highRiskPatterns = [
+    // English — suicidal
+    /i want to (hurt|kill|die|end it|hurt myself|kill myself|commit suicide)/i,
+    /i (will|gonna|going to) (kill myself|hurt myself|die|end it all|take my life)/i,
+    /i feel like (hurting|killing) myself/i,
+    /i (might|should|could) (hurt|kill) myself/i,
+    /i can't (take|handle|do) this (anymore|no more)/i,
+    /i want to (disappear|not exist|be gone|cease to exist)/i,
+    /better off (dead|without me|gone)/i,
+    /no (point|reason|purpose) in (living|life|continuing)/i,
+    /i('m| am) done (with life|living|with everything)/i,
+    /please (just let me die|kill me|end my life)/i,
+    /i wish i (was|were|am) dead/i,
+    /i don't want to (be here|exist|live|wake up) anymore/i,
+    /end (it all|my life|my suffering|my pain|everything)/i,
+    /just (kill me|let me die|end it|make it stop)/i,
+    /i('ve| have) been (thinking about|considering|planning) (suicide|killing myself|ending my life)/i,
+    /what('s| is) the point (of|in) (living|going on|continuing)/i,
+    /i (can't|cannot) keep (going|living|doing this)/i,
+    /tired of (being alive|living|everything|waking up)/i,
+    /no (one|reason) to (live|go on|stay)/i,
+    /maybe (i should|it would be better if i) (just die|not wake up|disappear)/i,
+    /i don't (deserve|want) to (be alive|live|exist)/i,
+    /cutting (myself|my wrists|my arms|my skin)/i,
+    /i (have been|been) (cutting|burning|hurting|harming) (myself|my body)/i,
+    /marks (on|all over) (my arms|my wrists|my body|my legs)/i,
+    /self(-)?(harm|harming|injury|injuring)/i,
+
+    // Tagalog — direct suicidal / wanting to die
+    /magp(a)?pakamatay (na)? ako/i,
+    /magpapatiwakal (na)? ako/i,
+    /papatayin ko (na)? (ang)? sarili ko/i,
+    /patayin (nyo|mo|na lang|ninyo|kayo) (na)? ako/i,
+    /gusto ko(ng)? (na)? (mamatay|magpakamatay|patayin ang sarili)/i,
+    /mamatay (na)? ako (sana|na lang|na)/i,
+    /sana (mamatay|patay|wala) na (ako|lang ako)/i,
+    /patay (na)? (sana)? ako/i,
+    /ayaw ko na(ng)? (mabuhay|ng buhay|umiral)/i,
+    /mas (mabuti|mainam|maganda|mabuti pa) (kung)? (patay|wala na|hindi na umiral) (na)? ako/i,
+    /wala nang (saysay|kwenta|dahilan) (para)? (mabuhay|sa buhay ko)/i,
+    /tapos na ako (sa buhay|sa lahat|na)/i,
+    /gusto ko(ng)? (maglaho|mawala na|hindi na umiral|mawala)/i,
+    /sawa na ako sa (buhay|lahat|mundo)/i,
+    /hindi ko na (kaya|kayang tiisin|kayang harapin) (ang)? (buhay|lahat|ito)/i,
+    /tulungan (nyo|mo|ninyo) (na)? akong (mamatay|magpakamatay)/i,
+    /gusto ko(ng)? (masaktan|patayin) (ang)? sarili ko/i,
+    /(sasaktan|papatayin|susugatan) ko (ang)? sarili ko/i,
+    /pakiramdam ko(ng)? gusto ko(ng)? (mamatay|masaktan ang sarili|mawala)/i,
+    /wala na(ng)? dahilan para (mabuhay|magpatuloy)/i,
+    /hindi na (ako)? (babalik|magpapatuloy|magigising)/i,
+    /ito na (ang)? (huli|katapusan|wakas) (ko|ng buhay ko)/i,
+
+    // Tagalog — asking others to harm them
+    /patayin (na)? (nyo|mo|ninyo) (na)? ako/i,
+    /saktan (na)? (nyo|mo|ninyo) (na)? ako/i,
+    /tulungan (nyo|mo) akong (mamatay|mawala)/i,
+  ];
+
+  highRiskPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 8;
+      reasons.push("Direct self-harm / suicidal intent");
+    }
+  });
+
+  // === MEDIUM-HIGH: Planning, methods, or specific means ===
+  const planPatterns = [
+    // English
+    /how to (kill myself|hurt myself|commit suicide|overdose)/i,
+    /(pill|knife|rope|jump|cut|bleed|overdose|poison|gun|hang).*(myself|suicide|die)/i,
+    /i have (a plan|the means|everything ready|a way)/i,
+    /i('ve| have) been (cutting|hurting|harming) myself/i,
+    /taking (too many|a lot of|all my) (pills|tablets|meds)/i,
+
+    // Tagalog — method or means
+    /paano (magpakamatay|masaktan ang sarili|magpatiwakal|mamatay)/i,
+    /(tableta|kutsilyo|lubid|hagdan|tumalon|magpugo|dumugo|lason|baril|bibitay).*(sarili|pagpapakamatay|mamatay)/i,
+    /may (plano|paraan|gamit|handa) na ako (para mamatay|para magpakamatay)/i,
+    /bibigyan ko (ng wakas|ng katapusan) (ang)? (sarili|buhay) ko/i,
+    /iinom (ng maraming|lahat ng) (gamot|tableta|pills)/i,
+    /handa na (ako)? (para|na) (mamatay|magpakamatay)/i,
+    /gagawin ko (na)? (ito|ang plano ko)/i,
+    /(nagpuputol|nagsusugatsunog|nagsasaktan) (ako)? ng sarili (ko)?/i,
+  ];
+  planPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Possible plan or method");
+    }
+  });
+
+  // === EMOTIONAL DISTRESS ===
+  const distressPatterns = [
+    // English
+    /i (am|feel) (depressed|hopeless|worthless|empty|broken|numb|suicidal|devastated)/i,
+    /i hate (everything|my life|myself|being alive|this world)/i,
+    /i feel (lost|alone|trapped|overwhelmed|tired of everything|like a burden)/i,
+    /nobody (cares|understands|would miss me|loves me)/i,
+    /i('m| am) (falling apart|at my limit|on the edge|so tired|exhausted)/i,
+    /life is (pointless|meaningless|not worth it|too hard|unfair)/i,
+    /i (can't|cannot) (go on|continue|keep going|do this)/i,
+    /i feel like (a burden|nothing|nobody|invisible)/i,
+    /everything is (falling apart|too much|hopeless|pointless)/i,
+
+    // Tagalog — emotional distress / hopelessness
+    /pakiramdam ko(ng)? (depresado|walang pag-asa|walang kwenta|walang laman|sira|manhid|basura|pabigat)/i,
+    /kinasusuklaman ko (ang lahat|ang buhay ko|ang sarili ko|ang mabuhay|ang mundo)/i,
+    /pakiramdam ko(ng)? (nawawala|nag-iisa|nakulong|napalibutan|pagod na sa lahat|wala nang pag-asa)/i,
+    /walang (nagmamalasakit|nakakaunawa|makakapalad kung mawala ako|nagmamahal sa akin)/i,
+    /nasa (gilid|dulo|hangganan|labi) na ako/i,
+    /ang buhay (ko)? (ay)? (walang saysay|walang kabuluhan|hindi sulit|masyadong mahirap)/i,
+    /hindi ko na (makayanan|kakayanin) (ito|ang lahat|ang buhay)/i,
+    /pakiramdam ko(ng)? (pabigat|problema|sakit) (lang)? ako (sa lahat|sa mundo)/i,
+    /sobrang (lungkot|sakit|hirap|pagod) ko (na)? (sa buhay|sa lahat|na)/i,
+    /walang (mahal sa akin|nagpapahalaga sa akin|nagmamalasakit sa akin)/i,
+    /wala (akong)? (halaga|silbi|kwenta) (sa mundo|sa buhay|sa lahat)/i,
+    /pagod (na)? (na)? ako (sa buhay|sa lahat|sa mundo|sa pag-iral)/i,
+    /hindi ko na (kayang ituloy|kayang magpatuloy) (ang buhay|ito)/i,
+  ];
+  distressPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 3;
+      reasons.push("Emotional distress / hopelessness");
+    }
+  });
+
+  // === ADDICTION / SUBSTANCE ABUSE ===
+  const addictionPatterns = [
+    // English
+    /i (am|'m) (addicted|hooked|dependent) (on|to) (drugs|alcohol|substances|shabu|meth)/i,
+    /i (can't|cannot) stop (using|taking|drinking|smoking)/i,
+    /i (use|take|do) (drugs|shabu|meth|weed|alcohol) (every day|all the time|regularly)/i,
+    /i (need|crave) (drugs|alcohol|shabu|a fix|my fix)/i,
+    /been (using|on) (drugs|shabu|meth|substances) (for|since)/i,
+
+    // Tagalog — addiction
+    /adik (na)? (ako|na ako)/i,
+    /naka(-)?(adik|depende) (na)? ako (sa|kay)/i,
+    /gumagamit (na)? ako ng (droga|shabu|rugby|solvent|inhalant|alak|sigarilyo)/i,
+    /hindi ko na (mapigilan|mapigil|pigilan) (ang)? (paggamit|pag-inom|pagdadrug)/i,
+    /kailangan ko (ng|ang) (droga|shabu|fix|dose|gamot ko)/i,
+    /(nag-iinject|nag-iinom|nag-iinhale|gumagamit) (ako)? ng (droga|shabu|rugby)/i,
+    /(tulak|dealer|pushers?) (ako|siya|sila)/i,
+    /(nagbebenta|nagbibili) (ako)? ng (droga|shabu)/i,
+    /lagi (na)? (akong|ako) (high|lasing|drugged|naka-shabu)/i,
+    /ang (sarap|ganda|galing) ng (shabu|droga|rugby) (para sa akin)?/i,
+    /adik adik (na)? ako/i,
+  ];
+  addictionPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Substance use / addiction");
+    }
+  });
+
+  // === ABUSE / VIOLENCE / DANGER ===
+  const abusePatterns = [
+    // English
+    /i (am|'m) being (abused|beaten|hurt|harassed|molested|raped)/i,
+    /someone (is|has been) (hurting|abusing|threatening|hitting) me/i,
+    /(my parent|my father|my mother|my stepfather|my stepmother|someone) (hits|beats|hurts|abuses) me/i,
+    /i (was|got) (raped|molested|abused|assaulted|touched)/i,
+    /i (am|'m) (scared|afraid) (for my life|to go home|of him|of her|of them)/i,
+    /they (threatened|will hurt|are going to hurt) me/i,
+    /i (am|'m) in (danger|trouble|an abusive)/i,
+
+    // Tagalog — abuse / violence / danger
+    /(ginagabatan|niyayabang|binubugbog|sinasapak|sinisipa|tinatampal) (ako|niya|nila)/i,
+    /(sinasalakay|ginagahasa|nangha-harass|nang-aabuso) (ako|niya|nila)/i,
+    /natatakot (ako|na ako) (sa|kay) (tatay|nanay|stepfather|stepmother|kapitbahay|classmate|guro)/i,
+    /tinatakot (ako|niya|nila) (na|ng)/i,
+    /(binubugbog|sinasapak|sinisipa) (ako)? (ng|ni|nina) (tatay|nanay|kuya|ate|stepfather|stepmother)/i,
+    /naranasan ko (ang)? (pang-aabuso|panggagahasa|pananakit)/i,
+    /may (nangdadamot|nang-aabuso|nananakit|nangha-harass) sa akin/i,
+    /nangangamba (ako) (para sa buhay ko|na manakit sila sa akin)/i,
+    /ligtas (ba)? (ako|ba ako)/i,
+    /tulong (po|no)? may (nanakit|nangharang|nang-abuso) sa akin/i,
+  ];
+  abusePatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Possible abuse or danger");
+    }
+  });
+
+  // === BULLYING ===
+  const bullyingPatterns = [
+    // English
+    /i (am|'m) being (bullied|harassed|threatened|cyberbullied|targeted|humiliated)/i,
+    /they (keep|always|won't stop) (bullying|making fun of|threatening|humiliating|embarrassing|excluding) me/i,
+    /people (at school|online|in class|in my grade) (bully|harass|threaten|hurt|mock) me/i,
+    /(classmates?|schoolmates?|batchmates?|friends?) (are|keep) (bullying|threatening|hurting|excluding|mocking) me/i,
+    /someone (spread|is spreading) (rumors|lies|photos) (about me|of me)/i,
+    /(group chat|gc|group message) (is|was) (used to|bullying|humiliating|spreading) (me|against me)/i,
+    /they (post|posted|share|shared) (embarrassing|humiliating) (things|photos|videos) (of|about) me (online|on social media)/i,
+    /i (am|feel) (excluded|left out|ignored|isolated) (by|from) (my class|my classmates|my friends|my group)/i,
+
+    // Tagalog — bullying
+    /(ina-away|inaasar|binubully|tinutukso|niloloko|inaabuso|pinagtatawanan) (ako)? (ng|ni|nina|nila)/i,
+    /(classmate|kaklase|batchmate|grupo) (ko)? (ay)? (nambubully|nananakit|nagbabanta|umaaway) sa akin/i,
+    /palagi (akong|nilang) (inaabuso|inasar|inaaway|pinagtatawanan)/i,
+    /hindi ako (mapayapang|matahimik na) (pumunta sa school|pumasok|mag-aral)/i,
+    /ayaw ko (nang)? (pumasok|pumunta sa school) (dahil|kasi) (sa|natatakot)/i,
+    /nambubully (sa akin|sila sa akin)/i,
+  ];
+  bullyingPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 4;
+      reasons.push("Bullying or harassment");
+    }
+  });
+
+  // === EATING DISORDERS / DANGEROUS DIET BEHAVIORS ===
+  const eatingDisorderPatterns = [
+    // English
+    /i (haven't|have not|don't|did not) (eat|eaten|had food) (in days|for days|today|all day|all week)/i,
+    /i (purge|make myself|force myself) (throw up|vomit|puke)/i,
+    /i (starve|am starving) (myself|on purpose)/i,
+    /i (skip|skipping|avoid|avoiding) (all my meals|eating|food)/i,
+    /i (hate|am disgusted by) (my body|my weight|how i look)/i,
+    /i need to (lose weight|be thinner|be skinnier) (or else|because|so that)/i,
+    /(laxatives|diet pills|purging|binging and purging|binge eating)/i,
+    /i feel (fat|disgusting|gross) (after eating|when i eat|about myself)/i,
+    /i (count|track) every (calorie|bite|piece of food) (obsessively|every day|all the time)/i,
+
+    // Tagalog — eating disorder
+    /hindi (ako|na ako) (kumakain|nakakakain) (ng maayos|nang maayos|sa loob ng|ng ilang araw)/i,
+    /sinisadya ko(ng)? (hindi kumain|mag-starve|ayunan)/i,
+    /nagtatago (ako)? ng (pagkain|food) (para|dahil)/i,
+    /kinasusuklaman ko (ang)? (katawan ko|timbang ko|hitsura ko)/i,
+    /(nagsusuka|pinipilit kong sumuka) (ako)? (pagkatapos kumain|para|dahil)/i,
+  ];
+  eatingDisorderPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Eating disorder / dangerous diet behavior");
+    }
+  });
+
+  // === SEXUAL HARASSMENT / ASSAULT / EXPLOITATION ===
+  const sexualHarmPatterns = [
+    // English
+    /i (was|got|have been) (sexually|inappropriately) (touched|assaulted|harassed|abused|exploited)/i,
+    /someone (touched|grabbed|forced|pressured) me (sexually|inappropriately|without consent)/i,
+    /(my teacher|my coach|my classmate|my relative|someone) (touched|groped|forced|pressured) me/i,
+    /(sent|receiving|sharing) (nude|naked|sexual|explicit) (photos|pictures|videos) (of me|without consent)/i,
+    /i (was|got) (raped|molested|sexually abused)/i,
+    /(sexting|sextortion|nude photos|leaked photos) (of me|involving me|my photos)/i,
+    /someone (is blackmailing|blackmailed) me (with|using) (photos|videos|pictures)/i,
+    /online (predator|grooming|exploitation)/i,
+    /someone (older|adult) (wants|wanted|asked|pressured) me to (have sex|do sexual things|send photos)/i,
+
+    // Tagalog — sexual harm
+    /(hinalikan|hinawakan|ginagahasa|nilalasog|pinagsamantalahan) (ako)? (ng|ni|nina)/i,
+    /may (humawak|humipo|nangdestabo|nang-abuso|nanghalay) sa akin (nang walang pahintulot|ng hindi ko gusto)/i,
+    /(nagpapadala|pinapadalhan|pinipilit) (ng|ako ng) (hubad na larawan|bold na litrato|sexual na content)/i,
+    /(nire-record|nila-livestream|kinukuha ng video) (ako)? (nang hindi ko alam|ng walang pahintulot)/i,
+    /may (nagbabanta|nagba-blackmail) sa akin (gamit|ng|ng litrato|ng video)/i,
+  ];
+  sexualHarmPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Sexual harassment, assault, or exploitation");
+    }
+  });
+
+  // === GANG INVOLVEMENT / THREATS / VIOLENCE ===
+  const gangViolencePatterns = [
+    // English
+    /i (am|'m) (in|involved in|part of) a (gang|group that fights|barkada that hurts people)/i,
+    /(they|someone) (threatened|is threatening) (to hurt|to kill|to jump) me/i,
+    /i (have|carry|brought) a (weapon|knife|gun|balisong) (to school|with me)/i,
+    /(fight|brawl|rumble) (is happening|will happen|being planned) (at school|near school|after class)/i,
+    /i (was|got) (jumped|stabbed|shot at|threatened at gunpoint)/i,
+    /someone (has a gun|brought a knife|has a weapon) (at school|nearby)/i,
+    /(gang|group) (is after|targeting|following) me/i,
+
+    // Tagalog — gang / violence
+    /(miyembro|kasali|nakapasok) (ako)? (sa|ng) (gang|barkada na nag-aaway|grupo na mapanganib)/i,
+    /may (banta|nagbabanta|naghahanap sa akin) (sa|ng) (gang|grupo)/i,
+    /(may dala|nagdala) (ako|siya|sila) ng (patalim|kutsilyo|baril|armas) (sa eskuwela)?/i,
+    /(away|gulo|rumble) (na|gagawin|mangyayari) (sa|malapit sa) (eskuwela|paaralan)/i,
+    /(sinaksak|tinaboy|pinagbabaril|binalatan) (ako|niya|nila)/i,
+  ];
+  gangViolencePatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Gang involvement or violent threat");
+    }
+  });
+
+  // === FAMILY CRISIS / HOME DANGER ===
+  const familyCrisisPatterns = [
+    // English
+    /(my parents|my mom|my dad|my family) (fight|hit each other|hurt each other) (all the time|every night|constantly)/i,
+    /i (am|'m) (scared|afraid) to go home/i,
+    /(domestic violence|abuse at home) (is happening|in my house|in my family)/i,
+    /my (parent|father|mother|stepparent) (is|has been) (drinking|drunk|on drugs) (and|then) (hurts|hits|abuses)/i,
+    /i (was|got) (kicked out|thrown out|locked out) (of my house|of my home)/i,
+    /i (have|haven't had) (no|a) place to (sleep|stay|go home)/i,
+    /running away (from home|from my family)/i,
+    /(neglected|starved|locked up|isolated) (by my family|at home)/i,
+
+    // Tagalog — family crisis
+    /(nagaaway|nagsasagupaan|nagsasaksakan|nagsasuntukan) (ang|si|sina) (tatay|nanay|magulang|pamilya) (ko)? (palagi|lagi|araw-araw)/i,
+    /natatakot (ako)? (umuwi|sa bahay) (dahil|kasi)/i,
+    /(lasing|high|nalasing|naka-droga) (ang|si) (tatay|nanay|magulang) ko (at|tapos) (nananakit|umaaway)/i,
+    /(pinalayas|pinaalis|sinibak) (ako)? (sa bahay|ng magulang|ng pamilya)/i,
+    /wala (akong|na akong) (matulungan|matutuluyan|matirhan|puntahan)/i,
+    /tumakas (na|na lang) (ako)? (sa bahay|sa pamilya)/i,
+  ];
+  familyCrisisPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Family crisis or home danger");
+    }
+  });
+
+  // === ACADEMIC / SCHOOL CRISIS ===
+  const academicCrisisPatterns = [
+    // English
+    /i (am|'m) (going to|about to) (fail|drop out|be expelled|get expelled)/i,
+    /i (cheated|was caught cheating|plagiarized) (on a test|in an exam|in school)/i,
+    /i (can't|cannot) (afford|pay for) (school|tuition|my fees) (anymore|this year)/i,
+    /i (might|will) have to (stop|quit|leave) (school|studying) (because|due to)/i,
+    /(teachers?|school staff|principal) (is|are) (harassing|threatening|discriminating against) me/i,
+    /i (feel|am|so) (overwhelmed|crushed|destroyed) by (school|exams|grades|pressure)/i,
+
+    // Tagalog — academic crisis
+    /mababagsak (na)? (ako|na ako) (sa lahat|sa subject|sa klase)/i,
+    /(mapapalayas|mae-expel|matataboy) (na)? (ako)? (sa eskuwela|sa paaralan)/i,
+    /hindi (na|ko) (kaya|kayang) (bayaran|tulungan|harapin) (ang|ang bayad sa) (eskuwela|tuition)/i,
+    /kailangan (na)? (akong) (mag-drop|umalis sa eskuwela|tumigil mag-aral)/i,
+  ];
+  academicCrisisPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 3;
+      reasons.push("Academic or school-related crisis");
+    }
+  });
+
+  // === MENTAL HEALTH CRISIS (panic, psychosis, dissociation, severe anxiety) ===
+  const mentalHealthPatterns = [
+    // English
+    /i (can't|cannot) (breathe|think|function|stop crying|stop shaking)/i,
+    /i (feel|am) (like i'm going crazy|losing my mind|out of control|like a different person)/i,
+    /i (hear|see|experience) things (that aren't real|that others don't)/i,
+    /(panic attack|anxiety attack|mental breakdown|nervous breakdown)/i,
+    /i (can't|cannot) (stop|control) (my thoughts|my urges|myself)/i,
+    /i (feel|am) (completely numb|emotionally dead|disconnected from everything)/i,
+    /i (haven't|have not) (slept|eaten|left my room|gone outside) (in days|for days|for weeks)/i,
+    /i (am|feel like i'm) (disappearing|not real|watching myself from outside)/i,
+    /(medication|meds|pills) (aren't|not) (working|helping) (anymore|at all)/i,
+    /diagnosed with (depression|anxiety|bipolar|schizophrenia|ptsd|ocd|eating disorder)/i,
+
+    // Tagalog — mental health crisis
+    /hindi (ako|na ako) (makatulog|makakain|makagalaw|makaalis) (ng ilang araw|sa loob ng|nang ilang)/i,
+    /parang (nababaliw|nasisiraan ng ulo|wala na akong kontrol|iba na ako)/i,
+    /(naririnig|nakakakita) (ako)? ng (bagay|tinig|boses) na (hindi totoo|hindi nakikita ng iba)/i,
+    /(panic attack|anxiety attack|mental breakdown) (na naman|palagi|nangyayari)/i,
+    /hindi ko (mapigilan|kontrolin) (ang)? (sarili ko|mga iniisip ko|mga nararamdaman ko)/i,
+    /parang (hindi ko totoo|hindi ako totoo|nanunuod lang ako sa sarili ko)/i,
+  ];
+  mentalHealthPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 4;
+      reasons.push("Mental health crisis or breakdown");
+    }
+  });
+
+  // === LOWER WEIGHT: Isolation, stress, passive ideation ===
+  const isolationPatterns = [
+    // English
+    /no one (understands|cares|listens|loves me)/i,
+    /i feel (so alone|completely alone|invisible|abandoned|unwanted)/i,
+    /i can't handle this/i,
+    /everything (hurts|is too much|is falling apart)/i,
+    /i (have|has) no (friends|one|purpose|reason to live)/i,
+    /i don't (belong|fit in|matter)/i,
+    /i (feel|am) (like a burden|useless|worthless|a failure)/i,
+    /nobody (would notice|would care|would miss) if i (was gone|disappeared|died)/i,
+    /i (give up|quit|stop trying|can't do this anymore)/i,
+
+    // Tagalog — isolation / low distress
+    /walang (nakakaintindi|nagpapahalaga|nakikinig|nagmamahal) sa akin/i,
+    /pakiramdam ko(ng)? (sobrang nag-iisa|ganap na nag-iisa|hindi nakikita|abandunado|ayaw sa akin)/i,
+    /hindi ko na (kaya|kayang tiisin) ito/i,
+    /lahat ay (masakit|sobra na|laban sa akin)/i,
+    /nag-iisa (ako|na lang ako) (palagi|lagi|sa lahat)/i,
+    /wala (akong)? (kaibigan|kakampi|makapitan|matakbuhan)/i,
+    /hindi (ako)? (kasama|kasali|kabilang) (sa grupo|sa lahat)/i,
+    /pakiramdam ko(ng)? (hindi ako mahalaga|hindi ako kailangan|hindi ako gusto)/i,
+    /stressed (na)? (na)? (ako|na ako) (sobra|na)/i,
+    /hindi ko (alam|mahanap) (ang)? (dahilan|rason|paraan) para (magpatuloy|maging masaya)/i,
+    /parang (wala|walang silbi|walang kwenta) (na)? (ako|ang buhay ko)/i,
+    /walang (makakapansin|magmamalasakit|makakaalam) kung (mawala|nawala|maging wala) (na)? ako/i,
+  ];
+  isolationPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 1.5;
+      reasons.push("Isolation or high stress");
+    }
+  });
+
+  // === COMBO BOOSTERS ===
+  // English
+  if (/i want to/.test(t) && /(hurt|kill|die|end it)/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  if (/(hurt|kill) myself/.test(t) && /(feel|am|want)/.test(t)) {
+    score += 3;
+    reasons.push("Self-directed harm language");
+  }
+  // Tagalog — direct death/harm intent
+  if (/(gusto ko|gusto kong|gusto na)/.test(t) && /(mamatay|magpakamatay|patayin|masaktan)/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  if (/(sarili ko|ang sarili|sarili)/.test(t) && /(patayin|saktan|sugatan|masaktan|saktan|putulin)/.test(t)) {
+    score += 3;
+    reasons.push("Self-directed harm language");
+  }
+  // Tagalog — asking others to kill/hurt
+  if (/(patayin|saktan|tulungan).*(nyo|mo|ninyo|kayo)/.test(t) && /ako/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  // Addiction + distress combo
+  if (/(adik|droga|shabu|rugby)/.test(t) && /(mamatay|magpakamatay|wala nang pag-asa|sawa na)/.test(t)) {
+    score += 3;
+    reasons.push("Substance use with suicidal ideation");
+  }
+
+  // === KEYWORD / WORD-BASED SCORING (catches casual short phrases regex misses) ===
+  const words = t.split(/\s+/);
+
+  const highRiskWords = ['magpakamatay','magpatiwakal','pakamatay','patiwakal','suicidal','suicide','selfharm','self-harm'];
+  const medRiskWords  = ['mamatay','patay','nakakamatay','overdose','bigti','tumalon','kutsilyo','lason','cutting','burned myself','burned myself'];
+  const substanceWords= ['shabu','meth','rugby','droga','inhalant','solvent','vape','vapong','e-cigarette'];
+  const addictWords   = ['adik','nag-shabu','nagshabu','nagdodroga','nag-vaping'];
+  const distressWords = ['hopeless','depressed','depresado','nawawala','pagod','sawa','wala-na','walanasaysay','breakdown','nababaliw','nasisiraan'];
+  const newRiskWords  = ['purging','starving','sextortion','balisong','nada','nawala-ako'];
+
+  let hasSubstance = false;
+  let hasAddiction = false;
+  let hasDistress  = false;
+
+  words.forEach(w => {
+    if (highRiskWords.some(k => w.includes(k))) {
+      score += 8;
+      reasons.push('Direct self-harm / suicidal intent');
+    }
+    if (medRiskWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Possible plan or method');
+    }
+    if (substanceWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Substance use / addiction');
+      hasSubstance = true;
+    }
+    if (addictWords.some(k => w.includes(k))) {
+      score += 5;
+      reasons.push('Substance use / addiction');
+      hasAddiction = true;
+    }
+    if (distressWords.some(k => w.includes(k))) {
+      score += 2;
+      reasons.push('Emotional distress / hopelessness');
+      hasDistress = true;
+    }
+    if (newRiskWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Additional risk signal detected');
+    }
+  });
+
+  // Also scan full text for key fragments (handles concatenated / space-free writing)
+  if (/adik/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasAddiction = true; }
+  if (/shabu|rugby|droga/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasSubstance = true; }
+  if (/self.?harm|selfharm|cutting myself|burn myself/.test(t)) { score += 6; reasons.push('Direct self-harm / suicidal intent'); }
+  if (/rape|molest|sexual.?assault|sextortion/.test(t)) { score += 6; reasons.push('Sexual harassment, assault, or exploitation'); }
+  if (/panic.?attack|mental.?breakdown|nervous.?breakdown/.test(t)) { score += 4; reasons.push('Mental health crisis or breakdown'); }
+  if (/gang|barkada.*(away|gulo|away)|rumble/.test(t)) { score += 4; reasons.push('Gang involvement or violent threat'); }
+  if (/purging|binge.*purge|purge.*binge|not eating|stop eating|starv/.test(t)) { score += 4; reasons.push('Eating disorder / dangerous diet behavior'); }
+  if (hasSubstance && hasAddiction) { score += 3; reasons.push('Confirmed substance addiction'); }
+  if ((hasSubstance || hasAddiction) && hasDistress) { score += 3; reasons.push('Substance use with suicidal ideation'); }
+
+
+  // Deduplicate reasons
+  reasons = [...new Set(reasons)];
+  const uniqueReasonCount = reasons.length;
+
+  let level = "Low";
+  // Sensitive thresholds — prefer false positives over missed risks
+  if (score >= 12 || (score >= 9 && uniqueReasonCount >= 2)) level = "High";
+  else if (score >= 6 || (score >= 4 && uniqueReasonCount >= 2)) level = "Medium";
+  else if (score >= 2) level = "Low-Medium";
+
+  // Flag at a lower threshold — any meaningful signal gets flagged
+  const flagged = score >= 3 || level !== "Low";
+
+  return { score: Math.round(score), level, flagged, reasons };
+}
+
+// ── URGENCY SCORE (for sorting — higher = more urgent) ──
+function getUrgencyScore(item) {
+  const prioMap = { High: 350, Medium: 120, Low: 0 };
+  const riskMap = { High: 250, Medium: 80, "Low-Medium": 30, Low: 0 };
+
+  let base = (prioMap[(item.priority || 'Low').trim()] || 0) +
+             (riskMap[(item.riskLevel || 'Low').trim()] || 0) +
+             Number(item.aiScore || 0);
+
+  // Bonus for multiple risk signals
+  if (item.reasons && item.reasons.length >= 2) base += 40;
+
+  return Math.round(base);
+}
+
+// ── GLOW CLASS (guidance-only) ──
+function getGlowClass(item, isPending) {
+  if (currentRole !== 'guidance' || !isPending) return '';
+
+  const r = (item.riskLevel || '').trim();
+  const p = (item.priority || '').trim();
+  const score = Number(item.aiScore || 0);
+
+  const isHighRisk = r === 'High';
+  const isMedRisk  = r === 'Medium';
+  const isHighPrio = p === 'High';
+  const isMedPrio  = p === 'Medium';
+
+  // Critical: High risk + High priority OR very high AI score
+  if ((isHighRisk && isHighPrio) || score >= 12) return 'guidance-critical';
+  // High risk regardless of priority
+  if (isHighRisk) return 'guidance-high-risk';
+  // High priority regardless of risk
+  if (isHighPrio) return 'guidance-high-priority';
+  // Medium risk OR medium priority with some AI score
+  if (isMedRisk || (isMedPrio && score >= 4)) return 'guidance-medium-risk';
+
+  return '';
+}
+
+// ── PROFANITY & SENSITIVE WORD SYSTEM ──
+// Words that are HARD BLOCKED (never allowed — explicit/slurs)
+const hardBlockList = [
+  'tangina','puta','gago','tanga','bobo','hayop','ulol','kupal','kantot','pepe','puki','titi','bayag','iyot','hindot',
+  'pakshet','leche','piste','lintek','hinayupak','punyeta','bwisit','pakyu','shunga','ogag','pokpok','hampaslupa',
+  'hudas','kerida','ratbu','dede','tarantado','manyak','buraot','betlog','pekpek','paksit','suwail',
+  'kingina','ptangina','tanginamo','putangina','putanginamo','gagong','bobong','tngina','amputa','inamo','yawa',
+  'shit','fuck','fck','fuk','bitch','asshole','bastard','cunt','whore','slut','dick','cock','pussy','nigger',
+  'nigga','niga','retard','faggot','motherfucker','porn','horny','jerkoff','cum','clit','boob','tit','piss',
+  'dumbass','stfu','gtfo','suicide bait'
+];
+
+// Soft censor list cleared — sensitive words display as typed, still detected by detectRisk()
+const softCensorList = [];
+
+function containsProfanity(text) {
+  if (!text) return false;
+  let n = text.toLowerCase()
+    .replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a')
+    .replace(/5/g,'s').replace(/7/g,'t').replace(/8/g,'b')
+    .replace(/@/g,'a').replace(/\$/g,'s')
+    .replace(/[\s\.\,\!\?\-\_]/g,'');
+  n = n.replace(/(.)\1+/g,'$1');
+  return hardBlockList.some(w => n.includes(w.replace(/[\s\-]/g,'')));
+}
+
+// Censors soft words in text, returns cleaned version
+function censorText(text) {
+  if (!text) return text;
+  let result = text;
+  softCensorList.forEach(({word, mask}) => {
+    // Case-insensitive whole-word replacement
+    const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g,'\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    result = result.replace(regex, mask);
+  });
+  return result;
+}
+
+// Returns true if text contains any soft-censored words (for flagging)
+function containsSensitiveWords(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return softCensorList.some(({word}) => lower.includes(word));
+}
+
+    // ── LOGGING ──
+    async function addLog(action,user,type) {
+      user=user||'system';type=type||'info';
+      const id=Date.now();
+      const log={id,action,user,type,time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'}),timestamp:id};
+      try{await db.collection('logs').doc(String(id)).set(log);}
+      catch(e){systemLogs.unshift(log);render();}
+    }
+
+    // ── AUTH ──
+    // ── AUTH FUNCTIONS ──
+
+async function handleLogin(selectedRole) {
+  loginError = '';
+  render();
+
+  try {
+    const uc = await auth.signInWithEmailAndPassword(loginEmail, loginPassword);
+    const email = uc.user.email.toLowerCase();
+
+    const adminEmails = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
+    let actualRole = 'student';
+
+    if (adminEmails.includes(email)) actualRole = 'admin';
+    else if (email.includes('guidance') || email.includes('counselor')) actualRole = 'guidance';
+
+    if (selectedRole !== actualRole) {
+      await auth.signOut();
+      loginError = `Access Denied: Your account is not registered as "${selectedRole}". Please select the correct role.`;
+      render();
+      return;
+    }
+
+    currentUserEmail = email;
+    currentRole = selectedRole;
+    isAuthenticated = true;
+    // Restore last page or default to Dashboard
+    activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+    // Save session for auto-login
+    localStorage.setItem('qh_saved_role', selectedRole);
+
+    // Auto-register this device for push alerts when logging in as guidance
+    if (selectedRole === 'guidance') {
+      registerAsCounselor();
+    }
+
+    loadDataFromFirestore();
+addLog(`Logged in as ${selectedRole}`, email, 'info');
+render();
+setTimeout(handleDeepLink, 1000); // 👈 add this
+
+  } catch (error) {
+    loginError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+function friendlyAuthError(code, fallback) {
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email':
+      return 'Incorrect email or password. Please check your credentials and try again.';
+    case 'auth/invalid-password':
+      return 'Your password is incorrect. Please try again or use "Forgot Password" to reset it.';
+    case 'auth/user-disabled':
+      return 'This account has been disabled. Please contact your administrator.';
+    case 'auth/too-many-requests':
+      return 'Too many failed login attempts. Please wait a few minutes before trying again.';
+    case 'auth/network-request-failed':
+      return 'Network error. Please check your internet connection and try again.';
+    case 'auth/email-already-in-use':
+      return 'This email is already registered. Please log in instead.';
+    case 'auth/weak-password':
+      return 'Password must be at least 6 characters long.';
+    default:
+      return 'Login failed. Please check your email and password, then try again.';
+  }
+}
+
+function getOrCreateAnonId() {
+  let id = localStorage.getItem('qh_anon_id');
+  if (!id) {
+    id = 'anon_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem('qh_anon_id', id);
+  }
+  return id;
+}
+
+function loginAnonymous() {
+  const anonId = getOrCreateAnonId();
+  currentUserEmail = anonId;
+  currentRole = 'student';
+  isAuthenticated = true;
+  isAnonymous = true;
+  activeSidebarItem = 'Dashboard';
+  loadDataFromFirestore();
+  addLog('Anonymous user joined', anonId, 'info');
+  render();
+}
+
+async function handleSignup() {
+  signupError = '';
+  render();
+
+  const email = signupEmail.trim().toLowerCase();
+  const password = signupPassword.trim();
+  const confirm = signupConfirmPassword.trim();
+
+  // Validation
+  if (!email || !password || !confirm) {
+    signupError = 'All fields are required.';
+    render(); return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    signupError = 'Please enter a valid email address.';
+    render(); return;
+  }
+  if (password.length < 6) {
+    signupError = 'Password must be at least 6 characters.';
+    render(); return;
+  }
+  if (password !== confirm) {
+    signupError = 'Passwords do not match.';
+    render(); return;
+  }
+  // Only students can self-register
+  if (selectedRoleForLogin !== 'student') {
+    signupError = 'Only students can self-register. Guidance and Admin accounts are created by administrators.';
+    render(); return;
+  }
+
+  try {
+    const uc = await auth.createUserWithEmailAndPassword(email, password);
+    // Store user profile in Firestore
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'student',
+      createdAt: Date.now()
+    });
+
+    // Auto-login after signup
+    currentUserEmail = email;
+    currentRole = 'student';
+    isAuthenticated = true;
+    activeSidebarItem = 'Dashboard';
+    signupEmail = ''; signupPassword = ''; signupConfirmPassword = '';
+    loadDataFromFirestore();
+    addLog(`New student account created: ${email}`, email, 'success');
+    render();
+    showSuccessModal('Account Created! 🎉', `Welcome to QHsafety, <strong>${email}</strong>!<br>You are now logged in as a Student.`);
+  } catch (error) {
+    signupError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+// ── MODAL SYSTEM ──
+let _modalResolve = null;
+
+function _getModalColors(type) {
+  if (type === 'error')   return { bg:'#fdecea', color:'#c62828', icon:'⚠️' };
+  if (type === 'warning') return { bg:'#fff3e0', color:'#e65100', icon:'⚡' };
+  if (type === 'success') return { bg:'#e8f5e9', color:'#2e7d32', icon:'✅' };
+  return { bg:'#e3f2fd', color:'#1565c0', icon:'ℹ️' };
+}
+
+function showModal(title, body, type) {
+  const overlay = document.getElementById('qh-modal-overlay');
+  const iconWrap = document.getElementById('qh-modal-icon-wrap');
+  const titleEl  = document.getElementById('qh-modal-title');
+  const bodyEl   = document.getElementById('qh-modal-body');
+  const inputEl  = document.getElementById('qh-modal-input');
+  const btnsEl   = document.getElementById('qh-modal-btns');
+  const c = _getModalColors(type || 'info');
+
+  iconWrap.style.background = c.bg;
+  iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+  titleEl.textContent = title;
+  bodyEl.innerHTML = body;
+  inputEl.style.display = 'none';
+  inputEl.value = '';
+
+  btnsEl.innerHTML = `<button class="qh-modal-btn qh-modal-btn-secondary" onclick="closeModal()">OK</button>`;
+  overlay.classList.add('open');
+}
+
+function showSuccessModal(title, body) {
+  showModal(title, body, 'success');
+}
+
+function closeModal() {
+  const overlay = document.getElementById('qh-modal-overlay');
+  overlay.classList.remove('open');
+  if (_modalResolve) { _modalResolve(false); _modalResolve = null; }
+}
+
+// Returns a Promise<boolean> — true if user confirmed
+function confirmModal(title, body, type) {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    const overlay = document.getElementById('qh-modal-overlay');
+    const iconWrap = document.getElementById('qh-modal-icon-wrap');
+    const titleEl  = document.getElementById('qh-modal-title');
+    const bodyEl   = document.getElementById('qh-modal-body');
+    const inputEl  = document.getElementById('qh-modal-input');
+    const btnsEl   = document.getElementById('qh-modal-btns');
+    const c = _getModalColors(type || 'warning');
+
+    iconWrap.style.background = c.bg;
+    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+    titleEl.textContent = title;
+    bodyEl.innerHTML = body;
+    inputEl.style.display = 'none';
+    inputEl.value = '';
+
+    btnsEl.innerHTML = `
+      <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(false)">Cancel</button>
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(true)">Confirm Delete</button>`;
+    overlay.classList.add('open');
+  });
+}
+
+// Returns a Promise<string|null>
+function promptModal(title, body, type) {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    const overlay = document.getElementById('qh-modal-overlay');
+    const iconWrap = document.getElementById('qh-modal-icon-wrap');
+    const titleEl  = document.getElementById('qh-modal-title');
+    const bodyEl   = document.getElementById('qh-modal-body');
+    const inputEl  = document.getElementById('qh-modal-input');
+    const btnsEl   = document.getElementById('qh-modal-btns');
+    const c = _getModalColors(type || 'warning');
+
+    iconWrap.style.background = c.bg;
+    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+    titleEl.textContent = title;
+    bodyEl.innerHTML = body;
+    inputEl.style.display = 'block';
+    inputEl.value = '';
+    inputEl.placeholder = 'Type DELETE to confirm';
+
+    btnsEl.innerHTML = `
+      <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(null)">Cancel</button>
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(document.getElementById('qh-modal-input').value)">Confirm</button>`;
+    overlay.classList.add('open');
+    setTimeout(() => inputEl.focus(), 100);
+  });
+}
+
+function _resolveModal(value) {
+  document.getElementById('qh-modal-overlay').classList.remove('open');
+  if (_modalResolve) { _modalResolve(value); _modalResolve = null; }
+}
+
+// Fixed createAdminAccount
+async function createAdminAccount() {
+  const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
+  const password = document.getElementById('newAdminPassword').value.trim();
+
+  if (!email || !password || password.length < 6) {
+    showModal("Input Error", "Please enter valid email and password (minimum 6 characters)", "error");
+    return;
+  }
+
+  try {
+    const uc = await auth.createUserWithEmailAndPassword(email, password);
+
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'admin',
+      createdBy: currentUserEmail,
+      createdAt: Date.now()
+    });
+
+    addLog(`Created new Admin account: ${email}`, currentUserEmail, 'success');
+
+    showSuccessModal(
+      "New Admin Account Created!",
+      `Email: ${email}<br>Password: ${password}<br><br>Share these credentials carefully.`
+    );
+
+    // Clear inputs
+    document.getElementById('newAdminEmail').value = '';
+    document.getElementById('newAdminPassword').value = '';
+
+  } catch (error) {
+    showModal("Creation Failed", error.message || "Something went wrong", "error");
+  }
+}
+
+// Fixed createGuidanceAccount
+async function createGuidanceAccount() {
+  const email = document.getElementById('newGuidanceEmail').value.trim().toLowerCase();
+  const password = document.getElementById('newGuidancePassword').value.trim();
+
+  if (!email || !password || password.length < 6) {
+    showModal("Input Error", "Please enter valid email and password (minimum 6 characters)", "error");
+    return;
+  }
+
+  try {
+    const uc = await auth.createUserWithEmailAndPassword(email, password);
+
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'guidance',
+      createdBy: currentUserEmail,
+      createdAt: Date.now()
+    });
+
+    addLog(`Created new Guidance account: ${email}`, currentUserEmail, 'success');
+
+    showSuccessModal(
+      "New Guidance Counselor Account Created!",
+      `Email: <strong>${email}</strong><br>Password: <strong>${password}</strong><br><br>Share these credentials carefully with the counselor.`
+    );
+
+    // Clear inputs
+    document.getElementById('newGuidanceEmail').value = '';
+    document.getElementById('newGuidancePassword').value = '';
+
+  } catch (error) {
+    showModal("Creation Failed", error.message || "Something went wrong", "error");
+  }
+}
+
+async function handleForgotPassword() {
+  forgotPasswordError = '';
+  forgotPasswordSuccess = '';
+  try {
+    await auth.sendPasswordResetEmail(forgotPasswordEmail);
+    forgotPasswordSuccess = 'Password reset email sent. Please check your inbox or spam folder.';
+    render();
+  } catch (error) {
+    forgotPasswordError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+function logout() {
+  // If guidance counselor is logging out, remove the push tag from this device
+  if (currentRole === 'guidance') {
+    unregisterAsCounselor();
+  }
+  localStorage.removeItem('qh_saved_role');
+  localStorage.removeItem('qh_last_page');
+  firestoreUnsubscribes.forEach(u => u());
+  firestoreUnsubscribes = [];
+  const wasAnonymous = isAnonymous;
+  isAuthenticated = false;
+  isAnonymous = false;
+  currentRole = null;
+  currentUserEmail = '';
+  mobileDrawerOpen = false;
+  postings = [];
+  consultationPostings = [];
+  feedbackList = [];
+  systemLogs = [];
+  if (!wasAnonymous) {
+    auth.signOut().then(() => render());
+  } else {
+    render();
+  }
+}
+
+    // ── FIRESTORE ──
+    function loadDataFromFirestore() {
+      firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
+      firestoreUnsubscribes.push(
+        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
+        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
+        db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
+        db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();})
+      );
+    }
+
+    // ── POSTINGS ──
+    async function addPosting() {
+  if(!postingTitle.trim()||!postingContent.trim()){postingError='Title and content are required';render();return;}
+  if(containsProfanity(postingTitle)||containsProfanity(postingContent)){postingError='🔴 Post blocked: Inappropriate language detected.';render();return;}
+  
+  try {
+    // Censor sensitive words instead of blocking
+    const cleanTitle = censorText(postingTitle);
+    const cleanContent = censorText(postingContent);
+    const hasSensitive = containsSensitiveWords(postingTitle+' '+postingContent);
+    const risk = await detectRiskAI(postingTitle+' '+postingContent);
+
+    // AI must verify High risk independently — priority alone is not enough
+    let finalPriority = postingPriority || 'Medium';
+    if (finalPriority === 'High' && risk.level !== 'High') {
+      finalPriority = 'Medium'; // AI override: not genuinely high risk
+    }
+
+    const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+    const newPosting = {
+      id: Date.now(),
+      title: cleanTitle,
+      content: cleanContent,
+      priority: finalPriority,
+      aiScore: risk.score,
+      riskLevel: risk.level,
+      flagged: risk.flagged || hasSensitive,
+      reasons: risk.reasons,
+      author: authorLabel,
+      authorId: currentUserEmail,
+      isAnonymous: isAnonymous,
+      timestamp: Date.now()
+    };
+
+    await db.collection('postings').doc(String(newPosting.id)).set(newPosting);
+    
+    if(risk.flagged || hasSensitive) {
+      addLog('⚠ Flagged post (' + (risk.reasons?.join(', ') || 'Sensitive content') + ')', authorLabel, 'warning');
+    }
+
+    // 📧 Notify guidance if AI confirmed High OR Medium risk
+if (risk.level === 'High' || risk.level === 'Medium') {
+  await notifyGuidanceOfHighRisk('Posting', authorLabel, cleanTitle, cleanContent, risk.score, risk.level, risk.reasons);
+  
+  if (typeof sendOneSignalPush === 'function') {
+    await sendOneSignalPush(
+      `🚨 ${risk.level.toUpperCase()} RISK POST — AI Score: ${risk.score}`,
+      `${authorLabel}: "${cleanTitle}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
+      newPosting.id, 'posting', risk.level, risk.score, risk.reasons
+    );
+  }
+  addLog(`🚨 ${risk.level}-risk posting alert sent`, authorLabel, 'warning');
+}
+
+    // Clear form and reset UI
+    postingTitle=''; postingContent=''; showPostingForm=false; postingError=''; render();
+  } catch(e) {
+    postingError = 'Failed to post: ' + e.message;
+    render();
+  }
+}
+
+async function deletePosting(id) {
+  const ok = await confirmModal("Delete Posting", "Are you sure you want to permanently delete this posting?", "warning");
+  if (!ok) return;
+  try {
+    await db.collection('postings').doc(String(id)).delete();
+    addLog('Post deleted', currentUserEmail, 'warning');
+  } catch(e) {
+    showModal("Error", "Failed to delete posting: " + e.message, "error");
+  }
+}
+
+function getPriorityColor(p) {
+  return p === 'High' ? '#ef5350' : p === 'Medium' ? '#ff9800' : '#66bb6a';
+}
+
+// ── PERMISSION HELPER ──
+function canDelete(item, type) {
+  if (!item || !currentRole) return false;
+  if (currentRole === 'admin') return true;
+  if (currentRole === 'guidance') return true;
+  if (currentRole === 'student') {
+    return item.authorId === currentUserEmail;
+  }
+  return false;
+}
+
+// ── ONESIGNAL: Manual push enable button ──
+async function enablePushNotifications() {
+  try {
+    const permission = OneSignal.Notifications.permission;
+    const tag = currentRole === 'guidance' ? 'guidance' : 'student';
+    if (permission) {
+      await OneSignal.User.addTag("user_role", tag);
+      showModal('✅ Already Enabled', `Push notifications are active. You are subscribed as <strong>${tag}</strong>.`, 'success');
+      return;
+    }
+    await OneSignal.Notifications.requestPermission();
+    if (OneSignal.Notifications.permission) {
+      await OneSignal.User.addTag("user_role", tag);
+      showModal('🔔 Notifications Enabled!', `You will now receive push notifications as <strong>${tag}</strong>.`, 'success');
+    } else {
+      showModal('Blocked', 'Notifications are blocked. Go to browser Site Settings → Notifications → Allow for this site, then try again.', 'error');
+    }
+  } catch(e) {
+    showModal('Error', 'Could not enable notifications: ' + e.message, 'error');
+  }
+}
+
+// ── ONESIGNAL: Register this device as the Guidance Counselor ──
+// Called automatically after a successful guidance login.
+// Tags this device with user_role=guidance so push alerts are
+// delivered ONLY to the counselor — even when offline or app is closed.
+function registerAsCounselor() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      // Request push permission if not yet granted
+      const permission = await OneSignal.Notifications.permission;
+      if (!permission) {
+        await OneSignal.Notifications.requestPermission();
+      }
+      // Tag this device as the guidance counselor
+      await OneSignal.User.addTag("user_role", "guidance");
+      console.log("[QHsafety] Device registered as Guidance Counselor for push alerts.");
+    } catch (e) {
+      console.warn("[QHsafety] Could not register counselor push tag:", e);
+    }
+  });
+}
+
+// ── ONESIGNAL: Remove counselor tag on logout ──
+function unregisterAsCounselor() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      await OneSignal.User.removeTag("user_role");
+    } catch (e) {
+      console.warn("[QHsafety] Could not remove counselor push tag:", e);
+    }
+  });
+}
+
+// ── ONESIGNAL: Broadcast announcement to all students ──
+async function sendAnnouncementPush(title, message) {
+  try {
+    const response = await fetch("/api/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, message, url: window.location.origin, target: 'student' })
+    });
+    return await response.json();
+  } catch(e) {
+    console.error("Announcement push error:", e);
+  }
+}
+
+let announcementTitle = '', announcementMessage = '';
+
+async function handleSendAnnouncement() {
+  if (!announcementTitle.trim() || !announcementMessage.trim()) {
+    showModal('Missing Fields', 'Please enter both a title and message.', 'error');
+    return;
+  }
+  const result = await sendAnnouncementPush(announcementTitle, announcementMessage);
+  if (result && !result.errors) {
+    announcementTitle = ''; announcementMessage = '';
+    showModal('📢 Announcement Sent!', `Delivered to <strong>${result.recipients || 0}</strong> student device(s).`, 'success');
+    render();
+  } else {
+    showModal('Failed', 'Could not send announcement: ' + JSON.stringify(result?.errors), 'error');
+  }
+}
+
+/** * 🚨 THE MESSENGER FUNCTION 
+ * Sends a push notification ONLY to devices tagged as guidance counselor.
+ * Delivered via OneSignal → OS push service (FCM/APNs), so it arrives
+ * even when the counselor's browser/tab is closed or device is locked.
+ */
+async function sendOneSignalPush(title, message, postId, postType, riskLevel, riskScore, reasons) {
+  try {
+    // Build deep-link URL so counselor lands directly on the post
+    const deepUrl = postId
+      ? `${window.location.origin}?deeplink=${postType || 'posting'}&id=${postId}&risk=${riskLevel || 'High'}&score=${riskScore || 0}`
+      : window.location.href;
+    const response = await fetch("/api/notify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, message, url: deepUrl, reasons: reasons || [] })
+    });
+    return await response.json();
+  } catch (e) {
+    console.error("OneSignal Error:", e);
+  }
+}
+  
+    // ── CONSULTATIONS ──
+    async function addConsultation() {
+      if(window._consultSubmitting)return;window._consultSubmitting=true;
+      try {
+        if(!consultationReason.trim()||!consultationDescription.trim()){consultationError='Reason and details are required';render();return;}
+        if(!consultationGradeLevel){consultationError='Please select your grade level';render();return;}
+        if(containsProfanity(consultationReason)||containsProfanity(consultationDescription)){consultationError='🔴 Request blocked: Please use appropriate language.';render();return;}
+        const cleanReason = censorText(consultationReason);
+        const cleanDesc = censorText(consultationDescription);
+        const risk=await detectRiskAI(consultationReason+' '+consultationDescription);
+
+        // AI must verify High risk independently — user-selected High priority alone is not enough
+        let finalPriority = consultationPriority || 'Medium';
+        if (finalPriority === 'High' && risk.level !== 'High') {
+          finalPriority = 'Medium'; // AI override: content doesn't warrant high risk
+        }
+
+        const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+        const newConsult={id:Date.now(),reason:cleanReason,description:cleanDesc,priority:finalPriority,gradeLevel:consultationGradeLevel,author:authorLabel,authorId:currentUserEmail,isAnonymous:isAnonymous,status:'Pending',riskLevel:risk.level,aiScore:risk.score,timestamp:Date.now(),messages:[]};
+        await db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
+
+        // 📧 Notify guidance if AI confirmed High OR Medium risk
+if (risk.level === 'High' || risk.level === 'Medium') {
+  await notifyGuidanceOfHighRisk('Consultation', authorLabel, cleanReason, cleanDesc, risk.score, risk.level, risk.reasons);
+  
+  if (typeof sendOneSignalPush === 'function') {
+    await sendOneSignalPush(
+      `🚨 ${risk.level.toUpperCase()} RISK CONSULTATION — AI Score: ${risk.score}`,
+      `${authorLabel}: "${cleanReason}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
+      newConsult.id, 'consultation', risk.level, risk.score, risk.reasons
+    );
+  }
+  addLog(`🚨 ${risk.level}-risk consultation alert sent`, authorLabel, 'warning');
+}
+
+        // Clear form and reset UI
+        consultationReason=''; consultationDescription=''; consultationPriority='Medium';
+        consultationGradeLevel=''; showConsultationForm=false; consultationError='';
+        addLog('Consultation submitted', authorLabel, 'info');
+        render();
+      } catch(e) {
+        consultationError = 'Failed to submit: ' + e.message;
+        render();
+      } finally {
+        window._consultSubmitting = false;
+      }
+    }
+
+    async function deleteConsultationPosting(id){
+      const ok = await confirmModal("Cancel Request", "Cancel this consultation request?", "warning");
+      if (!ok) return;
+      try{await db.collection('consultations').doc(String(id)).delete();addLog('Consultation cancelled',currentUserEmail,'warning');}
+      catch(e){showModal("Error","Could not cancel request: "+e.message,"error");}
+    }
+    async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done'});addLog('Consultation marked as Done',currentUserEmail,'success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');}}
+
+  // ── GUIDANCE MESSAGES ──
+let guidanceMessageDraft = {}; // keyed by postingId
+
+async function sendGuidanceMessage(postingId) {
+  const msg = (guidanceMessageDraft[postingId] || '').trim();
+  if (!msg) { showModal('Empty Message', 'Please type a message before sending.', 'warning'); return; }
+  try {
+    // Get the posting to find the student's email
+    const postDoc = await db.collection('postings').doc(String(postingId)).get();
+    const postData = postDoc.data() || {};
+    const studentEmail = postData.authorId || postData.author || '';
+    const postTitle = postData.title || 'your posting';
+
+    await db.collection('postings').doc(String(postingId)).update({
+      guidanceMessage: msg,
+      guidanceMessageAt: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
+    });
+    addLog(`Guidance message sent on post #${postingId}`, currentUserEmail, 'info');
+    guidanceMessageDraft[postingId] = '';
+
+    // 📧 Email the student
+    await notifyStudentOfGuidanceReply(studentEmail, postTitle, msg);
+
+    showSuccessModal('Message Sent', 'Your message has been attached to this posting. The student will be notified by email if they have an account.');
+  } catch(e) { showModal('Error', 'Failed to send message: ' + e.message, 'error'); }
+}
+
+// ── POSTING CHAT (student replies) ──
+async function sendPostingChat(postingId) {
+  const msg = (postingChatDraft[postingId] || '').trim();
+  if (!msg) return;
+  const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  try {
+    const ref = db.collection('postings').doc(String(postingId));
+    const doc = await ref.get();
+    const existing = doc.data().chatMessages || [];
+    await ref.update({ chatMessages: [...existing, chatMsg] });
+    postingChatDraft[postingId] = '';
+    // Update UI input
+    const inp = document.getElementById('postChat_'+postingId);
+    if(inp) inp.value = '';
+  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+}
+
+// ── CONSULTATION CHAT (student + guidance) ──
+async function sendConsultationChat(consultId) {
+  const msg = (consultationChatDraft[consultId] || '').trim();
+  if (!msg) return;
+  const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  try {
+    const ref = db.collection('consultations').doc(String(consultId));
+    const doc = await ref.get();
+    const consultData = doc.data() || {};
+    const existing = consultData.chatMessages || [];
+    await ref.update({ chatMessages: [...existing, chatMsg] });
+    consultationChatDraft[consultId] = '';
+    const inp = document.getElementById('consultChat_'+consultId);
+    if(inp) inp.value = '';
+    setTimeout(()=>{const box=document.getElementById('consultChatBox_'+consultId);if(box)box.scrollTop=box.scrollHeight;},80);
+
+    // 📧 If guidance replied, notify the student
+    if (currentRole === 'guidance') {
+      const studentEmail = consultData.authorId || consultData.author || '';
+      const consultReason = consultData.reason || 'your consultation';
+      await notifyStudentOfConsultationReply(studentEmail, consultReason, msg);
+    }
+  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+}
+
+// ── FIXED BULK DELETE (Working with beautiful modal) ──
+async function deleteAllPostings() {
+  const input = await promptModal(
+    "⚠️ Delete All Postings",
+    "This will <strong>permanently delete ALL postings</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('postings').get();
+    if (snapshot.empty) { showModal("Info", "No postings to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All postings deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} postings.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+
+async function deleteAllConsultations() {
+  const input = await promptModal(
+    "⚠️ Delete All Consultations",
+    "This will <strong>permanently delete ALL consultations</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('consultations').get();
+    if (snapshot.empty) { showModal("Info", "No consultations to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All consultations deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} consultations.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+
+async function deleteAllFeedback() {
+  const input = await promptModal(
+    "⚠️ Delete All Feedback",
+    "This will <strong>permanently delete ALL feedback</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('feedback').get();
+    if (snapshot.empty) { showModal("Info", "No feedback to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All feedback deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} feedback entries.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+  
+    // ── FEEDBACK ──
+    async function addFeedback() {
+      if(!feedbackMessage.trim()){feedbackError='Please enter feedback message';render();return;}
+      if(containsProfanity(feedbackMessage)){feedbackError='Inappropriate language detected.';render();return;}
+      const newFeedback={id:Date.now(),author:currentUserEmail,authorRole:currentRole==='guidance'?'Guidance Office':currentRole==='student'?'Student':'Admin',rating:feedbackRating,message:feedbackMessage,date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),timestamp:Date.now()};
+      try{await db.collection('feedback').add(newFeedback);feedbackMessage='';feedbackRating=5;showFeedbackForm=false;feedbackError='';addLog('Feedback submitted',currentUserEmail,'info');render();}
+      catch(e){feedbackError='Failed to submit: '+e.message;render();}
+    }
+
+  // Delete consultation (for Guidance & Admin)
+async function deleteConsultation(id) {
+  const ok = await confirmModal("Delete Consultation", "Permanently delete this consultation?", "warning");
+  if (!ok) return;
+  try {
+    await db.collection('consultations').doc(String(id)).delete();
+    addLog(`Consultation deleted by ${currentRole}`, currentUserEmail, 'warning');
+    showModal("Deleted", "Consultation deleted successfully.", "success");
+  } catch (e) {
+    showModal("Error", "Failed to delete consultation: " + e.message, "error");
+  }
+}
+  
+  
+  
+    // ── RENDER ──
+    function render() {
+      config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#f5f5f5'}:{...defaultConfig};
+      if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
+      else{renderDashboard();}
+      lucide.createIcons();
+      // Auto-scroll chat boxes to bottom
+      setTimeout(()=>{
+        document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
+      },50);
+    }
+
+    function renderLanding() {
+      const fs=config.font_size||16;
+      app.innerHTML=`
+<div class="grid-bg" style="height:100vh;width:100%;overflow-y:auto;background-color:${config.background_color}">
+  <nav class="flex items-center justify-between px-6 py-4" style="background:#2c3e50">
+    <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${config.primary_action_color}">QH</span>safety</span>
+    <button onclick="showLandingSettings=!showLandingSettings;render()" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
+  </nav>
+  ${showLandingSettings?`<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this){showLandingSettings=false;render()}"><div class="rounded-xl p-6 w-96" style="background:${config.surface_color}"><div class="flex items-center justify-between mb-6"><h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">Settings</h2><button onclick="showLandingSettings=false;render()" class="text-2xl" style="color:${config.text_color}">&times;</button></div><div class="flex items-center justify-between p-4 rounded-lg mb-3" style="background:${config.text_color}08"><div class="flex items-center gap-3"><i data-lucide="${darkMode?'moon':'sun'}" style="width:20px;height:20px;color:${config.text_color}"></i><span style="font-weight:600;color:${config.text_color}">${tr('darkMode')}</span></div><button onclick="darkMode=!darkMode;render()" class="relative w-14 h-7 rounded-full" style="background:${darkMode?config.primary_action_color+'cc':config.text_color}33"><div class="absolute w-6 h-6 rounded-full" style="top:0.5px;${darkMode?'right:0.5px':'left:0.5px'};background:${config.text_color}"></div></button></div><div class="p-4 rounded-lg" style="background:${config.text_color}08"><div class="flex items-center gap-3 mb-3"><i data-lucide="languages" style="width:20px;height:20px;color:${config.text_color}"></i><span style="font-weight:600;color:${config.text_color}">${tr('langSetting')}</span></div><div class="flex gap-2"><button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">🇺🇸 English</button><button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">🇵🇭 Filipino</button></div></div></div></div>`:''}
+  <section class="flex flex-col items-center justify-center text-center px-6 py-20 fade-in">
+    <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${config.secondary_action_color}33;color:${config.text_color}">🛡️ School Safety Platform</div>
+    <h1 class="font-bold leading-tight mb-4" style="font-size:${fs*3}px;color:${config.text_color}">${config.hero_title}</h1>
+    <p class="max-w-lg mb-12" style="font-size:${fs}px;color:${config.text_color}aa">${config.hero_subtitle}</p>
+    <p class="text-sm font-semibold mb-6" style="color:${config.text_color}">${tr('selectRole')}</p>
+    <div class="flex flex-col sm:flex-row gap-4">
+      <button onclick="selectedRoleForLogin='student';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
+      <button onclick="selectedRoleForLogin='guidance';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.secondary_action_color};color:${config.text_color}"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
+      <button onclick="selectedRoleForLogin='admin';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:${config.text_color}"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
+    </div>
+    <button onclick="loginAnonymous()" class="mt-4 px-8 py-2.5 rounded-lg font-semibold card-hover flex items-center gap-2 justify-center" style="background:transparent;color:${config.text_color}88;border:1.5px dashed ${config.text_color}33;font-size:14px"><i data-lucide="eye-off" style="width:16px;height:16px"></i>${tr('continueAnon')}</button>
+    <p class="mt-2 text-xs" style="color:${config.text_color}55">${tr('anonSubtext')}</p>
+  </section>
+  <section class="max-w-4xl mx-auto px-6 pb-16">
+    <h2 class="font-bold text-center mb-8" style="font-size:${fs*1.5}px;color:${config.text_color}">${tr('aboutMission')}</h2>
+    <p class="text-center max-w-2xl mx-auto mb-12" style="color:${config.text_color}aa;font-size:${fs}px">${tr('aboutDesc')}</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      ${[{icon:'shield-check',title:tr('howToUse'),desc:tr('howToUseDesc')},{icon:'file-text',title:tr('termsPrivacy'),desc:tr('termsDesc')},{icon:'heart',title:tr('weCare'),desc:tr('weCareDesc')}].map(c=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color};border:2px solid ${config.text_color}0d"><div class="w-10 h-10 rounded-lg flex items-center justify-center mb-4" style="background:${config.primary_action_color}33"><i data-lucide="${c.icon}" style="width:20px;height:20px;color:${config.text_color}"></i></div><h3 class="font-bold mb-2" style="font-size:${fs*1.1}px;color:${config.text_color}">${c.title}</h3><p style="font-size:${fs*0.85}px;color:${config.text_color}88">${c.desc}</p></div>`).join('')}
+    </div>
+  </section>
+</div>`;
+    }
+
+    function renderGateway() {
+      const fs=config.font_size||16;
+      app.innerHTML=`
+<div class="grid-bg fade-in" style="height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 24px;background-color:${config.background_color};overflow-y:auto">
+  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${config.text_color}88;background:none;border:none;cursor:pointer"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <span class="mono font-bold mb-2" style="font-size:${fs*2}px;color:${config.text_color}"><span style="color:${config.primary_action_color}">QH</span>safety</span>
+      <p style="color:${config.text_color}88;font-size:${fs}px;margin-top:12px">${showForgotPassword?'Reset Password':currentAuthFlow==='signup'?'Create Account':'Login'} as ${selectedRoleForLogin==='student'?'Student':selectedRoleForLogin==='guidance'?'Counselor':'Administrator'}</p>
+    </div>
+    <div class="p-6 rounded-xl" style="background:${config.surface_color}">
+      ${showForgotPassword?`
+        ${forgotPasswordError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${forgotPasswordError}</div>`:''}
+        ${forgotPasswordSuccess?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#66bb6a;color:#fff;text-align:center">${forgotPasswordSuccess}</div>`:''}
+        <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${forgotPasswordEmail}" oninput="forgotPasswordEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter your email" /></div>
+        <button onclick="handleForgotPassword()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Send Reset Email</button>
+        <button onclick="showForgotPassword=false;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Back to Login</button>
+      `:`
+        <div class="flex gap-2 mb-6">
+          <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='login'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Login</button>
+          <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='signup'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Sign Up</button>
+        </div>
+        ${currentAuthFlow==='signup'?`
+          ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${signupEmail}" oninput="signupEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${signupPassword}" oninput="signupPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Confirm password" /></div>
+          <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
+        `:`
+          ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
+          <div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}55">
+            <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
+            <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">Use the email and password provided by your administrator. Students must register through the Sign Up tab before logging in.</p>
+          </div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${loginEmail}" oninput="loginEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${loginPassword}" oninput="loginPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
+          <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
+        `}
+      `}
+    </div>
+  </div>
+</div>`;
+    }
+
+    function renderDashboard() {
+      const fs=config.font_size||16;
+      let items,icons,itemKeys;
+      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','users','message-circle','file-text','settings'];itemKeys=['dashboard','users','feedback','logs','settings'];}
+      else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
+      else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
+      const bottomItems=items.slice(0,5),bottomIcons=icons.slice(0,5),bottomKeys=itemKeys.slice(0,5);
+      app.innerHTML=`
+<div style="position:relative;height:100vh;width:100%;overflow:hidden;display:flex;flex-direction:column">
+  <div class="drawer-overlay ${mobileDrawerOpen?'open':''}" onclick="mobileDrawerOpen=false;render()"></div>
+  <div class="drawer-panel ${mobileDrawerOpen?'open':''}">
+    <div class="p-5 pb-2 flex items-center justify-between" style="border-bottom:1px solid #ffffff11">
+      <div><span class="font-bold" style="font-size:${fs*1.2}px;color:#ffee58">QHsafety</span><div class="mt-1 text-xs" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
+      <button onclick="mobileDrawerOpen=false;render()" style="background:none;border:none;color:#ffffff88;cursor:pointer;padding:4px"><i data-lucide="x" style="width:20px;height:20px"></i></button>
+    </div>
+    <div class="p-3 mx-3 mt-4 rounded-xl flex items-center gap-3" style="background:#ffffff11">
+      <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+      <div><div class="text-xs font-semibold" style="color:#fff">${isAnonymous?'Anonymous User':currentUserEmail}</div><div class="text-xs" style="color:#ffffff66">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div></div>
+    </div>
+    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');mobileDrawerOpen=false;render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
+    <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm w-full" style="background:none;border:none;cursor:pointer;color:#ffffff66;border-top:1px solid #ffffff11"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
+  </div>
+  <div class="flex fade-in" style="flex:1;overflow:hidden;background-color:${config.background_color}">
+    <aside class="hidden md:flex flex-col w-60 shrink-0 h-full overflow-auto" style="background:#2c3e50">
+      <div class="p-5 pb-2"><span class="mono font-bold" style="font-size:${fs*1.2}px;color:${config.primary_action_color}">QHsafety</span><div class="mt-1 text-xs font-medium" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
+      <nav class="mt-4 flex-1">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="color:${activeSidebarItem===item?config.primary_action_color:'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?config.primary_action_color:'transparent'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
+      <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm" style="color:#ffffff66;border-top:1px solid #ffffff11;background:none;border-left:none;border-right:none;cursor:pointer;width:100%"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
+      <button onclick="enablePushNotifications()" style="margin:8px 12px 12px;padding:10px;border-radius:10px;background:#ffee58;color:#2c3e50;border:none;cursor:pointer;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px;width:calc(100% - 24px)"><i data-lucide="bell" style="width:15px;height:15px"></i>Enable Notifications</button>
+    </aside>
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
+      <div class="mobile-topbar">
+        <button onclick="mobileDrawerOpen=true;render()" style="background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
+        <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button onclick="enablePushNotifications()" id="push-btn" style="background:#ffee58;color:#2c3e50;border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px"><i data-lucide="bell" style="width:13px;height:13px"></i>Notify</button>
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+        </div>
+      </div>
+      <main class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
+        <div class="hidden md:block mb-8">
+          <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">${tr('welcomeBack')}, <span class="highlight-cyan">${currentRole==='admin'?tr('admin'):currentRole==='student'?tr('student'):tr('counselor')}</span></h1>
+          <p class="mt-1" style="font-size:${fs*0.85}px;color:${config.text_color}88">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p>
+        </div>
+        <div class="md:hidden mb-5">
+          <h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">${tr(itemKeys[items.indexOf(activeSidebarItem)] || 'dashboard')}</h2>
+          <p style="font-size:${fs*0.8}px;color:${config.text_color}66">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</p>
+        </div>
+        ${getDashboardContent(fs)}
+      </main>
+    </div>
+  </div>
+  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
+</div>`;
+    }
+
+    function getDashboardContent(fs) {
+      const myEmail=currentUserEmail; // always use currentUserEmail (works for both auth and anon)
+      const isGuidance=currentRole==='guidance';
+
+      // ── POSTINGS ──
+      // ── POSTINGS ──
+if(activeSidebarItem==='Postings') {
+  let visiblePostings;
+
+  if(currentRole==='guidance') {
+    // Guidance sees ALL postings, sorted by urgency (AI Risk + Priority)
+    visiblePostings = [...postings]
+      .map(p => ({
+        ...p,
+        aiScore: Number(p.aiScore || 0),
+        priority: (p.priority || 'Medium').trim(),
+        riskLevel: (p.riskLevel || 'Low').trim()
+      }))
+      .sort((a, b) => getUrgencyScore(b) - getUrgencyScore(a));
+  } else {
+    // Students/anon: always filter by authorId (the real device ID stored at post time)
+    visiblePostings = postings
+      .filter(p => p.authorId === myEmail)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }
+
+  const filtered = visiblePostings.filter(p =>
+    (p.title || '').toLowerCase().includes(postingSearchQuery.toLowerCase()) ||
+    (p.content || '').toLowerCase().includes(postingSearchQuery.toLowerCase())
+  );
+
+  return `
+  ${(currentRole === 'guidance' || currentRole === 'admin') ? `
+  <div class="mb-4">
+    <button onclick="deleteAllPostings()" 
+        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+        style="background:#ef5350;color:#fff">
+  <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+  ${tr('deleteAllPostings')}
+</button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  ${currentRole==='student' ? `
+    <div class="mb-8">
+      <button onclick="showPostingForm=!showPostingForm;render()" 
+              class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" 
+              style="background:${config.primary_action_color};color:${config.text_color}">
+        <i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('newPosting')}
+      </button>
+    </div>` : ''}
+
+  <div class="mb-6">
+    <div class="flex items-center gap-2 px-4 py-3 rounded-lg" 
+         style="background:${config.surface_color};border:1px solid ${config.text_color}22">
+      <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
+      <input type="text" placeholder="${tr('search')}" 
+             value="${postingSearchQuery}" 
+             oninput="postingSearchQuery=this.value;render()" 
+             style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
+    </div>
+  </div>
+
+  ${showPostingForm ? `
+  <div class="p-6 rounded-xl card-hover mb-6" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+    ${postingError ? `<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${postingError}</div>` : ''}
+    <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e3f2fd;border-left:4px solid #1565c0;color:#1a237e">
+      ${tr('postGuide')}
+    </div>
+    <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
+    <input type="text" placeholder="${tr('title')}" value="${postingTitle}" 
+           oninput="postingTitle=this.value" 
+           style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
+    <textarea placeholder="${tr('content')}" oninput="postingContent=this.value" 
+              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${postingContent}</textarea>
+    <div class="flex gap-3">
+      <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
+              style="background:${config.primary_action_color};color:${config.text_color}">${tr('publish')}</button>
+      <button onclick="showPostingForm=false;postingTitle='';postingContent='';postingError='';render()" 
+              class="px-4 py-2 rounded-lg font-semibold" 
+              style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
+    </div>
+  </div>` : ''}
+
+  <div class="space-y-4">
+    ${filtered.length === 0 
+      ? `<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
+           <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}44"></i>
+           <p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noPostings')}</p>
+         </div>`
+      : filtered.map(p => {
+          const isPending = true; // Postings are always "active"
+          const gc = getGlowClass(p, isPending);
+
+          return `
+      <div data-post-id="${p.id}" class="p-6 rounded-xl card-hover ${gc}" 
+           style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex-1">
+            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${p.title}</h3>
+            
+            ${currentRole==='guidance' ? `
+            <div class="flex items-center gap-2 mt-2 flex-wrap">
+              ${p.riskLevel ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
+                style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">
+                ${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${tr(p.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${p.aiScore}
+              </span>` : ''}
+              
+              ${p.priority ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
+                style="background:${p.priority==='High'?'#ef535022':p.priority==='Medium'?'#ff980022':'#66bb6a22'};color:${getPriorityColor(p.priority)};border:1.5px solid ${getPriorityColor(p.priority)}">
+                ${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${tr(p.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}
+              </span>` : ''}
+              
+              ${p.reasons && p.reasons.length ? `<span class="text-xs text-red-500">⚠ ${p.reasons.join(', ')}</span>` : ''}
+            </div>` : ''}
+
+            <div class="text-xs mt-2" style="color:${config.text_color}66">
+              ${p.author ? `${tr('by')}: ${p.author}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
+            </div>
+          </div>
+          
+          ${canDelete(p, 'posting') ? `
+  <button onclick="deletePosting(${p.id})" 
+          class="text-xs px-4 py-1.5 rounded-lg font-medium shrink-0" 
+          style="background:#ef5350;color:#fff">
+    ${tr('delete')}
+  </button>` : ''}
+                  </div>
+        <p style="color:${config.text_color}88; line-height:1.5;max-height:120px;overflow-y:auto;padding-right:4px">${p.content}</p>
+
+        ${p.guidanceMessage ? `
+        <div class="mt-3 p-3 rounded-lg" style="background:#e3f2fd;border-left:4px solid #1565c0">
+          <div class="text-xs font-bold mb-1" style="color:#1565c0">${tr('msgFromGuidance')}${p.guidanceMessageAt ? ' · ' + p.guidanceMessageAt : ''}</div>
+          <p class="text-sm" style="color:#1a237e">${p.guidanceMessage}</p>
+        </div>` : ''}
+
+        ${currentRole === 'guidance' ? `
+        <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}88">${tr('guidanceReply')}</div>
+          <div class="flex gap-2">
+            <textarea rows="2" placeholder="Type a message for the student..." 
+              oninput="guidanceMessageDraft['${p.id}']=this.value"
+              style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;resize:none">${guidanceMessageDraft[p.id]||''}</textarea>
+            <button onclick="sendGuidanceMessage(${p.id})" 
+              style="padding:8px 14px;background:#1565c0;color:#fff;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap;align-self:flex-end">
+              ${tr('send')}
+            </button>
+          </div>
+        </div>` : ''}
+
+        <!-- Student/anyone chat thread on postings -->
+        <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}66">💬 Comments</div>
+          ${(p.chatMessages && p.chatMessages.length) ? `
+          <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding-right:4px">
+            ${p.chatMessages.map(m=>`
+            <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?'row-reverse':'row'};gap:8px;align-items:flex-end">
+              <div style="max-width:75%;padding:8px 12px;border-radius:14px;font-size:13px;background:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?config.primary_action_color+'cc':config.text_color+'18'};color:${config.text_color}">
+                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.65">${m.role==='guidance'?'🎓 Guidance':m.sender==='Anonymous'?'👤 Anonymous':m.sender.split('@')[0]}</div>
+                ${m.text}
+                <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${m.time||''}</div>
+              </div>
+            </div>`).join('')}
+          </div>` : `<p style="font-size:12px;color:${config.text_color}44;margin-bottom:8px">No comments yet.</p>`}
+          <div style="display:flex;gap:8px">
+            <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." 
+              oninput="postingChatDraft['${p.id}']=this.value"
+              onkeydown="if(event.key==='Enter'){sendPostingChat(${p.id})}"
+              style="flex:1;padding:8px 12px;border:1px solid ${config.text_color}22;border-radius:20px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+            <button onclick="sendPostingChat(${p.id})" 
+              style="padding:8px 14px;background:${config.primary_action_color};color:${config.text_color};border-radius:20px;font-weight:700;font-size:13px">Send</button>
+          </div>
+        </div>
+      </div>`;
+        }).join('')}
+  </div>
+</div>`;
+}
+
+      // ── CONSULTATIONS ──
+      if(activeSidebarItem==='Consultations') {
+        let visibleConsultations=isGuidance
+          ?[...consultationPostings].map(c=>({...c,aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim(),status:(c.status||'Pending').trim()}))
+            .sort((a,b)=>{
+              // Pending before Done
+              if(a.status==='Pending'&&b.status!=='Pending')return -1;
+              if(a.status!=='Pending'&&b.status==='Pending')return 1;
+              // Among pending: highest urgency first
+              if(a.status==='Pending')return getUrgencyScore(b)-getUrgencyScore(a);
+              // Among done: newest first
+              return(b.timestamp||0)-(a.timestamp||0);
+            })
+          :consultationPostings.filter(c=>c.authorId===myEmail);
+
+        return `
+        ${(currentRole === 'guidance' || currentRole === 'admin') ? `
+  <div class="mb-4">
+    <button onclick="deleteAllConsultations()" 
+          class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+          style="background:#ef5350;color:#fff">
+    <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+    ${tr('deleteAllConsult')}
+  </button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  <div class="flex justify-between items-center mb-6">
+    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
+    ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
+  </div>
+  ${showConsultationForm?`
+  <div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+    ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
+    <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
+      🤝 <strong>Consultation Guide:</strong> Describe your concern clearly. The guidance counselor will review and reply via the chat below your request.
+    </div>
+    <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newConsultation')}</h3>
+
+    <!-- Grade Level Selector -->
+    <div class="mb-4">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📚 Grade Level</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">Junior High School</div>
+          ${[7,8,9,10].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#1565c0':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
+        </div>
+        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#fce4ec;color:#c62828;text-transform:uppercase;letter-spacing:.05em">Senior High School</div>
+          ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
+        </div>
+      </div>
+      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ Selected: ${consultationGradeLevel}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
+    </div>
+
+    <input type="text" placeholder="${tr('reason')}" value="${consultationReason||''}" oninput="consultationReason=this.value" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-medium" style="background:${consultationPriority===p?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${tr(p.toLowerCase())}</button>`).join('')}</div></div>
+    <textarea placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical">${consultationDescription||''}</textarea>
+    <div class="flex gap-3">
+      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submitRequest')}</button>
+      <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
+    </div>
+  </div>`:''}
+  <div class="space-y-4">
+    ${visibleConsultations.length===0
+      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noConsultations')}</p></div>`
+      :visibleConsultations.map(c=>{
+        const isPending=c.status==='Pending';
+        const gc=getGlowClass(c,isPending);
+        return `
+        <div class="p-6 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+          <!-- Header row: status badge + grade level + action buttons -->
+          <div class="flex flex-col md:flex-row justify-between items-start gap-4 mb-4">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2 flex-wrap">
+                <span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${isPending?(c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'):'#66bb6a'};color:#fff">${isPending?(c.priority==='High'?'⚡ ':c.priority==='Medium'?'▲ ':'▽ ')+c.priority+' Priority':tr('resolved')}</span>
+                ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${tr(c.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${c.aiScore}</span>`:''}
+                ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'🎓 SHS':'📚 JHS'} · ${c.gradeLevel}</span>`:''}
+              </div>
+              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${c.reason}</h3>
+            </div>
+            <div class="flex gap-2 shrink-0">
+  ${(c.author === myEmail || c.studentEmail === myEmail || c.authorId === myEmail) && c.status === 'Pending' ? `
+    <button onclick="deleteConsultationPosting('${c.id}')" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:#ef5350;color:#fff">
+      ${tr('cancel')}
+    </button>` : ''}
+
+  ${canDelete(c, 'consultation') ? `
+    <button onclick="deleteConsultation(${c.id})" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:#ef5350;color:#fff">
+      ${tr('delete')}
+    </button>` : ''}
+
+  ${currentRole === 'guidance' && c.status === 'Pending' ? `
+    <button onclick="updateConsultationStatus('${c.id}')" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:${config.secondary_action_color};color:${config.text_color}">
+      ${tr('markResolved')}
+    </button>` : ''}
+</div>
+          </div>
+
+          <!-- Description scrollable -->
+          <div style="max-height:100px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
+            <p style="color:${config.text_color}88;line-height:1.5">${c.description}</p>
+          </div>
+
+          <!-- Meta info -->
+          ${isGuidance?`<div class="text-xs mb-3 pt-2 border-t flex gap-3 flex-wrap" style="color:${config.text_color}55;border-color:${config.text_color}11">
+            <span>👤 ${c.studentEmail||c.author}</span>
+            <span>📋 Status: <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
+            <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
+          </div>`:''}
+
+          <!-- Consultation Chat Thread -->
+          <div style="border-top:1px solid ${config.text_color}11;padding-top:12px;margin-top:4px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <i data-lucide="message-square" style="width:14px;height:14px;color:${config.text_color}55"></i>
+              <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
+            </div>
+            <!-- Message thread scrollable -->
+            <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
+              ${c.chatMessages && c.chatMessages.length ? c.chatMessages.map(m=>`
+              <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?'row-reverse':'row'};gap:8px;align-items:flex-end">
+                <div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:${m.role==='guidance'?'#1565c0':(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?config.primary_action_color+'dd':config.text_color+'18'};color:${m.role==='guidance'?'#fff':config.text_color}">
+                  <div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">${m.role==='guidance'?'🎓 Guidance Counselor':m.sender==='Anonymous'?'👤 You (Anonymous)':m.sender.split('@')[0]}</div>
+                  ${m.text}
+                  <div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">${m.time||''}</div>
+                </div>
+              </div>`).join('') : `<div style="text-align:center;padding:16px 0;font-size:12px;color:${config.text_color}44">No messages yet. ${isPending?'Start the conversation below.':'This consultation is resolved.'}</div>`}
+            </div>
+            <!-- Chat input - always shown while pending, guidance can always reply -->
+            ${isPending || currentRole==='guidance' ? `
+            <div style="display:flex;gap:8px">
+              <input id="consultChat_${c.id}" type="text" 
+                placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
+                oninput="consultationChatDraft['${c.id}']=this.value"
+                onkeydown="if(event.key==='Enter'){sendConsultationChat('${c.id}')}"
+                style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+              <button onclick="sendConsultationChat('${c.id}')" 
+                style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
+                <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
+              </button>
+            </div>` : `<p style="font-size:12px;color:${config.text_color}44;text-align:center">Chat closed — consultation resolved.</p>`}
+          </div>
+        </div>`;
+      }).join('')}
+  </div>
+</div>`;
+      }
+
+      // ── USERS (admin) ──
+      if(activeSidebarItem==='Users'&&currentRole==='admin') return `
+<div class="max-w-4xl">
+  <div class="flex justify-between items-center mb-8"><div><h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">User Management</h1><p class="text-sm mt-1" style="color:${config.text_color}66">Create Admin or Guidance accounts • Only Admins can access this page</p></div></div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="shield" style="width:28px;height:28px;color:#90caf9"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Admin</h3></div><input type="email" id="newAdminEmail" placeholder="admin@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newAdminPassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createAdminAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:#90caf9;color:${config.text_color}">Create Admin Account</button></div>
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="users" style="width:28px;height:28px;color:#ffee58"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Guidance Counselor</h3></div><input type="email" id="newGuidanceEmail" placeholder="counselor@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newGuidancePassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createGuidanceAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">Create Guidance Account</button></div>
+  </div>
+  <div class="p-6 rounded-xl" style="background:${config.surface_color}"><p style="color:${config.text_color}88">• New accounts are created immediately.<br>• Only these credentials will allow login with the correct role.</p></div>
+</div>`;
+
+      // ── FEEDBACK ──
+      if(activeSidebarItem==='Feedback') {
+        const visibleFeedback=currentRole==='admin'?feedbackList:feedbackList.filter(f=>f.author===myEmail);
+        return `
+        ${currentRole === 'admin' ? `
+  <div class="mb-4">
+    <button onclick="deleteAllFeedback()" 
+        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+        style="background:#ef5350;color:#fff">
+      <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+      ${tr('deleteAllFeedback')}
+    </button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  ${currentRole!=='admin'?`<div class="mb-8"><button onclick="showFeedbackForm=!showFeedbackForm;render()" class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('leaveFeedback')}</button></div>`:''}
+  ${showFeedbackForm?`<div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">${feedbackError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${feedbackError}</div>`:''}<h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('leaveFeedback')}</h3><div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('rating')}</label><div class="flex gap-2">${[1,2,3,4,5].map(n=>`<button onclick="feedbackRating=${n};render()" class="w-10 h-10 rounded-lg font-bold text-lg" style="background:${feedbackRating>=n?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${n}</button>`).join('')}</div></div><textarea placeholder="${tr('writeFeedback')}" oninput="feedbackMessage=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${feedbackMessage}</textarea><div class="flex gap-3"><button onclick="addFeedback()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submit')}</button><button onclick="showFeedbackForm=false;feedbackMessage='';feedbackRating=5;feedbackError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button></div></div>`:''}
+  <div class="space-y-4">
+    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noFeedback')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}88">${f.authorRole||'Student'}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#ffee58':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}55">${f.date||''}</span></div><p style="color:${config.text_color}88;margin-top:8px">${f.message}</p></div>`).join('')}
+  </div>
+</div>`;
+      }
+
+      // ── LOGS (admin) ──
+      if(activeSidebarItem==='Logs'&&currentRole==='admin') {
+        const filtered=logFilter==='all'?systemLogs:systemLogs.filter(l=>l.type===logFilter);
+        return `
+<div class="max-w-4xl">
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">System Logs</h1>
+    <div class="flex gap-2">${['all','info','warning','error','success'].map(t=>`<button onclick="logFilter='${t}';render()" class="px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:${logFilter===t?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
+  </div>
+  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${l.user} · ${l.time}</p></div></div>`).join('')}</div>
+</div>`;
+      }
+
+      // ── SETTINGS ──
+      if(activeSidebarItem==='Settings') return `
+<div class="max-w-xl">
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color}">
+    <h3 class="font-bold mb-4" style="color:${config.text_color}">${tr('appearance')}</h3>
+    <div class="flex items-center justify-between p-4 rounded-lg mb-3" style="background:${config.text_color}08">
+      <div class="flex items-center gap-3">
+        <i data-lucide="${darkMode?'moon':'sun'}" style="width:20px;height:20px;color:${config.text_color}"></i>
+        <span style="font-weight:600;color:${config.text_color}">${tr('darkMode')}</span>
+      </div>
+      <button onclick="darkMode=!darkMode;render()" class="relative w-14 h-7 rounded-full" style="background:${darkMode?config.primary_action_color+'cc':config.text_color}33">
+        <div class="absolute w-6 h-6 rounded-full" style="top:0.5px;${darkMode?'right:0.5px':'left:0.5px'};background:${config.text_color}"></div>
+      </button>
+    </div>
+    <div class="p-4 rounded-lg" style="background:${config.text_color}08">
+      <div class="flex items-center gap-3 mb-3">
+        <i data-lucide="languages" style="width:20px;height:20px;color:${config.text_color}"></i>
+        <span style="font-weight:600;color:${config.text_color}">${tr('langSetting')}</span>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()"
+          style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
+          🇺🇸 English
+        </button>
+        <button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()"
+          style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
+          🇵🇭 Filipino
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="p-6 rounded-xl" style="background:${config.surface_color}">
+    <h3 class="font-bold mb-2" style="color:${config.text_color}">${tr('account')}</h3>
+    ${isAnonymous?`
+    <div class="flex items-center gap-2 mb-3 p-3 rounded-lg" style="background:#90a4ae22;border:1px solid #90a4ae44">
+      <i data-lucide="eye-off" style="width:16px;height:16px;color:#90a4ae"></i>
+      <span class="text-sm font-semibold" style="color:${config.text_color}88">${tr('signedInAs')}</span>
+    </div>
+    <p class="text-sm mb-4" style="color:${config.text_color}66">${tr('anonNote')}</p>
+    <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#90a4ae;color:#fff">${tr('leaveAnon')}</button>`:`
+    <p class="text-sm mb-4" style="color:${config.text_color}88">${tr('loggedInAs')} <strong>${currentUserEmail}</strong> (${currentRole})</p>
+    <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#ef5350;color:#fff">${tr('logout')}</button>`}
+  </div>
+</div>`;
+
+      // ── PROBLEMS (guidance) ──
+      if(activeSidebarItem==='Problems'&&currentRole==='guidance') {
+        const problemConsultations=[...consultationPostings]
+          .filter(c=>c.status==='Pending')
+          .map(c=>({...c,_type:'consultation',aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim()}))
+          // AI must have verified High risk — priority alone is NOT sufficient
+          .filter(c=>c.riskLevel==='High'||c.riskLevel==='Medium')
+          .sort((a,b)=>getUrgencyScore(b)-getUrgencyScore(a));
+        const problemPostings=[...postings]
+          .map(p=>({...p,_type:'posting',aiScore:Number(p.aiScore||0),priority:(p.priority||'Medium').trim(),riskLevel:(p.riskLevel||'Low').trim()}))
+          // AI must have verified High risk — priority alone is NOT sufficient
+          .filter(p=>p.riskLevel==='High'||p.riskLevel==='Medium')
+          .sort((a,b)=>getUrgencyScore(b)-getUrgencyScore(a));
+        const totalCount=problemConsultations.length+problemPostings.length;
+        return `
+<div class="max-w-3xl">
+  <div class="mb-6 p-4 rounded-xl flex items-center gap-3" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}44">
+    <i data-lucide="alert-triangle" style="width:20px;height:20px;color:#f57c00"></i>
+    <span style="color:${config.text_color};font-weight:600">${totalCount} ${appLang==='tl'?'item':'item'}${totalCount!==1&&appLang!=='tl'?'s':''} ${appLang==='tl'?'nangangailangan ng pansin':'require attention'} &mdash; ${problemConsultations.length} ${appLang==='tl'?'konsultasyon':'consultation'}${problemConsultations.length!==1&&appLang!=='tl'?'s':''}, ${problemPostings.length} ${appLang==='tl'?'post':'posting'}${problemPostings.length!==1&&appLang!=='tl'?'s':''}</span>
+  </div>
+  ${totalCount===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="check-circle" style="width:32px;height:32px;color:#66bb6a"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${appLang==='tl'?'Walang problema! Walang medium o high risk na item.':'All clear! No medium or high risk items.'}</p></div>`:''}
+  ${problemConsultations.length>0?`
+  <div class="mb-3 flex items-center gap-2"><i data-lucide="users" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Nakabinbing Konsultasyon':'Pending Consultations'}</span></div>
+  <div class="space-y-4 mb-8">
+    ${problemConsultations.map(c=>{const gc=getGlowClass(c,true);return `
+    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+      <div class="flex justify-between items-start mb-2">
+        <div>
+          <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#90caf922;color:#5c9be0;border:1px solid #90caf944">${appLang==='tl'?'Konsultasyon':'Consultation'}</span></div>
+          <h3 class="font-bold" style="color:${config.text_color}">${c.reason}</h3>
+          <div class="flex gap-2 mt-1 flex-wrap">
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.priority==='High'?'⚡':c.priority==='Medium'?'▲':'▽'} ${tr(c.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${c.riskLevel} Risk · AI:${c.aiScore}</span>
+          </div>
+        </div>
+        <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg shrink-0 font-semibold" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markDone')}</button>
+      </div>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${c.description}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Estudyante:':'Student:'} ${c.studentEmail||c.author} · ${c.date||''}</p>
+    </div>`;}).join('')}
+  </div>`:''}
+  ${problemPostings.length>0?`
+  <div class="mb-3 flex items-center gap-2"><i data-lucide="megaphone" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Naka-flag na Post':'Flagged Postings'}</span></div>
+  <div class="space-y-4">
+    ${problemPostings.map(p=>{const gc=getGlowClass(p,true);return `
+    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+      <div class="mb-2">
+        <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#ffee5822;color:#9a8000;border:1px solid #ffee5855">${appLang==='tl'?'Post':'Posting'}</span></div>
+        <h3 class="font-bold" style="color:${config.text_color}">${p.title}</h3>
+        <div class="flex gap-2 mt-1 flex-wrap">
+          <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.priority==='High'?'#ef5350':p.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${p.priority} Priority</span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${p.riskLevel} Risk · AI:${p.aiScore}</span>
+          ${p.reasons&&p.reasons.length?`<span class="text-xs px-2 py-0.5 rounded-full font-semibold" style="background:#ef535018;color:#ef5350">⚠ ${p.reasons[0]}${p.reasons.length>1?' +'+(p.reasons.length-1)+' more':''}</span>`:''}
+        </div>
+      </div>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${p.content}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Ni':'By'}: ${p.author} · ${p.timestamp?new Date(p.timestamp).toLocaleDateString():''}</p>
+    </div>`;}).join('')}
+  </div>`:''}
+</div>`;
+      }
+
+      // ── DASHBOARD ──
+      return `
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+  ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="megaphone" style="width:20px;height:20px;color:${config.primary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('postings')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?postings.length:postings.filter(p=>p.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalPosted'):tr('yourPosts')}</p></div>`:''}
+  ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="users" style="width:20px;height:20px;color:${config.secondary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('consultations')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?consultationPostings.length:consultationPostings.filter(c=>c.author===currentUserEmail||c.studentEmail===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalRequests'):tr('yourRequests')}</p></div>`:''}
+  <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="message-circle" style="width:20px;height:20px;color:#90caf9"></i><span class="font-semibold" style="color:${config.text_color}">${tr('feedback')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${currentRole==='admin'?feedbackList.length:feedbackList.filter(f=>f.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${currentRole==='admin'?tr('totalFeedback'):tr('yourFeedback')}</p></div>
+  ${isGuidance?`<div class="p-6 rounded-xl card-hover" style="background:#ef535011;border:1px solid #ef535033"><div class="flex items-center gap-3 mb-2"><i data-lucide="alert-triangle" style="width:20px;height:20px;color:#ef5350"></i><span class="font-semibold" style="color:${config.text_color}">${tr('problems')}</span></div><p class="text-3xl font-bold" style="color:#ef5350">${consultationPostings.filter(c=>c.status==='Pending').length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${tr('needAttention')}</p></div>`:''}
+</div>
+<div class="p-6 rounded-xl" style="background:${config.surface_color}">
+  <h3 class="font-bold mb-1" style="color:${config.text_color}">${tr('welcomeMsg')}</h3>
+  <p style="color:${config.text_color}88;font-size:14px">${currentRole==='student'?tr('dashHint_student'):isGuidance?tr('dashHint_guidance'):tr('dashHint_admin')}</p>
+</div>
+${isGuidance?`
+<div class="p-6 rounded-xl mt-6" style="background:${config.surface_color};border:1px solid #90caf933">
+  <div class="flex items-center gap-3 mb-4">
+    <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#90caf922">
+      <i data-lucide="megaphone" style="width:18px;height:18px;color:#90caf9"></i>
+    </div>
+    <div>
+      <h3 class="font-bold" style="color:${config.text_color}">📢 Send Announcement to Students</h3>
+      <p class="text-xs" style="color:${config.text_color}66">Push notification delivered to all subscribed students</p>
+    </div>
+  </div>
+  <input type="text" placeholder="Announcement title..." value="${announcementTitle}"
+    oninput="announcementTitle=this.value"
+    style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+  <textarea placeholder="Write your message to all students..." oninput="announcementMessage=this.value"
+    style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
+  <button onclick="handleSendAnnouncement()"
+    style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
+    <i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students
+  </button>
+</div>`:''}`;
+    }
+
+    // ── DEEP LINK HANDLER ──
+    // When counselor taps a OneSignal push notification, the URL contains
+    // ?deeplink=posting&id=123&risk=High&score=18
+    // This handler waits for auth + data to load, then auto-navigates.
+    function handleDeepLink() {
+      const params = new URLSearchParams(window.location.search);
+      const type  = params.get('deeplink');   // 'posting' or 'consultation'
+      const id    = params.get('id');
+      const risk  = params.get('risk');
+      const score = params.get('score');
+      if (!type || !id) return;
+
+      // Poll until data is loaded and user is authenticated as guidance
+      let attempts = 0;
+      const check = setInterval(() => {
+        attempts++;
+        if (attempts > 30) { clearInterval(check); return; } // timeout after 15s
+
+        const isReady = isAuthenticated && currentRole === 'guidance' &&
+          (type === 'posting' ? postings.length > 0 : consultationPostings.length > 0);
+        if (!isReady) return;
+        clearInterval(check);
+
+        // Navigate to the correct section
+        if (type === 'posting') {
+          activeSidebarItem = 'Postings';
+          expandedPost = Number(id);
+        } else if (type === 'consultation') {
+          activeSidebarItem = 'Consultations';
+          expandedConsult = Number(id);
+        }
+        render();
+
+        // Scroll to the specific post — poll until element appears in DOM
+        let scrollAttempts = 0;
+        const scrollCheck = setInterval(() => {
+          scrollAttempts++;
+          if (scrollAttempts > 20) { clearInterval(scrollCheck); return; }
+          const el = document.querySelector(`[data-post-id="${id}"]`);
+          if (el) {
+            clearInterval(scrollCheck);
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.style.outline = '3px solid #ef5350';
+            setTimeout(() => { el.style.outline = ''; }, 3000);
+          }
+        }, 300);
+
+        // Show a banner about why they're here
+        setTimeout(() => {
+          showModal(
+            `🚨 ${risk || 'High'} Risk Alert`,
+            `AI Score: <strong>${score || '?'}</strong><br>A student submission was flagged and needs your attention. You have been brought directly to the item below.`,
+            'error'
+          );
+        }, 400);
+
+        // Clean up URL so refresh doesn't re-trigger
+        window.history.replaceState({}, '', window.location.pathname);
+      }, 500);
+    }
+
+    handleDeepLink();
+
+    // ── AUTO-LOGIN via Firebase session ──
+    auth.onAuthStateChanged(async (user) => {
+      if (user && !isAuthenticated) {
+        const savedRole = localStorage.getItem('qh_saved_role');
+        if (!savedRole) { render(); return; }
+
+        const email = user.email.toLowerCase();
+        const adminEmails = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
+        let actualRole = 'student';
+        if (adminEmails.includes(email)) actualRole = 'admin';
+        else if (email.includes('guidance') || email.includes('counselor')) actualRole = 'guidance';
+
+        if (savedRole !== actualRole) { render(); return; }
+
+        currentUserEmail = email;
+        currentRole = savedRole;
+        isAuthenticated = true;
+        activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+
+        if (savedRole === 'guidance') registerAsCounselor();
+        loadDataFromFirestore();
+        setTimeout(handleDeepLink, 1000);
+        render();
+      } else if (!user) {
+        render();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
