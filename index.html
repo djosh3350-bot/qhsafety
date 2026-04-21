@@ -125,6 +125,8 @@
   .qh-modal-btn-secondary { background:#f0f0f0;color:#5a6a7a; }
   .qh-modal-btn-secondary:hover { background:#e0e0e0; }
   
+  @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+
   /* Hide OneSignal default widget — we use our own custom button */
   #onesignal-bell-container, .onesignal-bell-container,
   .onesignal-customlink-container, #onesignal-slidedown-container,
@@ -1583,17 +1585,27 @@ function unregisterAsCounselor() {
 }
 
 // ── ONESIGNAL: Broadcast announcement to all students ──
+// Uses direct OneSignal REST API (same approach as broadcaster reference)
+const ONESIGNAL_CONFIG = {
+  APP_ID: "b6d94be7-713f-4369-8b1f-2df77580872c",
+  REST_KEY: "os_v2_app_w3muxz3rh5bwtcy7fx3xlaehftzv6cylc2eequnxrpk5u34vbksf7p4qespn3wdt755k6wuucwmuxxzcapanfiasvz3gkph5lu2r5iy"
+};
+
 async function sendAnnouncementPush(title, message) {
-  try {
-    const response = await fetch("/api/notify", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, message, url: window.location.origin, target: 'all' })
-    });
-    return await response.json();
-  } catch(e) {
-    console.error("Announcement push error:", e);
-  }
+  const res = await fetch("https://onesignal.com/api/v1/notifications", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Basic ${ONESIGNAL_CONFIG.REST_KEY}`
+    },
+    body: JSON.stringify({
+      app_id: ONESIGNAL_CONFIG.APP_ID,
+      included_segments: ["Total Subscriptions"],
+      headings: { "en": title },
+      contents: { "en": message }
+    })
+  });
+  return await res.json();
 }
 
 let announcementTitle = '', announcementMessage = '';
@@ -1603,13 +1615,66 @@ async function handleSendAnnouncement() {
     showModal('Missing Fields', 'Please enter both a title and message.', 'error');
     return;
   }
-  const result = await sendAnnouncementPush(announcementTitle, announcementMessage);
-  if (result && !result.errors) {
+
+  // Disable button and show sending state
+  const btn = document.getElementById('announcement-send-btn');
+  const statusEl = document.getElementById('announcement-status');
+  const progressWrap = document.getElementById('announcement-progress-wrap');
+  const progressFill = document.getElementById('announcement-progress-fill');
+  const timerEl = document.getElementById('announcement-timer');
+  const resultEl = document.getElementById('announcement-result');
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...'; lucide.createIcons({nodes:[btn]}); }
+  if (progressWrap) progressWrap.style.display = 'block';
+  if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '🚀 Deploying announcement...'; statusEl.style.color = '#1565c0'; }
+  if (progressFill) { progressFill.style.transition = 'none'; progressFill.style.width = '0%'; }
+  if (resultEl) resultEl.style.display = 'none';
+
+  try {
+    const data = await sendAnnouncementPush(announcementTitle.trim(), announcementMessage.trim());
+
+    if (!data.id) throw new Error(JSON.stringify(data.errors || data));
+
+    // Sync countdown (10 seconds, like y.html reference)
+    if (statusEl) statusEl.textContent = '⏳ Syncing delivery data...';
+    if (progressFill) {
+      setTimeout(() => { progressFill.style.transition = 'width 10s linear'; progressFill.style.width = '100%'; }, 50);
+    }
+    for (let i = 10; i > 0; i--) {
+      if (timerEl) timerEl.textContent = i + 's';
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Verify delivery count
+    if (statusEl) statusEl.textContent = '✅ Verifying recipients...';
+    const checkRes = await fetch(`https://onesignal.com/api/v1/notifications/${data.id}?app_id=${ONESIGNAL_CONFIG.APP_ID}`, {
+      headers: { "Authorization": `Basic ${ONESIGNAL_CONFIG.REST_KEY}` }
+    });
+    const stats = await checkRes.json();
+    const delivered = stats.successful || stats.received || 0;
+
+    if (statusEl) statusEl.textContent = '✅ Announcement delivered!';
+    if (timerEl) timerEl.textContent = 'DONE';
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Verified Recipients</span>`;
+    }
+
+    addLog(`📢 Announcement sent to ${delivered} student(s): "${announcementTitle.trim()}"`, currentUserEmail, 'info');
     announcementTitle = ''; announcementMessage = '';
-    showModal('📢 Announcement Sent!', `Delivered to <strong>${result.recipients || 0}</strong> student device(s).`, 'success');
-    render();
-  } else {
-    showModal('Failed', 'Could not send announcement: ' + JSON.stringify(result?.errors), 'error');
+    // Reset input fields directly
+    const titleInp = document.getElementById('announcement-title-input');
+    const msgInp = document.getElementById('announcement-msg-input');
+    if (titleInp) titleInp.value = '';
+    if (msgInp) msgInp.value = '';
+
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = '❌ Failed to send announcement.'; statusEl.style.color = '#c62828'; }
+    if (timerEl) timerEl.textContent = '';
+    showModal('Send Failed', 'Could not broadcast announcement. Check your connection and try again.<br><small>' + e.message + '</small>', 'error');
+    console.error('[QHsafety] Announcement broadcast error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students'; lucide.createIcons({nodes:[btn]}); }
   }
 }
 
@@ -2527,15 +2592,26 @@ ${isGuidance?`
       <p class="text-xs" style="color:${config.text_color}66">Push notification delivered to all subscribed students</p>
     </div>
   </div>
-  <input type="text" placeholder="Announcement title..." value="${announcementTitle}"
+  <input id="announcement-title-input" type="text" placeholder="Announcement title..." value="${announcementTitle}"
     oninput="announcementTitle=this.value"
     style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
-  <textarea placeholder="Write your message to all students..." oninput="announcementMessage=this.value"
+  <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value"
     style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
-  <button onclick="handleSendAnnouncement()"
+  <button id="announcement-send-btn" onclick="handleSendAnnouncement()"
     style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
     <i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students
   </button>
+  <!-- Progress & status area (shown during/after send) -->
+  <div style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span id="announcement-status" style="display:none;font-size:12px;font-weight:700;color:#1565c0"></span>
+      <span id="announcement-timer" style="font-size:12px;font-family:monospace;color:#888"></span>
+    </div>
+    <div id="announcement-progress-wrap" style="display:none;width:100%;height:6px;background:#e0e0e0;border-radius:4px;overflow:hidden">
+      <div id="announcement-progress-fill" style="height:100%;background:#90caf9;width:0%;transition:none;border-radius:4px"></div>
+    </div>
+    <div id="announcement-result" style="display:none;text-align:center;margin-top:10px"></div>
+  </div>
 </div>`:''}`;
     }
 
