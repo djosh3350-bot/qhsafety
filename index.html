@@ -17,10 +17,10 @@
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
-  appId: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
-  notifyButton: { enable: true },
-  allowLocalhostAsSecureOrigin: true,
-});
+      appId: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
+      notifyButton: { enable: false },
+      allowLocalhostAsSecureOrigin: true,
+    });
   });
 </script>
   <style>
@@ -1527,7 +1527,7 @@ async function sendAnnouncementPush(title, message) {
     const response = await fetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, message, url: window.location.origin, target: 'all' })
+      body: JSON.stringify({ title, message, url: window.location.origin, target: 'student' })
     });
     return await response.json();
   } catch(e) {
