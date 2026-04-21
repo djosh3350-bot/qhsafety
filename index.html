@@ -1418,13 +1418,15 @@ function logout() {
     // 📧 Notify guidance if AI confirmed High OR Medium risk
 if (risk.level === 'High' || risk.level === 'Medium') {
   await notifyGuidanceOfHighRisk('Posting', authorLabel, cleanTitle, cleanContent, risk.score, risk.level, risk.reasons);
-  
-  if (typeof sendOneSignalPush === 'function') {
-    await sendOneSignalPush(
+  try {
+    const pushResult = await sendOneSignalPush(
       `🚨 ${risk.level.toUpperCase()} RISK POST — AI Score: ${risk.score}`,
       `${authorLabel}: "${cleanTitle}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
       newPosting.id, 'posting', risk.level, risk.score, risk.reasons
     );
+    console.log('[QHsafety] OneSignal push result:', JSON.stringify(pushResult));
+  } catch(pushErr) {
+    console.error('[QHsafety] OneSignal push failed:', pushErr);
   }
   addLog(`🚨 ${risk.level}-risk posting alert sent`, authorLabel, 'warning');
 }
@@ -1597,12 +1599,15 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
 if (risk.level === 'High' || risk.level === 'Medium') {
   await notifyGuidanceOfHighRisk('Consultation', authorLabel, cleanReason, cleanDesc, risk.score, risk.level, risk.reasons);
   
-  if (typeof sendOneSignalPush === 'function') {
-    await sendOneSignalPush(
+  try {
+    const pushResult = await sendOneSignalPush(
       `🚨 ${risk.level.toUpperCase()} RISK CONSULTATION — AI Score: ${risk.score}`,
       `${authorLabel}: "${cleanReason}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
       newConsult.id, 'consultation', risk.level, risk.score, risk.reasons
     );
+    console.log('[QHsafety] OneSignal push result:', JSON.stringify(pushResult));
+  } catch(pushErr) {
+    console.error('[QHsafety] OneSignal push failed:', pushErr);
   }
   addLog(`🚨 ${risk.level}-risk consultation alert sent`, authorLabel, 'warning');
 }
