@@ -12,14 +12,18 @@
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-  <div class='onesignal-customlink-container'></div>
-
-<script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script>
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
       appId: "b6d94be7-713f-4369-8b1f-2df77580872c",
+      notifyButton: { enable: false },
+      customLinkStyle: {
+        size: "small",
+        color: { button: "#ffee58", text: "#2c3e50" },
+        unsubscribeEnabled: true
+      }
     });
   });
 </script>
@@ -1911,14 +1915,14 @@ async function deleteConsultation(id) {
       <div class="p-5 pb-2"><span class="mono font-bold" style="font-size:${fs*1.2}px;color:${config.primary_action_color}">QHsafety</span><div class="mt-1 text-xs font-medium" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
       <nav class="mt-4 flex-1">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="color:${activeSidebarItem===item?config.primary_action_color:'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?config.primary_action_color:'transparent'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
       <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm" style="color:#ffffff66;border-top:1px solid #ffffff11;background:none;border-left:none;border-right:none;cursor:pointer;width:100%"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
-      <button onclick="enablePushNotifications()" style="margin:8px 12px 12px;padding:10px;border-radius:10px;background:#ffee58;color:#2c3e50;border:none;cursor:pointer;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;gap:6px;width:calc(100% - 24px)"><i data-lucide="bell" style="width:15px;height:15px"></i>Enable Notifications</button>
+      <div class="onesignal-customlink-container" style="margin:8px 12px 12px"></div>
     </aside>
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
       <div class="mobile-topbar">
         <button onclick="mobileDrawerOpen=true;render()" style="background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
         <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
         <div style="display:flex;align-items:center;gap:8px">
-          <button onclick="enablePushNotifications()" id="push-btn" style="background:#ffee58;color:#2c3e50;border:none;border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px"><i data-lucide="bell" style="width:13px;height:13px"></i>Notify</button>
+          <div class="onesignal-customlink-container"></div>
           <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
         </div>
       </div>
