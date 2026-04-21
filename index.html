@@ -1527,7 +1527,7 @@ async function sendAnnouncementPush(title, message) {
     const response = await fetch("/api/notify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, message, url: window.location.origin, target: 'student' })
+      body: JSON.stringify({ title, message, url: window.location.origin, target: 'all' })
     });
     return await response.json();
   } catch(e) {
