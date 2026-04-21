@@ -125,6 +125,15 @@
   .qh-modal-btn-secondary { background:#f0f0f0;color:#5a6a7a; }
   .qh-modal-btn-secondary:hover { background:#e0e0e0; }
   
+  /* Hide OneSignal default widget — we use our own custom button */
+  #onesignal-bell-container, .onesignal-bell-container,
+  .onesignal-customlink-container, #onesignal-slidedown-container,
+  #onesignal-popover-container { display: none !important; }
+
+  /* Mobile topbar notification bell hover */
+  #mob-notif-btn:hover { opacity: 0.75; }
+  #mob-notif-btn svg { transition: transform 0.2s; }
+  #mob-notif-btn:active svg { transform: scale(0.88); }
 .rounded-3xl { border-radius: 24px; }
 
 .card-hover:hover {
@@ -1469,26 +1478,74 @@ function canDelete(item, type) {
   return false;
 }
 
+// ── ONESIGNAL: Update notification button/indicator UI state ──
+function updateNotifUI() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      const enabled = await OneSignal.Notifications.permission;
+
+      // Mobile topbar bell dot
+      const dot = document.getElementById('mob-notif-dot');
+      if (dot) dot.style.display = enabled ? 'block' : 'none';
+
+      // Settings page status label
+      const label = document.getElementById('settings-notif-label');
+      const icon  = document.getElementById('settings-notif-icon');
+      const btn   = document.getElementById('settings-notif-btn');
+      if (label) {
+        if (enabled) {
+          label.textContent = 'Push notifications are enabled on this device.';
+          label.style.color = '#388e3c';
+          if (icon) icon.textContent = '✅';
+          if (btn) {
+            btn.textContent = '✅ Notifications Enabled';
+            btn.style.background = '#66bb6a';
+            btn.style.color = '#fff';
+          }
+        } else {
+          label.textContent = 'Push notifications are not enabled yet.';
+          label.style.color = '';
+          if (icon) icon.textContent = '🔕';
+          if (btn) {
+            btn.innerHTML = '<i data-lucide="bell-ring" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"></i>Enable Push Notifications';
+            btn.style.background = '#ffee58';
+            btn.style.color = '#2c3e50';
+            lucide.createIcons({nodes: [btn]});
+          }
+        }
+      }
+    } catch(e) {
+      // OneSignal not ready yet — silence
+    }
+  });
+}
+
 // ── ONESIGNAL: Manual push enable button ──
 async function enablePushNotifications() {
-  try {
-    const permission = OneSignal.Notifications.permission;
-    const tag = currentRole === 'guidance' ? 'guidance' : 'student';
-    if (permission) {
-      await OneSignal.User.addTag("user_role", tag);
-      showModal('✅ Already Enabled', `Push notifications are active. You are subscribed as <strong>${tag}</strong>.`, 'success');
-      return;
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      const permission = await OneSignal.Notifications.permission;
+      const tag = currentRole === 'guidance' ? 'guidance' : 'student';
+      if (permission) {
+        await OneSignal.User.addTag("user_role", tag);
+        showModal('✅ Already Enabled', `Push notifications are active. You are subscribed as <strong>${tag}</strong>.`, 'success');
+        updateNotifUI();
+        return;
+      }
+      await OneSignal.Notifications.requestPermission();
+      if (await OneSignal.Notifications.permission) {
+        await OneSignal.User.addTag("user_role", tag);
+        showModal('🔔 Notifications Enabled!', `You will now receive push notifications as <strong>${tag}</strong>.`, 'success');
+      } else {
+        showModal('Blocked', 'Notifications are blocked. Go to your browser\'s Site Settings → Notifications → Allow for this site, then try again.', 'error');
+      }
+      updateNotifUI();
+    } catch(e) {
+      showModal('Error', 'Could not enable notifications: ' + (e.message || e), 'error');
     }
-    await OneSignal.Notifications.requestPermission();
-    if (OneSignal.Notifications.permission) {
-      await OneSignal.User.addTag("user_role", tag);
-      showModal('🔔 Notifications Enabled!', `You will now receive push notifications as <strong>${tag}</strong>.`, 'success');
-    } else {
-      showModal('Blocked', 'Notifications are blocked. Go to browser Site Settings → Notifications → Allow for this site, then try again.', 'error');
-    }
-  } catch(e) {
-    showModal('Error', 'Could not enable notifications: ' + e.message, 'error');
-  }
+  });
 }
 
 // ── ONESIGNAL: Register this device as the Guidance Counselor ──
@@ -1809,6 +1866,8 @@ async function deleteConsultation(id) {
       setTimeout(()=>{
         document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
       },50);
+      // Keep notification button/indicator in sync with OneSignal state
+      if(isAuthenticated) setTimeout(updateNotifUI, 200);
     }
 
     function renderLanding() {
@@ -1915,14 +1974,16 @@ async function deleteConsultation(id) {
       <div class="p-5 pb-2"><span class="mono font-bold" style="font-size:${fs*1.2}px;color:${config.primary_action_color}">QHsafety</span><div class="mt-1 text-xs font-medium" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
       <nav class="mt-4 flex-1">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="color:${activeSidebarItem===item?config.primary_action_color:'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?config.primary_action_color:'transparent'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
       <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm" style="color:#ffffff66;border-top:1px solid #ffffff11;background:none;border-left:none;border-right:none;cursor:pointer;width:100%"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
-      <div class="onesignal-customlink-container" style="margin:8px 12px 12px"></div>
     </aside>
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
       <div class="mobile-topbar">
         <button onclick="mobileDrawerOpen=true;render()" style="background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
         <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
         <div style="display:flex;align-items:center;gap:8px">
-          <div class="onesignal-customlink-container"></div>
+          <button id="mob-notif-btn" onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative">
+            <i data-lucide="bell" style="width:22px;height:22px;color:#fff"></i>
+            <span id="mob-notif-dot" style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span>
+          </button>
           <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
         </div>
       </div>
@@ -2351,6 +2412,21 @@ if(activeSidebarItem==='Postings') {
         </button>
       </div>
     </div>
+  </div>
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color}">
+    <div class="flex items-center gap-3 mb-4">
+      <i data-lucide="bell" style="width:20px;height:20px;color:${config.primary_action_color}"></i>
+      <h3 class="font-bold" style="color:${config.text_color}">Push Notifications</h3>
+    </div>
+    <div id="settings-notif-status" class="p-3 rounded-lg mb-4 flex items-center gap-2" style="background:${config.text_color}08;border:1px solid ${config.text_color}11">
+      <span id="settings-notif-icon" style="font-size:16px">🔔</span>
+      <span id="settings-notif-label" class="text-sm" style="color:${config.text_color}88">Checking notification status…</span>
+    </div>
+    <button id="settings-notif-btn" onclick="enablePushNotifications()" class="px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer">
+      <i data-lucide="bell-ring" style="width:16px;height:16px"></i>
+      Enable Push Notifications
+    </button>
+    <p class="text-xs mt-3" style="color:${config.text_color}55">Get real-time alerts even when the app is closed. ${currentRole==='guidance'?'You will be notified of high-risk student submissions.':'You will receive announcements from the guidance office.'}</p>
   </div>
   <div class="p-6 rounded-xl" style="background:${config.surface_color}">
     <h3 class="font-bold mb-2" style="color:${config.text_color}">${tr('account')}</h3>
