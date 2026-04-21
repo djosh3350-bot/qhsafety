@@ -374,17 +374,20 @@ async function detectRiskAI(text) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: text.slice(0, 1800) })
     });
-    const data = await response.json();
-    const raw = (data.content || []).map(i => i.text || '').join('').replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(raw);
-    // Validate shape
+    // analyze.js (Groq) returns the parsed JSON object directly
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      console.warn('[QHsafety] AI analyze error:', err);
+      return detectRiskRegex(text);
+    }
+    const parsed = await response.json();
     if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
       return parsed;
     }
+    console.warn('[QHsafety] Unexpected AI response shape:', parsed);
   } catch(e) {
     console.warn('[QHsafety] AI risk detection fallback to regex:', e);
   }
-  // Fallback to regex-based detection
   return detectRiskRegex(text);
 }
 
