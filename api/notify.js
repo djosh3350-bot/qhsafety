@@ -23,17 +23,24 @@ export default async function handler(req, res) {
         "Content-Type": "application/json; charset=utf-8",
         "Authorization": `Key ${apiKey}`
       },
-      body: JSON.stringify({
-        app_id: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
-        filters: [{ field: "tag", key: "user_role", relation: "=", value: role }],
-        headings: { en: title },
-        contents: { en: message },
-        url: url || 'https://qhsafety.vercel.app',
-        priority: 10,
-        ttl: 86400,
-      })
-    });
+      // notify.js — fixed
 
+body: JSON.stringify({
+  app_id: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
+
+  // For "Send to All": use included_segments
+  // For role-targeted: use filters
+  ...(target === 'all'
+    ? { included_segments: ["All"] }
+    : { filters: [{ field: "tag", key: "user_role", relation: "=", value: target === 'student' ? 'student' : 'guidance' }] }
+  ),
+
+  headings: { en: title },
+  contents: { en: message },
+  url: url || 'https://qhsafety.vercel.app',
+  priority: 10,
+  ttl: 86400,
+})
     const data = await response.json();
     return res.status(200).json(data);
 
