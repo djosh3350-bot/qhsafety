@@ -114,6 +114,9 @@
             if (!workerUrl)         return alert('Enter your Cloudflare Worker URL first.');
             if (!title || !message) return alert('Please fill in the title and message.');
 
+            // Strip trailing slash
+            workerUrl = workerUrl.replace(/\/$/, '');
+
             var btn          = document.getElementById('sendBtn');
             var syncArea     = document.getElementById('syncArea');
             var syncStatus   = document.getElementById('syncStatus');
@@ -148,7 +151,7 @@
                 });
 
                 var data = await res.json();
-                if (!data.id) throw new Error(data.error || JSON.stringify(data.errors) || 'No notification ID returned');
+                if (!data.id) throw new Error(data.error || JSON.stringify(data.errors) || 'No ID returned');
 
                 syncStatus.innerText = '⏳ Syncing Dashboard Data...';
                 await new Promise(function(r) { requestAnimationFrame(r); });
