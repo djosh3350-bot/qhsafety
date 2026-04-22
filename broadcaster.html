@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QHSafety - Admin Broadcaster</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <style>
+        body { background-color: #f8f6f1; font-family: 'DM Sans', sans-serif; }
+        .card { background: white; border-radius: 32px; box-shadow: 0 20px 40px -10px rgba(0,0,0,0.05); }
+        .progress-fill { height: 100%; background-color: #ef4444; width: 0%; transition: width 10s linear; }
+        .target-btn { flex:1; padding:10px 8px; border-radius:12px; border:2px solid #e5e7eb; background:#f9fafb; font-size:12px; font-weight:700; letter-spacing:0.03em; color:#9ca3af; cursor:pointer; transition:all 0.15s; font-family:'DM Sans',sans-serif; }
+        .target-btn.active { background:#fef2f2; border-color:#ef4444; color:#ef4444; }
+        .target-btn:hover:not(.active) { border-color:#d1d5db; color:#6b7280; }
+        .worker-input { width:100%; padding:12px 16px; border-radius:14px; border:2px solid #e5e7eb; background:#f9fafb; font-size:12px; font-family:monospace; color:#374151; outline:none; transition:all 0.2s; }
+        .worker-input:focus { border-color:#ef4444; background:white; }
+        .worker-input::placeholder { color:#9ca3af; }
+        .status-dot { width:8px; height:8px; border-radius:50%; background:#d1d5db; display:inline-block; margin-right:6px; transition:all 0.3s; flex-shrink:0; }
+        .status-dot.ready { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,0.15); }
+        .stat-pill { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border-radius:99px; font-size:11px; font-weight:700; background:#f3f4f6; color:#6b7280; margin:3px; }
+        .stat-pill.green { background:#f0fdf4; color:#16a34a; }
+        .stat-pill.red   { background:#fef2f2; color:#dc2626; }
+        .stat-pill.amber { background:#fffbeb; color:#d97706; }
+    </style>
+</head>
+<body class="p-6 flex items-center justify-center min-h-screen">
+
+    <div class="card p-10 w-full max-w-md border border-gray-100">
+
+        <div class="flex flex-col items-center mb-8">
+            <div class="bg-red-500 text-white p-4 rounded-3xl shadow-xl shadow-red-200 mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                </svg>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800">Global Broadcaster</h2>
+            <p class="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Cloudflare · OneSignal · Real-time</p>
+        </div>
+
+        <div class="mb-5">
+            <label class="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2 flex items-center">
+                <span class="status-dot" id="workerDot"></span>Worker URL
+            </label>
+            <input id="workerUrl" class="worker-input" type="text"
+                placeholder="https://your-worker.workers.dev"
+                oninput="updateDot()" />
+        </div>
+
+        <div class="mb-5">
+            <p class="text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Audience</p>
+            <div class="flex gap-2">
+                <button class="target-btn active" onclick="setTarget('all', this)">🌐 All</button>
+                <button class="target-btn"        onclick="setTarget('student', this)">🎓 Students</button>
+                <button class="target-btn"        onclick="setTarget('guidance', this)">🛡 Guidance</button>
+            </div>
+        </div>
+
+        <div class="space-y-4">
+            <input id="notifTitle" type="text" placeholder="Announcement Title"
+                class="w-full p-4 bg-gray-50 border-2 border-transparent rounded-2xl focus:bg-white focus:border-red-400 outline-none transition-all font-medium">
+
+            <textarea id="notifBody" placeholder="Type message to broadcast..."
+                class="w-full p-4 bg-gray-50 border-2 border-transparent rounded-2xl focus:bg-white focus:border-red-400 outline-none transition-all h-32 font-medium resize-none"></textarea>
+
+            <input id="notifUrl" type="url" placeholder="Link URL (optional)"
+                class="w-full p-4 bg-gray-50 border-2 border-transparent rounded-2xl focus:bg-white focus:border-red-400 outline-none transition-all font-medium text-sm">
+
+            <button onclick="executeBroadcast()" id="sendBtn"
+                class="w-full bg-gray-900 hover:bg-black text-white font-bold py-5 rounded-2xl shadow-xl active:scale-[0.98] transition-all">
+                Broadcast & Verify
+            </button>
+        </div>
+
+        <div id="syncArea" class="mt-8 pt-6 border-t border-gray-50 hidden">
+            <div class="flex justify-between items-center mb-2">
+                <span id="syncStatus" class="text-xs font-black uppercase text-blue-500">Initializing...</span>
+                <span id="syncTimer"  class="text-xs font-mono text-gray-400">—</span>
+            </div>
+            <div class="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div id="pFill" class="progress-fill"></div>
+            </div>
+            <div id="finalResult" class="mt-6 text-center hidden">
+                <p id="countDisplay" class="text-4xl font-black text-gray-800">0</p>
+                <p class="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mt-1">Verified Recipients</p>
+                <div id="statPills" class="mt-3"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        var selectedTarget = 'all';
+
+        function setTarget(val, btn) {
+            selectedTarget = val;
+            document.querySelectorAll('.target-btn').forEach(function(b) { b.classList.remove('active'); });
+            btn.classList.add('active');
+        }
+
+        function updateDot() {
+            var url = document.getElementById('workerUrl').value.trim();
+            var valid = url.indexOf('https://') === 0 || url.indexOf('http://localhost') === 0;
+            document.getElementById('workerDot').className = 'status-dot' + (valid ? ' ready' : '');
+        }
+
+        async function executeBroadcast() {
+            var workerUrl = document.getElementById('workerUrl').value.trim();
+            var title     = document.getElementById('notifTitle').value.trim();
+            var message   = document.getElementById('notifBody').value.trim();
+            var url       = document.getElementById('notifUrl').value.trim();
+
+            if (!workerUrl)         return alert('Enter your Cloudflare Worker URL first.');
+            if (!title || !message) return alert('Please fill in the title and message.');
+
+            var btn          = document.getElementById('sendBtn');
+            var syncArea     = document.getElementById('syncArea');
+            var syncStatus   = document.getElementById('syncStatus');
+            var syncTimer    = document.getElementById('syncTimer');
+            var pFill        = document.getElementById('pFill');
+            var finalResult  = document.getElementById('finalResult');
+            var countDisplay = document.getElementById('countDisplay');
+            var statPills    = document.getElementById('statPills');
+
+            btn.disabled           = true;
+            btn.innerText          = 'Processing...';
+            syncArea.classList.remove('hidden');
+            finalResult.classList.add('hidden');
+            pFill.style.transition = 'none';
+            pFill.style.width      = '0%';
+            statPills.innerHTML    = '';
+
+            try {
+                syncStatus.innerText = '🚀 Deploying via Cloudflare...';
+                syncStatus.className = 'text-xs font-black uppercase text-blue-500';
+                syncTimer.innerText  = '—';
+
+                var res = await fetch(workerUrl + '/notify', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        title:   title,
+                        message: message,
+                        target:  selectedTarget,
+                        url:     url || undefined
+                    })
+                });
+
+                var data = await res.json();
+                if (!data.id) throw new Error(data.error || JSON.stringify(data.errors) || 'No notification ID returned');
+
+                syncStatus.innerText = '⏳ Syncing Dashboard Data...';
+                await new Promise(function(r) { requestAnimationFrame(r); });
+                pFill.style.transition = 'width 10s linear';
+                pFill.style.width      = '100%';
+
+                for (var i = 10; i > 0; i--) {
+                    syncTimer.innerText = i + 's';
+                    await new Promise(function(r) { setTimeout(r, 1000); });
+                }
+
+                syncStatus.innerText = '🔍 Verifying delivery...';
+                syncTimer.innerText  = '—';
+
+                var chk   = await fetch(workerUrl + '/notify/' + data.id);
+                var stats = await chk.json();
+
+                var delivered = stats.successful || 0;
+                var failed    = stats.failed     || 0;
+                var remaining = stats.remaining  || 0;
+
+                countDisplay.innerText = delivered;
+                countDisplay.className = delivered > 0
+                    ? 'text-4xl font-black text-green-600'
+                    : 'text-4xl font-black text-orange-500';
+
+                statPills.innerHTML =
+                    '<span class="stat-pill green">✅ ' + delivered + ' delivered</span>' +
+                    (failed    ? '<span class="stat-pill red">❌ '   + failed    + ' failed</span>'  : '') +
+                    (remaining ? '<span class="stat-pill amber">🕒 ' + remaining + ' pending</span>' : '');
+
+                finalResult.classList.remove('hidden');
+                syncStatus.innerText = '✅ Verification Complete';
+                syncStatus.className = 'text-xs font-black uppercase text-green-500';
+                syncTimer.innerText  = 'DONE';
+
+            } catch (err) {
+                syncStatus.innerText = '❌ Error Occurred';
+                syncStatus.className = 'text-xs font-black uppercase text-red-500';
+                syncTimer.innerText  = 'ERR';
+                alert('Broadcaster Error: ' + err.message);
+            } finally {
+                btn.disabled  = false;
+                btn.innerText = 'Broadcast & Verify';
+            }
+        }
+    </script>
+</body>
+</html>
