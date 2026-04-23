@@ -28,7 +28,7 @@ module.exports = async function handler(req, res) {
         filters: [{ field: "tag", key: "user_role", relation: "=", value: role }],
         headings: { en: title },
         contents: { en: message },
-        url: url || 'https://qhsafety.vercel.app',
+        url: url || 'https://qh-safety.vercel.app',
         priority: 10,
         ttl: 86400,
       })
