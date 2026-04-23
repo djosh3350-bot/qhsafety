@@ -1388,13 +1388,20 @@ function logout() {
 }
 
     // ── FIRESTORE ──
+    // Debounced render — batches rapid Firestore snapshot bursts into one render()
+    let _renderTimer = null;
+    function debouncedRender() {
+      if (_renderTimer) clearTimeout(_renderTimer);
+      _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 120);
+    }
+
     function loadDataFromFirestore() {
       firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
       firestoreUnsubscribes.push(
-        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();})
+        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));debouncedRender();}),
+        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));debouncedRender();}),
+        db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));debouncedRender();}),
+        db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));debouncedRender();})
       );
     }
 
@@ -1635,17 +1642,30 @@ async function handleSendAnnouncement() {
   const btn = document.getElementById('announcement-send-btn');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...'; lucide.createIcons({nodes:[btn]}); }
 
-  // Set state and re-render so status persists even if render() is called
+  // Set state and re-render — uses debounce during countdown, immediate on done/error
   function setState(patch) {
     announcementState = { ...announcementState, ...patch };
-    render();
-    lucide.createIcons();
-    // Re-disable button after re-render if still sending
-    const b = document.getElementById('announcement-send-btn');
-    if (b && announcementState && !announcementState.done) {
-      b.disabled = true;
-      b.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...';
-      lucide.createIcons({nodes:[b]});
+    if (announcementState.done) {
+      // Final state: render immediately so result is visible right away
+      render();
+      lucide.createIcons();
+    } else {
+      // Mid-send: debounce so Firestore snapshots don't compound with countdown ticks
+      debouncedRender();
+      // Keep button disabled without waiting for full render
+      const b = document.getElementById('announcement-send-btn');
+      if (b) {
+        b.disabled = true;
+        b.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...';
+        lucide.createIcons({nodes:[b]});
+      }
+      // Update status text directly in DOM — avoids full re-render for timer ticks
+      const s = document.getElementById('announcement-status');
+      const t = document.getElementById('announcement-timer');
+      const p = document.getElementById('announcement-progress-fill');
+      if (s && patch.status) { s.textContent = patch.status; s.style.color = patch.color || s.style.color; }
+      if (t && patch.timer !== undefined) t.textContent = patch.timer;
+      if (p && patch.progress !== undefined) p.style.width = patch.progress + '%';
     }
   }
 
@@ -1675,15 +1695,11 @@ async function handleSendAnnouncement() {
     }
 
     announcementTitle = ''; announcementMessage = '';
-    announcementState = { status: '✅ Announcement delivered!', color: '#388e3c', timer: 'DONE', progress: 100, delivered, done: true };
-    render();
-    lucide.createIcons();
+    setState({ status: '✅ Announcement delivered!', color: '#388e3c', timer: 'DONE', progress: 100, delivered, done: true });
     addLog('📢 Announcement sent to ' + delivered + ' student(s): "' + sentTitle + '"', currentUserEmail, 'info');
 
   } catch(e) {
-    announcementState = { status: '❌ Failed to send.', color: '#c62828', timer: '', progress: 0, delivered: null, done: true };
-    render();
-    lucide.createIcons();
+    setState({ status: '❌ Failed to send.', color: '#c62828', timer: '', progress: 0, delivered: null, done: true });
     showModal('Send Failed', 'Could not broadcast announcement. Check your connection and try again.<br><small>' + e.message + '</small>', 'error');
     console.error('[QHsafety] Announcement broadcast error:', e);
   }
