@@ -1603,35 +1603,19 @@ const ONESIGNAL_CONFIG = {
 };
 
 async function sendAnnouncementPush(title, message) {
-  const payload = JSON.stringify({
-    app_id: ONESIGNAL_CONFIG.APP_ID,
-    included_segments: ["Total Subscriptions"],
-    headings: { "en": title },
-    contents: { "en": message }
-  });
-
-  // OneSignal REST API does not allow direct browser CORS calls.
-  // Route through corsproxy.io which adds the required CORS headers.
-  const PROXY = "https://corsproxy.io/?url=";
-  const TARGET = "https://onesignal.com/api/v1/notifications";
-
-  const res = await fetch(PROXY + encodeURIComponent(TARGET), {
+  // Route through our own backend — no Cloudflare/corsproxy needed
+  const res = await fetch("/api/notify", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Basic ${ONESIGNAL_CONFIG.REST_KEY}`
-    },
-    body: payload
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, message, target: "broadcast" })
   });
   return await res.json();
 }
 
 async function getAnnouncementStats(notifId) {
-  const PROXY = "https://corsproxy.io/?url=";
-  const TARGET = `https://onesignal.com/api/v1/notifications/${notifId}?app_id=${ONESIGNAL_CONFIG.APP_ID}`;
-  const res = await fetch(PROXY + encodeURIComponent(TARGET), {
-    headers: { "Authorization": `Basic ${ONESIGNAL_CONFIG.REST_KEY}` }
-  });
+  // Stats fetched from backend to avoid CORS restrictions
+  const res = await fetch(`/api/notify-stats?id=${encodeURIComponent(notifId)}`);
+  if (!res.ok) return {};
   return await res.json();
 }
 
