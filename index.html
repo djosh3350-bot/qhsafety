@@ -1656,16 +1656,22 @@ async function handleSendAnnouncement() {
       await new Promise(r => setTimeout(r, 1000));
     }
 
-    // Verify delivery count
+    // Verify delivery count — retry up to 4x since OneSignal takes time to tally
     if (statusEl) statusEl.textContent = '✅ Verifying recipients...';
-    const stats = await getAnnouncementStats(data.id);
-    const delivered = stats.successful || stats.received || 0;
+    let delivered = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const stats = await getAnnouncementStats(data.id);
+      // OneSignal v1: successful=delivered, remaining=pending, converted=opened
+      delivered = (stats.successful || 0) + (stats.remaining || 0);
+      if (delivered > 0) break;
+      if (attempt < 3) await new Promise(r => setTimeout(r, 5000));
+    }
 
     if (statusEl) statusEl.textContent = '✅ Announcement delivered!';
     if (timerEl) timerEl.textContent = 'DONE';
     if (resultEl) {
       resultEl.style.display = 'block';
-      resultEl.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Verified Recipients</span>`;
+      resultEl.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Notified Students</span>`;
     }
 
     addLog(`📢 Announcement sent to ${delivered} student(s): "${announcementTitle.trim()}"`, currentUserEmail, 'info');
