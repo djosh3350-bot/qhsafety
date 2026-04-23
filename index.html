@@ -2046,8 +2046,47 @@ async function deleteConsultation(id) {
       else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
       else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
       const bottomItems=items.slice(0,5),bottomIcons=icons.slice(0,5),bottomKeys=itemKeys.slice(0,5);
+
+      // ── SMART RENDER: only rebuild shell on first load or role change ──
+      const shellEl = document.getElementById('qh-dashboard-shell');
+      if (shellEl && shellEl.dataset.role === currentRole) {
+        // Shell already exists — just swap the main content and update nav active states
+        const mainEl = document.getElementById('qh-main-content');
+        if (mainEl) {
+          mainEl.innerHTML = `
+        <div class="hidden md:block mb-8">
+          <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">${tr('welcomeBack')}, <span class="highlight-cyan">${currentRole==='admin'?tr('admin'):currentRole==='student'?tr('student'):tr('counselor')}</span></h1>
+          <p class="mt-1" style="font-size:${fs*0.85}px;color:${config.text_color}88">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p>
+        </div>
+        <div class="md:hidden mb-5">
+          <h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">${tr(itemKeys[items.indexOf(activeSidebarItem)] || 'dashboard')}</h2>
+          <p style="font-size:${fs*0.8}px;color:${config.text_color}66">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</p>
+        </div>
+        ${getDashboardContent(fs)}`;
+        }
+        // Update sidebar active states without rebuilding
+        document.querySelectorAll('.sidebar-item[data-page]').forEach(btn => {
+          const active = btn.dataset.page === activeSidebarItem;
+          btn.style.color = active ? '#ffee58' : '#ffffffaa';
+          btn.style.borderLeft = `3px solid ${active ? '#ffee58' : 'transparent'}`;
+          btn.style.background = active ? 'rgba(255,238,88,0.1)' : 'none';
+          btn.classList.toggle('active', active);
+        });
+        // Update bottom nav active states
+        document.querySelectorAll('.mobile-bottom-nav button[data-page]').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.page === activeSidebarItem);
+        });
+        // Update drawer overlay
+        const overlay = document.querySelector('.drawer-overlay');
+        const drawer = document.querySelector('.drawer-panel');
+        if (overlay) overlay.classList.toggle('open', mobileDrawerOpen);
+        if (drawer) drawer.classList.toggle('open', mobileDrawerOpen);
+        return; // done — no full rebuild needed
+      }
+
+      // Full shell rebuild (first load or role change)
       app.innerHTML=`
-<div style="position:relative;height:100vh;width:100%;overflow:hidden;display:flex;flex-direction:column">
+<div id="qh-dashboard-shell" data-role="${currentRole}" style="position:relative;height:100vh;width:100%;overflow:hidden;display:flex;flex-direction:column">
   <div class="drawer-overlay ${mobileDrawerOpen?'open':''}" onclick="mobileDrawerOpen=false;debouncedRender()"></div>
   <div class="drawer-panel ${mobileDrawerOpen?'open':''}">
     <div class="p-5 pb-2 flex items-center justify-between" style="border-bottom:1px solid #ffffff11">
@@ -2077,7 +2116,7 @@ async function deleteConsultation(id) {
           <div style="font-size:11px;color:#ffffff55">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div>
         </div>
       </div>
-      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');debouncedRender()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
+      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button data-page="${item}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');debouncedRender()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
       <div class="desktop-sidebar-footer">
         <button onclick="logout()" class="sidebar-item w-full flex items-center gap-3 px-5 py-3 text-sm" style="background:none;border:none;cursor:pointer;color:#ffffff55"><i data-lucide="log-out" style="width:16px;height:16px;flex-shrink:0"></i><span>${tr('logout')}</span></button>
       </div>
@@ -2094,7 +2133,7 @@ async function deleteConsultation(id) {
           <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
         </div>
       </div>
-      <main class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
+      <main id="qh-main-content" class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
         <div class="hidden md:block mb-8">
           <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">${tr('welcomeBack')}, <span class="highlight-cyan">${currentRole==='admin'?tr('admin'):currentRole==='student'?tr('student'):tr('counselor')}</span></h1>
           <p class="mt-1" style="font-size:${fs*0.85}px;color:${config.text_color}88">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p>
@@ -2107,7 +2146,7 @@ async function deleteConsultation(id) {
       </main>
     </div>
   </div>
-  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');debouncedRender()"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
+  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button data-page="${item}" class="${activeSidebarItem===item?'active':''}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');debouncedRender()"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
 </div>`;
     }
 
