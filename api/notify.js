@@ -10,7 +10,7 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: 'title and message are required' });
     }
 
-    const apiKey = process.env.ONESIGNAL_API_KEY;
+    const apiKey = process.env.ONESIGNAL_REST_API_KEY;
     if (!apiKey) {
       return res.status(500).json({ error: 'No API key' });
     }
@@ -24,7 +24,7 @@ module.exports = async function handler(req, res) {
         "Authorization": `Key ${apiKey}`
       },
       body: JSON.stringify({
-        app_id: "4babeeb8-31f4-4cfa-8a8c-d5c109262d78",
+        app_id: "b6d94be7-713f-4369-8b1f-2df77580872c",
         filters: [{ field: "tag", key: "user_role", relation: "=", value: role }],
         headings: { en: title },
         contents: { en: message },
