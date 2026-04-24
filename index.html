@@ -188,6 +188,24 @@ button:not(.sidebar-item):active {
     const auth = firebase.auth();
     const db   = firebase.firestore();
 
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.0.0/firebase-database.js";
+
+// Initialize Firebase as usual...
+const db = getDatabase(app);
+
+onValue(ref(db, 'systemStatus'), (snapshot) => {
+    const status = snapshot.val();
+    if (status === 'paused') {
+        // Redirect to a maintenance page or show a giant overlay
+        document.body.innerHTML = `
+            <div style="text-align:center; padding:100px;">
+                <h1>System Temporarily Paused</h1>
+                <p>QHSafety is currently undergoing maintenance for student safety updates.</p>
+            </div>
+        `;
+    }
+});
+
     // ── EMAILJS CONFIG ──
     // Set up: https://www.emailjs.com  → create account → add Gmail service → create templates
     const EJS = {
