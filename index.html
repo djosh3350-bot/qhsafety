@@ -1609,9 +1609,10 @@ function logout() {
 
     // ── POSTINGS ──
     async function addPosting() {
+  if(window._postSubmitting)return;
   if(!postingTitle.trim()||!postingContent.trim()){postingError='Title and content are required';render();return;}
   if(containsProfanity(postingTitle)||containsProfanity(postingContent)){postingError='🔴 Post blocked: Inappropriate language detected.';render();return;}
-  
+  window._postSubmitting=true;
   try {
     // Censor sensitive words instead of blocking
     const cleanTitle = censorText(postingTitle);
@@ -1668,6 +1669,8 @@ if (risk.level === 'High' || risk.level === 'Medium') {
   } catch(e) {
     postingError = 'Failed to post: ' + e.message;
     render();
+  } finally {
+    window._postSubmitting = false;
   }
 }
 
@@ -1919,11 +1922,12 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
   
     // ── CONSULTATIONS ──
     async function addConsultation() {
-      if(window._consultSubmitting)return;window._consultSubmitting=true;
+      if(window._consultSubmitting)return;
+      if(!consultationReason.trim()||!consultationDescription.trim()){consultationError='Reason and details are required';render();return;}
+      if(!consultationGradeLevel){consultationError='Please select your grade level';render();return;}
+      if(containsProfanity(consultationReason)||containsProfanity(consultationDescription)){consultationError='🔴 Request blocked: Please use appropriate language.';render();return;}
+      window._consultSubmitting=true;
       try {
-        if(!consultationReason.trim()||!consultationDescription.trim()){consultationError='Reason and details are required';render();return;}
-        if(!consultationGradeLevel){consultationError='Please select your grade level';render();return;}
-        if(containsProfanity(consultationReason)||containsProfanity(consultationDescription)){consultationError='🔴 Request blocked: Please use appropriate language.';render();return;}
         const cleanReason = censorText(consultationReason);
         const cleanDesc = censorText(consultationDescription);
         const risk=await detectRiskAI(consultationReason+' '+consultationDescription);
