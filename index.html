@@ -1098,6 +1098,7 @@ const hardBlockList = [
 
   // ── ENGLISH PROFANITY ──
   'fuck','fucking','fucked','fucker','fucks','fuckup','fck','fuk','fvck','f uck',
+  'fack','facking','facked','facker','facks','phuck','phucking','phuk','phuking',
   'shit','shitting','shitty','shits','sht','sh1t','shlt',
   'bitch','bitching','bitches','bitchy','b1tch','bich',
   'asshole','assholes','ass hole','azzhole','assholee',
@@ -1194,16 +1195,29 @@ const hardBlockList = [
 // Soft censor list cleared — sensitive words display as typed, still detected by detectRisk()
 const softCensorList = [];
 
+function normalizeText(text) {
+  if (!text) return '';
+  return text.toLowerCase()
+    .replace(/ph/g,'f')
+    .replace(/4|@/g,'a')
+    .replace(/8/g,'b')
+    .replace(/3/g,'e')
+    .replace(/6|9/g,'g')
+    .replace(/1|!|l(?=[a-z]{0,2}[aeiou])/g,'i')
+    .replace(/0/g,'o')
+    .replace(/5|[$]/g,'s')
+    .replace(/7/g,'t')
+    .replace(/2/g,'z')
+    .replace(/v(?=[ck])/g,'u')
+    .replace(/[^a-z]/g,'')
+    .replace(/(.)\1+/g,'$1');
+}
+
 function containsProfanity(text) {
   if (!text) return false;
-  let n = text.toLowerCase()
-    .replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a')
-    .replace(/5/g,'s').replace(/7/g,'t').replace(/8/g,'b').replace(/9/g,'g')
-    .replace(/@/g,'a').replace(/[$]/g,'s').replace(/[+]/g,'t')
-    .replace(/[^a-z]/g,'');
-  n = n.replace(/(.)+/g,'$1');
+  const n = normalizeText(text);
   return hardBlockList.some(w => {
-    const wn = w.toLowerCase().replace(/[^a-z]/g,'').replace(/(.)+/g,'$1');
+    const wn = normalizeText(w);
     return n.includes(wn);
   });
 }
