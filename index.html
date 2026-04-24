@@ -976,13 +976,24 @@ function getGlowClass(item, isPending) {
 // ── PROFANITY & SENSITIVE WORD SYSTEM ──
 // Words that are HARD BLOCKED (never allowed — explicit/slurs)
 const hardBlockList = [
+  // Filipino profanity
   'tangina','puta','gago','tanga','bobo','hayop','ulol','kupal','kantot','pepe','puki','titi','bayag','iyot','hindot',
   'pakshet','leche','piste','lintek','hinayupak','punyeta','bwisit','pakyu','shunga','ogag','pokpok','hampaslupa',
   'hudas','kerida','ratbu','dede','tarantado','manyak','buraot','betlog','pekpek','paksit','suwail',
   'kingina','ptangina','tanginamo','putangina','putanginamo','gagong','bobong','tngina','amputa','inamo','yawa',
+  // Sexual slang — Filipino
+  'jakol','jakal','jakkol','salsal','masturba','masturbate','masturbation','masturbasyon','masturbasyon',
+  'masterbate','masterbation','masterbating','mastrubate','mastrubation',
+  'jakolin','jakulin','salsalin','nagjajakol','nagsasal','nagmamasturbate',
+  'kantot','nagkakantot','hindot','naghihindot','iyot','nag-iiyot',
+  'tite','burat','burak','supot','kepyas','kupal',
+  'pokpok','babaero','malandi','malibog','malibog',
+  // English profanity & sexual
   'shit','fuck','fck','fuk','bitch','asshole','bastard','cunt','whore','slut','dick','cock','pussy','nigger',
   'nigga','niga','retard','faggot','motherfucker','porn','horny','jerkoff','cum','clit','boob','tit','piss',
-  'dumbass','stfu','gtfo','suicide bait'
+  'dumbass','stfu','gtfo','suicide bait',
+  'wank','wanker','jerkoff','jerk off','handjob','blowjob','fingering','dildo','vibrator',
+  'sexting','nudes','nude pic','telanjang','hubad',
 ];
 
 // Soft censor list cleared — sensitive words display as typed, still detected by detectRisk()
@@ -990,13 +1001,17 @@ const softCensorList = [];
 
 function containsProfanity(text) {
   if (!text) return false;
+  // Normalize: lowercase, leet-speak, strip ALL non-alpha, collapse repeated letters
   let n = text.toLowerCase()
     .replace(/0/g,'o').replace(/1/g,'i').replace(/3/g,'e').replace(/4/g,'a')
-    .replace(/5/g,'s').replace(/7/g,'t').replace(/8/g,'b')
-    .replace(/@/g,'a').replace(/\$/g,'s')
-    .replace(/[\s\.\,\!\?\-\_]/g,'');
-  n = n.replace(/(.)\1+/g,'$1');
-  return hardBlockList.some(w => n.includes(w.replace(/[\s\-]/g,'')));
+    .replace(/5/g,'s').replace(/7/g,'t').replace(/8/g,'b').replace(/9/g,'g')
+    .replace(/@/g,'a').replace(/[$]/g,'s').replace(/[+]/g,'t')
+    .replace(/[^a-z]/g,'');
+  n = n.replace(/(.)+/g,'$1');
+  return hardBlockList.some(w => {
+    const wn = w.toLowerCase().replace(/[^a-z]/g,'').replace(/(.)+/g,'$1');
+    return n.includes(wn);
+  });
 }
 
 // Censors soft words in text, returns cleaned version
