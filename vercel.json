@@ -5,3 +5,12 @@
     { "source": "/OneSignalSDKUpdaterWorker.js", "destination": "/public/OneSignalSDKUpdaterWorker.js" }
   ]
 }
+{
+  "redirects": [
+    {
+      "source": "/((?!maintenance.html).*)",
+      "destination": "/maintenance.html",
+      "permanent": false
+    }
+  ]
+}
