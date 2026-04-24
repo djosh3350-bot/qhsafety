@@ -14,6 +14,63 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Server misconfiguration' });
   }
 
+  // ── LEWD WORD FILTER ──────────────────────────────────────────────────────
+  // Strip Filipino/English sexual slang and profanity BEFORE sending to AI.
+  // This prevents the AI from treating crude language as a risk signal.
+  // Words are replaced with [removed] so sentence structure is preserved.
+  const lewdPatterns = [
+    // Filipino sexual slang — root forms catch all conjugations/spellings
+    /\bjakal+\b/gi,           // jakol, jakall, etc.
+    /\bj[a4]k[o0]l+\b/gi,
+    /\bsals[a4]l+\b/gi,       // salsal
+    /\bm[a4]st[u]rb[a4](te?|syon|tion|ng)?\b/gi,  // masturbate, masturbation, masturbasyon
+    /\bm[a4]sts?\b/gi,        // mast (shorthand)
+    /\bkant[o0]t+\b/gi,       // kantot
+    /\bp[u|oo]t[a4][n]?[g]?\b/gi, // puta, putang
+    /\bt[a4]ng[- ]?in[a4]\b/gi,   // tangina
+    /\bgag[o0]+\b/gi,
+    /\bulul+\b/gi,
+    /\bbwis[i]+t+\b/gi,
+    /\bhub[o0]g?\b/gi,        // hubog/hubo (naked)
+    /\btelp[ao]\b/gi,
+    /\bseks[ey]?\b/gi,        // sekse, sexy (in lewd context)
+    /\bp[e3]t[e3]k[iy]?\b/gi,
+    /\bburat+\b/gi,
+    /\bt[i1]t[i1]+\b/gi,      // titi
+    /\bp[e3]k[pe3]+\b/gi,     // pekpek
+    /\bp[uo]k[i1]+\b/gi,      // puki
+    /\bb[o0]+l[ao]+\b/gi,     // bola (in crude context) — low risk so just remove
+    /\biyot+\b/gi,
+    /\bp[a4]ksh[a4]l[a4]\b/gi,
+    /\bt[ae]+e+\b/gi,          // tae (feces)
+
+    // English equivalents
+    /\bmasterbat(e|ing|ion)?\b/gi,  // common misspelling
+    /\bmasturbat(e|ing|ion)?\b/gi,
+    /\bjerk(ing)?[ -]?off\b/gi,
+    /\bwank(ing|er)?\b/gi,
+    /\bfuck(ing|ed|er|s)?\b/gi,
+    /\bsh[i1]t+\b/gi,
+    /\bb[i1]tch\b/gi,
+    /\bc[u0]nt\b/gi,
+    /\bd[i1]ck\b/gi,
+    /\bp[u0]ssy\b/gi,
+    /\bass(h[o0]le)?\b/gi,
+    /\bb[o0][o0]b[s]?\b/gi,
+    /\bn[i1]pp?l[e3]s?\b/gi,
+    /\bp[o0]rn(o|hub)?\b/gi,
+    /\bn[u0]d[e3]s?\b/gi,
+    /\bh[o0]rny\b/gi,
+    /\bs[e3]x(y|ual|ting)?\b/gi,   // only strip if standalone crude use
+  ];
+
+  let cleanedText = text;
+  for (const pattern of lewdPatterns) {
+    cleanedText = cleanedText.replace(pattern, '[removed]');
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   const systemPrompt = `You are an expert school counselor AI and mental health risk analyst for a Philippine public high school (Quirino High School). Your job is to analyze student-submitted text and detect ANY sign of distress, danger, or need for intervention.
 
 CRITICAL RULES:
@@ -23,6 +80,13 @@ CRITICAL RULES:
 - Understatement, humor, and casual phrasing can mask serious issues — treat them seriously
 - A student saying "joke lang" (just joking) after a serious statement does NOT reduce the risk
 - Consider cultural context: Filipino students often understate problems due to shame (hiya) or family loyalty
+
+IMPORTANT — PROFANITY AND LEWD LANGUAGE:
+- The text has been pre-filtered: lewd/sexual slang appears as [removed]
+- Do NOT flag [removed] tokens or profanity/crude language alone as a risk indicator
+- Profanity by itself (gago, putang ina, etc.) is common Filipino teen expression — NOT a crisis signal
+- Only flag if there is genuine emotional distress, self-harm, abuse, or danger — not just bad words
+- A message that is purely vulgar or joking with no distress signals = score 0, level Low
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CATEGORY A — IMMEDIATE LIFE THREAT (score +10 each)
@@ -107,6 +171,7 @@ SPECIAL RULES
 - 2+ Category A items detected: multiply total score by 2
 - Any Category A + any Category B together: add +5 bonus
 - Cap final score at 20
+- Profanity or lewd words alone with NO distress: score must be 0
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCORING SCALE
@@ -117,7 +182,7 @@ Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation.
 {"score": <0-20 integer>, "level": <"Low"|"Low-Medium"|"Medium"|"High">, "flagged": <true|false>, "reasons": [<short strings like "Suicidal ideation (A1)", "Bullying victim (C3)">]}
 "flagged" = true if score >= 3 or level is not "Low".`;
 
-  const userMessage = `Analyze this student submission for risk:\n\n${text}`;
+  const userMessage = `Analyze this student submission for risk:\n\n${cleanedText}`;
 
   try {
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
