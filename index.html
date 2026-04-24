@@ -188,7 +188,6 @@ button:not(.sidebar-item):active {
     const auth = firebase.auth();
     const db   = firebase.firestore();
 
-    
     // ── EMAILJS CONFIG ──
     // Set up: https://www.emailjs.com  → create account → add Gmail service → create templates
     const EJS = {
@@ -1243,14 +1242,6 @@ function containsSensitiveWords(text) {
   return softCensorList.some(({word}) => lower.includes(word));
 }
 
-    // ── DEBOUNCED SEARCH ──
-    let _searchDebounce = null;
-    function updateSearch(val) {
-      postingSearchQuery = val;
-      clearTimeout(_searchDebounce);
-      _searchDebounce = setTimeout(() => render(), 300);
-    }
-
     // ── LOGGING ──
     async function addLog(action,user,type) {
       user=user||'system';type=type||'info';
@@ -1623,10 +1614,10 @@ function logout() {
     function loadDataFromFirestore() {
       firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
       firestoreUnsubscribes.push(
-        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();}),
-        db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));render();})
+        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();})
       );
     }
 
@@ -2169,24 +2160,28 @@ async function deleteConsultation(id) {
   
   
     // ── RENDER ──
+    let _searchDebounceTimer = null;
+    function debouncedRender(delay=300) {
+      clearTimeout(_searchDebounceTimer);
+      _searchDebounceTimer = setTimeout(() => render(), delay);
+    }
+    // safeRender: skip re-render if user is actively typing in an input/textarea
+    function safeRender() {
+      const active = document.activeElement;
+      const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
+      if (isTyping) {
+        // Defer until user stops typing
+        debouncedRender(600);
+      } else {
+        render();
+      }
+    }
+
     function render() {
       config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#f5f5f5'}:{...defaultConfig};
       if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
       else{renderDashboard();}
       lucide.createIcons();
-      // Restore form field values after render (prevents content loss when priority buttons re-render)
-      if (showPostingForm) {
-        const t = document.getElementById('posting-title-input');
-        const c = document.getElementById('posting-content-input');
-        if (t && t.value !== postingTitle) t.value = postingTitle;
-        if (c && c.value !== postingContent) c.value = postingContent;
-      }
-      if (showConsultationForm) {
-        const r = document.getElementById('consult-reason-input');
-        const d = document.getElementById('consult-desc-input');
-        if (r && r.value !== consultationReason) r.value = consultationReason;
-        if (d && d.value !== consultationDescription) d.value = consultationDescription;
-      }
       // Auto-scroll chat boxes to bottom
       setTimeout(()=>{
         document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
@@ -2401,7 +2396,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             oninput="updateSearch(this.value)" 
+             oninput="postingSearchQuery=this.value;debouncedRender()" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
@@ -2413,12 +2408,12 @@ if(activeSidebarItem==='Postings') {
       ${tr('postGuide')}
     </div>
     <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
-    <input type="text" id="posting-title-input" placeholder="${tr('title')}" 
+    <input type="text" placeholder="${tr('title')}" value="${postingTitle}" 
            oninput="postingTitle=this.value" 
            style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
-    <textarea id="posting-content-input" placeholder="${tr('content')}" oninput="postingContent=this.value" 
-              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical"></textarea>
+    <textarea placeholder="${tr('content')}" oninput="postingContent=this.value" 
+              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${postingContent}</textarea>
     <div class="flex gap-3">
       <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
               style="background:${config.primary_action_color};color:${config.text_color}">${tr('publish')}</button>
@@ -2577,9 +2572,9 @@ if(activeSidebarItem==='Postings') {
       ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ Selected: ${consultationGradeLevel}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
     </div>
 
-    <input type="text" id="consult-reason-input" placeholder="${tr('reason')}" oninput="consultationReason=this.value" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <input type="text" placeholder="${tr('reason')}" value="${consultationReason||''}" oninput="consultationReason=this.value" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-medium" style="background:${consultationPriority===p?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${tr(p.toLowerCase())}</button>`).join('')}</div></div>
-    <textarea id="consult-desc-input" placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical"></textarea>
+    <textarea placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical">${consultationDescription||''}</textarea>
     <div class="flex gap-3">
       <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submitRequest')}</button>
       <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
