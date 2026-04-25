@@ -2172,6 +2172,22 @@ async function deleteConsultation(id) {
       'announcement-title-input','announcement-msg-input'
     ];
 
+    function filterPostsInDOM(query) {
+      // Filter post cards directly in DOM — no render needed, keyboard stays open
+      const q = (query || '').toLowerCase();
+      const cards = document.querySelectorAll('[data-post-id]');
+      let anyVisible = false;
+      cards.forEach(card => {
+        const text = (card.getAttribute('data-search-text') || '').toLowerCase();
+        const show = !q || text.includes(q);
+        card.style.display = show ? '' : 'none';
+        if (show) anyVisible = true;
+      });
+      // Show/hide empty state
+      const emptyEl = document.getElementById('postings-empty-state');
+      if (emptyEl) emptyEl.style.display = (!anyVisible && cards.length > 0) ? '' : 'none';
+    }
+
     function onFieldInput() {
       _userIsTyping = true;
       clearTimeout(_typingIdleTimer);
@@ -2425,7 +2441,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;onFieldInput();debouncedRender()" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
@@ -2454,7 +2470,7 @@ if(activeSidebarItem==='Postings') {
 
   <div class="space-y-4">
     ${filtered.length === 0 
-      ? `<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
+      ? `<div id="postings-empty-state" class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
            <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}44"></i>
            <p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noPostings')}</p>
          </div>`
@@ -2463,7 +2479,7 @@ if(activeSidebarItem==='Postings') {
           const gc = getGlowClass(p, isPending);
 
           return `
-      <div data-post-id="${p.id}" class="p-6 rounded-xl card-hover ${gc}" 
+      <div data-post-id="${p.id}" data-search-text="${((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase()}" class="p-6 rounded-xl card-hover ${gc}" 
            style="background:${config.surface_color};border:1px solid ${config.text_color}11">
         <div class="flex items-start justify-between mb-3">
           <div class="flex-1">
