@@ -2168,12 +2168,10 @@ async function deleteConsultation(id) {
     const FORM_INPUT_IDS = [
       'postingTitleInput','postingContentTA',
       'consultReasonInput','consultDescTA',
-      'postingSearchInput',
       'announcement-title-input','announcement-msg-input'
     ];
 
     function filterPostsInDOM(query) {
-      // Filter post cards directly in DOM — no render needed, keyboard stays open
       const q = (query || '').toLowerCase();
       const cards = document.querySelectorAll('[data-post-id]');
       let anyVisible = false;
@@ -2183,7 +2181,6 @@ async function deleteConsultation(id) {
         card.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
       });
-      // Show/hide empty state
       const emptyEl = document.getElementById('postings-empty-state');
       if (emptyEl) emptyEl.style.display = (!anyVisible && cards.length > 0) ? '' : 'none';
     }
@@ -2226,6 +2223,9 @@ async function deleteConsultation(id) {
       if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
       else{renderDashboard();}
       lucide.createIcons();
+
+      // Re-apply search filter to DOM after render
+      if (postingSearchQuery) filterPostsInDOM(postingSearchQuery);
 
       // Auto-scroll chat boxes to bottom
       setTimeout(()=>{
@@ -2410,10 +2410,8 @@ if(activeSidebarItem==='Postings') {
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }
 
-  const filtered = visiblePostings.filter(p =>
-    (p.title || '').toLowerCase().includes(postingSearchQuery.toLowerCase()) ||
-    (p.content || '').toLowerCase().includes(postingSearchQuery.toLowerCase())
-  );
+  // DOM filtering handles search visually - always render all posts
+  const filtered = visiblePostings;
 
   return `
   ${(currentRole === 'guidance' || currentRole === 'admin') ? `
@@ -2441,7 +2439,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" autocomplete="off" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
