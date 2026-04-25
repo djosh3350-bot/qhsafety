@@ -2161,69 +2161,55 @@ async function deleteConsultation(id) {
   
     // ── RENDER ──
     let _renderTimer = null;
-    let _userIsTyping = false;
     let _typingIdleTimer = null;
+    let _userIsTyping = false;
 
-    // Called by oninput on all form fields — marks user as actively typing
+    // Track ALL form field IDs that must never be destroyed mid-type
+    const FORM_INPUT_IDS = [
+      'postingTitleInput','postingContentTA',
+      'consultReasonInput','consultDescTA',
+      'postingSearchInput',
+      'announcement-title-input','announcement-msg-input'
+    ];
+
     function onFieldInput() {
       _userIsTyping = true;
       clearTimeout(_typingIdleTimer);
-      // Only mark idle after 1.5s of no input — this survives keyboard switches
-      _typingIdleTimer = setTimeout(() => { _userIsTyping = false; }, 1500);
+      _typingIdleTimer = setTimeout(() => { _userIsTyping = false; }, 2000);
     }
 
-    function debouncedRender(delay=300) {
+    function debouncedRender(delay=400) {
       clearTimeout(_renderTimer);
-      _renderTimer = setTimeout(() => render(), delay);
+      _renderTimer = setTimeout(() => {
+        if (_userIsTyping) {
+          debouncedRender(600);
+        } else {
+          render();
+        }
+      }, delay);
     }
 
-    // safeRender: used by Firestore onSnapshot — never interrupts active typing
+    // safeRender: called by Firestore — completely blocked while user is typing
     function safeRender() {
       if (_userIsTyping) {
-        // User is mid-typing (even if keyboard just switched) — defer
         clearTimeout(_renderTimer);
-        _renderTimer = setTimeout(() => safeRender(), 800);
-      } else {
-        render();
+        _renderTimer = setTimeout(() => safeRender(), 1000);
+        return;
       }
+      render();
     }
 
     function render() {
-      // Save focused element + cursor before wiping DOM
+      // If a form input is focused, NEVER rebuild the DOM — it kills the keyboard on mobile
       const activeEl = document.activeElement;
-      const activeId = activeEl ? activeEl.id : null;
-      const selStart = activeEl && activeEl.selectionStart !== undefined ? activeEl.selectionStart : null;
-      const selEnd   = activeEl && activeEl.selectionEnd   !== undefined ? activeEl.selectionEnd   : null;
+      if (activeEl && FORM_INPUT_IDS.includes(activeEl.id)) {
+        return; // skip entirely — safeRender will retry after typing stops
+      }
 
       config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#f5f5f5'}:{...defaultConfig};
       if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
       else{renderDashboard();}
       lucide.createIcons();
-
-      // Restore posting form inputs so they don't lose their content on re-render
-      const ta = document.getElementById('postingContentTA');
-      if (ta) ta.value = postingContent;
-      const ti = document.getElementById('postingTitleInput');
-      if (ti && document.activeElement !== ti) ti.value = postingTitle;
-      // Restore consultation form inputs
-      const cta = document.getElementById('consultDescTA');
-      if (cta) cta.value = consultationDescription || '';
-      const cri = document.getElementById('consultReasonInput');
-      if (cri && document.activeElement !== cri) cri.value = consultationReason || '';
-      // Restore search input
-      const si = document.getElementById('postingSearchInput');
-      if (si && document.activeElement !== si) si.value = postingSearchQuery;
-
-      // Restore focus + cursor to whichever input was active before render
-      if (activeId) {
-        const el = document.getElementById(activeId);
-        if (el) {
-          el.focus();
-          if (selStart !== null) {
-            try { el.setSelectionRange(selStart, selEnd); } catch(e) {}
-          }
-        }
-      }
 
       // Auto-scroll chat boxes to bottom
       setTimeout(()=>{
