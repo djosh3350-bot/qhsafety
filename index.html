@@ -2160,18 +2160,29 @@ async function deleteConsultation(id) {
   
   
     // ── RENDER ──
-    let _searchDebounceTimer = null;
-    function debouncedRender(delay=300) {
-      clearTimeout(_searchDebounceTimer);
-      _searchDebounceTimer = setTimeout(() => render(), delay);
+    let _renderTimer = null;
+    let _userIsTyping = false;
+    let _typingIdleTimer = null;
+
+    // Called by oninput on all form fields — marks user as actively typing
+    function onFieldInput() {
+      _userIsTyping = true;
+      clearTimeout(_typingIdleTimer);
+      // Only mark idle after 1.5s of no input — this survives keyboard switches
+      _typingIdleTimer = setTimeout(() => { _userIsTyping = false; }, 1500);
     }
-    // safeRender: skip re-render if user is actively typing in an input/textarea
+
+    function debouncedRender(delay=300) {
+      clearTimeout(_renderTimer);
+      _renderTimer = setTimeout(() => render(), delay);
+    }
+
+    // safeRender: used by Firestore onSnapshot — never interrupts active typing
     function safeRender() {
-      const active = document.activeElement;
-      const isTyping = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
-      if (isTyping) {
-        // Defer until user stops typing
-        debouncedRender(600);
+      if (_userIsTyping) {
+        // User is mid-typing (even if keyboard just switched) — defer
+        clearTimeout(_renderTimer);
+        _renderTimer = setTimeout(() => safeRender(), 800);
       } else {
         render();
       }
@@ -2428,7 +2439,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;debouncedRender()" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;onFieldInput();debouncedRender()" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
@@ -2441,10 +2452,10 @@ if(activeSidebarItem==='Postings') {
     </div>
     <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
     <input type="text" id="postingTitleInput" placeholder="${tr('title')}" value="${postingTitle}" 
-           oninput="postingTitle=this.value" 
+           oninput="postingTitle=this.value;onFieldInput()" 
            style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
-    <textarea id="postingContentTA" placeholder="${tr('content')}" oninput="postingContent=this.value" 
+    <textarea id="postingContentTA" placeholder="${tr('content')}" oninput="postingContent=this.value;onFieldInput()" 
               style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical"></textarea>
     <div class="flex gap-3">
       <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
@@ -2604,9 +2615,9 @@ if(activeSidebarItem==='Postings') {
       ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ Selected: ${consultationGradeLevel}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
     </div>
 
-    <input type="text" id="consultReasonInput" placeholder="${tr('reason')}" value="${consultationReason||''}" oninput="consultationReason=this.value" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <input type="text" id="consultReasonInput" placeholder="${tr('reason')}" value="${consultationReason||''}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-medium" style="background:${consultationPriority===p?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${tr(p.toLowerCase())}</button>`).join('')}</div></div>
-    <textarea id="consultDescTA" placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical"></textarea>
+    <textarea id="consultDescTA" placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical"></textarea>
     <div class="flex gap-3">
       <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submitRequest')}</button>
       <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
@@ -2895,9 +2906,9 @@ ${isGuidance?`
     </div>
   </div>
   <input id="announcement-title-input" type="text" placeholder="Announcement title..." value="${announcementTitle}"
-    oninput="announcementTitle=this.value"
+    oninput="announcementTitle=this.value;onFieldInput()"
     style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
-  <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value"
+  <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value;onFieldInput()"
     style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
   <button id="announcement-send-btn" onclick="handleSendAnnouncement()"
     style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
