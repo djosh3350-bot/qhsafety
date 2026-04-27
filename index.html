@@ -2163,13 +2163,13 @@ async function deleteConsultation(id) {
     let _typingIdleTimer = null;
     let _userIsTyping = false;
 
-    // Track ALL form field IDs that must never be destroyed mid-type
-    const FORM_INPUT_IDS = [
-      'postingSearchInput',
-      'postingTitleInput','postingContentTA',
-      'consultReasonInput','consultDescTA',
-      'announcement-title-input','announcement-msg-input'
-    ];
+    // Any focused input/textarea blocks DOM rebuild (covers dynamic IDs like chat inputs)
+    function isUserTyping() {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA';
+    }
 
     function filterPostsInDOM(query) {
       const q = (query || '').toLowerCase();
@@ -2202,22 +2202,19 @@ async function deleteConsultation(id) {
       }, delay);
     }
 
-    // safeRender: called by Firestore — completely blocked while user is typing
+    // safeRender: called by Firestore — blocked while user is typing or focused on input
     function safeRender() {
-      if (_userIsTyping) {
+      if (_userIsTyping || isUserTyping()) {
         clearTimeout(_renderTimer);
-        _renderTimer = setTimeout(() => safeRender(), 1000);
+        _renderTimer = setTimeout(() => safeRender(), 800);
         return;
       }
       render();
     }
 
     function render() {
-      // If a form input is focused, NEVER rebuild the DOM — it kills the keyboard on mobile
-      const activeEl = document.activeElement;
-      if (activeEl && FORM_INPUT_IDS.includes(activeEl.id)) {
-        return; // skip entirely — safeRender will retry after typing stops
-      }
+      // If any input/textarea is focused, NEVER rebuild the DOM
+      if (isUserTyping()) return;
 
       // Save scroll position before rebuilding DOM
       const prevScroll = document.getElementById('main-scroll');
@@ -2228,8 +2225,9 @@ async function deleteConsultation(id) {
       else{renderDashboard();}
       lucide.createIcons();
 
-      // Re-apply search filter to DOM after render
-      if (postingSearchQuery) filterPostsInDOM(postingSearchQuery);
+      // Restore search input value and re-apply filter
+      const si = document.getElementById('postingSearchInput');
+      if (si && postingSearchQuery) { si.value = postingSearchQuery; filterPostsInDOM(postingSearchQuery); }
 
       // Restore scroll + auto-scroll chat boxes after browser paints new DOM
       requestAnimationFrame(() => {
@@ -2444,8 +2442,7 @@ if(activeSidebarItem==='Postings') {
          style="background:${config.surface_color};border:1px solid ${config.text_color}22">
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
-             value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value);onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();}" autocomplete="off" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value);onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();filterPostsInDOM(this.value);this.blur();}" autocomplete="off" onfocus="onFieldInput()" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
@@ -2529,7 +2526,7 @@ if(activeSidebarItem==='Postings') {
           <div class="text-xs font-bold mb-2" style="color:${config.text_color}88">${tr('guidanceReply')}</div>
           <div class="flex gap-2">
             <textarea rows="2" placeholder="Type a message for the student..." 
-              oninput="guidanceMessageDraft['${p.id}']=this.value"
+              oninput="guidanceMessageDraft['${p.id}']=this.value;onFieldInput()"
               style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;resize:none">${guidanceMessageDraft[p.id]||''}</textarea>
             <button onclick="sendGuidanceMessage(${p.id})" 
               style="padding:8px 14px;background:#1565c0;color:#fff;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap;align-self:flex-end">
