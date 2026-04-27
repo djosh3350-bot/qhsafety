@@ -2218,10 +2218,18 @@ async function deleteConsultation(id) {
         return; // skip entirely — safeRender will retry after typing stops
       }
 
+      // Save scroll position before rebuilding DOM
+      const prevScroll = document.getElementById('main-scroll');
+      const savedScrollTop = prevScroll ? prevScroll.scrollTop : 0;
+
       config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#f5f5f5'}:{...defaultConfig};
       if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
       else{renderDashboard();}
       lucide.createIcons();
+
+      // Restore scroll position after rebuild
+      const newScroll = document.getElementById('main-scroll');
+      if (newScroll && savedScrollTop) newScroll.scrollTop = savedScrollTop;
 
       // Re-apply search filter to DOM after render
       if (postingSearchQuery) filterPostsInDOM(postingSearchQuery);
@@ -2366,7 +2374,7 @@ async function deleteConsultation(id) {
           <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
         </div>
       </div>
-      <main class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
+      <main id="main-scroll" class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
         <div class="hidden md:block mb-8">
           <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">${tr('welcomeBack')}, <span class="highlight-cyan">${currentRole==='admin'?tr('admin'):currentRole==='student'?tr('student'):tr('counselor')}</span></h1>
           <p class="mt-1" style="font-size:${fs*0.85}px;color:${config.text_color}88">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p>
