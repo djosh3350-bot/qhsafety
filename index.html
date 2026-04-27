@@ -2165,6 +2165,7 @@ async function deleteConsultation(id) {
 
     // Track ALL form field IDs that must never be destroyed mid-type
     const FORM_INPUT_IDS = [
+      'postingSearchInput',
       'postingTitleInput','postingContentTA',
       'consultReasonInput','consultDescTA',
       'announcement-title-input','announcement-msg-input'
@@ -2444,7 +2445,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" autocomplete="off" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value);onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();}" autocomplete="off" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
