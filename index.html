@@ -2227,17 +2227,15 @@ async function deleteConsultation(id) {
       else{renderDashboard();}
       lucide.createIcons();
 
-      // Restore scroll position after rebuild
-      const newScroll = document.getElementById('main-scroll');
-      if (newScroll && savedScrollTop) newScroll.scrollTop = savedScrollTop;
-
       // Re-apply search filter to DOM after render
       if (postingSearchQuery) filterPostsInDOM(postingSearchQuery);
 
-      // Auto-scroll chat boxes to bottom
-      setTimeout(()=>{
+      // Restore scroll + auto-scroll chat boxes after browser paints new DOM
+      requestAnimationFrame(() => {
+        const newScroll = document.getElementById('main-scroll');
+        if (newScroll && savedScrollTop) newScroll.scrollTop = savedScrollTop;
         document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
-      },50);
+      });
       // Keep notification button/indicator in sync with OneSignal state
       if(isAuthenticated) setTimeout(updateNotifUI, 200);
     }
