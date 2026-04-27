@@ -2286,7 +2286,7 @@ async function deleteConsultation(id) {
       ${showForgotPassword?`
         ${forgotPasswordError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${forgotPasswordError}</div>`:''}
         ${forgotPasswordSuccess?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#66bb6a;color:#fff;text-align:center">${forgotPasswordSuccess}</div>`:''}
-        <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${forgotPasswordEmail}" oninput="forgotPasswordEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter your email" /></div>
+        <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${forgotPasswordEmail}" oninput="forgotPasswordEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter your email" /></div>
         <button onclick="handleForgotPassword()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Send Reset Email</button>
         <button onclick="showForgotPassword=false;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Back to Login</button>
       `:`
@@ -2296,9 +2296,9 @@ async function deleteConsultation(id) {
         </div>
         ${currentAuthFlow==='signup'?`
           ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${signupEmail}" oninput="signupEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${signupPassword}" oninput="signupPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Confirm password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${signupEmail}" oninput="signupEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${signupPassword}" oninput="signupPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Confirm password" /></div>
           <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
         `:`
           ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
@@ -2306,8 +2306,8 @@ async function deleteConsultation(id) {
             <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
             <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">Use the email and password provided by your administrator. Students must register through the Sign Up tab before logging in.</p>
           </div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${loginEmail}" oninput="loginEmail=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${loginPassword}" oninput="loginPassword=this.value" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${loginEmail}" oninput="loginEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${loginPassword}" oninput="loginPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
           <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
           <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
         `}
@@ -2444,7 +2444,7 @@ if(activeSidebarItem==='Postings') {
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
              value="${postingSearchQuery}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" autocomplete="off" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();}" autocomplete="off" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
@@ -2457,7 +2457,7 @@ if(activeSidebarItem==='Postings') {
     </div>
     <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
     <input type="text" id="postingTitleInput" placeholder="${tr('title')}" value="${postingTitle}" 
-           oninput="postingTitle=this.value;onFieldInput()" 
+           onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="postingTitle=this.value;onFieldInput()" 
            style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
     <textarea id="postingContentTA" placeholder="${tr('content')}" oninput="postingContent=this.value;onFieldInput()" 
@@ -2554,7 +2554,7 @@ if(activeSidebarItem==='Postings') {
           <div style="display:flex;gap:8px">
             <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." 
               oninput="postingChatDraft['${p.id}']=this.value"
-              onkeydown="if(event.key==='Enter'){sendPostingChat(${p.id})}"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();sendPostingChat(${p.id})}"
               style="flex:1;padding:8px 12px;border:1px solid ${config.text_color}22;border-radius:20px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
             <button onclick="sendPostingChat(${p.id})" 
               style="padding:8px 14px;background:${config.primary_action_color};color:${config.text_color};border-radius:20px;font-weight:700;font-size:13px">Send</button>
@@ -2620,7 +2620,7 @@ if(activeSidebarItem==='Postings') {
       ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ Selected: ${consultationGradeLevel}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
     </div>
 
-    <input type="text" id="consultReasonInput" placeholder="${tr('reason')}" value="${consultationReason||''}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <input type="text" id="consultReasonInput" placeholder="${tr('reason')}" value="${consultationReason||''}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
     <div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-medium" style="background:${consultationPriority===p?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${tr(p.toLowerCase())}</button>`).join('')}</div></div>
     <textarea id="consultDescTA" placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical"></textarea>
     <div class="flex gap-3">
@@ -2705,7 +2705,7 @@ if(activeSidebarItem==='Postings') {
               <input id="consultChat_${c.id}" type="text" 
                 placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
                 oninput="consultationChatDraft['${c.id}']=this.value"
-                onkeydown="if(event.key==='Enter'){sendConsultationChat('${c.id}')}"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                 style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
               <button onclick="sendConsultationChat('${c.id}')" 
                 style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
@@ -2911,7 +2911,7 @@ ${isGuidance?`
     </div>
   </div>
   <input id="announcement-title-input" type="text" placeholder="Announcement title..." value="${announcementTitle}"
-    oninput="announcementTitle=this.value;onFieldInput()"
+    onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="announcementTitle=this.value;onFieldInput()"
     style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
   <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value;onFieldInput()"
     style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
