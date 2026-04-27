@@ -1882,10 +1882,9 @@ async function handleSendAnnouncement() {
       await new Promise(r => setTimeout(r, 1000));
     }
 
-    // Verify delivery count
+    // Get recipient count directly from OneSignal send response
     if (statusEl) statusEl.textContent = '✅ Verifying recipients...';
-    const stats = await getAnnouncementStats(data.id);
-    const delivered = stats.successful || stats.received || 0;
+    const delivered = data.recipients || data.successful || data.received || 0;
 
     if (statusEl) statusEl.textContent = '✅ Announcement delivered!';
     if (timerEl) timerEl.textContent = 'DONE';
