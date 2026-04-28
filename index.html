@@ -28,6 +28,36 @@
   });
 </script>
   <style>
+    /* ── LOADING SPLASH (shown immediately, hidden once app renders) ── */
+    #qh-loading-splash {
+      position: fixed; inset: 0; z-index: 99998;
+      background: #2c3e50;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 18px; transition: opacity 0.4s ease;
+    }
+    #qh-loading-splash.hidden { opacity: 0; pointer-events: none; }
+    #qh-loading-logo {
+      font-family: 'Space Mono', monospace; font-size: 2.2rem; font-weight: 700;
+      color: #fff; letter-spacing: -1px;
+    }
+    #qh-loading-logo span { color: #ffee58; }
+    #qh-loading-bar {
+      width: 180px; height: 4px; background: rgba(255,255,255,0.15); border-radius: 4px; overflow: hidden;
+    }
+    #qh-loading-bar-fill {
+      height: 100%; width: 0%; background: #ffee58; border-radius: 4px;
+      animation: loadBar 2.5s ease-in-out forwards;
+    }
+    @keyframes loadBar {
+      0%   { width: 0%; }
+      40%  { width: 60%; }
+      80%  { width: 85%; }
+      100% { width: 100%; }
+    }
+    #qh-loading-sub {
+      font-family: 'DM Sans', sans-serif; font-size: 13px; color: rgba(255,255,255,0.45);
+      letter-spacing: 0.04em;
+    }
       .guidance-high-risk {
       box-shadow: 0 0 20px rgba(239,83,80,0.9), 0 0 0 2px #ef5350;
       border: 2px solid #ef5350 !important;
@@ -161,6 +191,13 @@ button:not(.sidebar-item):active {
   </style>
 </head>
 <body class="h-full w-full overflow-auto">
+  <!-- Loading Splash (shown immediately to prevent blank white screen) -->
+  <div id="qh-loading-splash">
+    <div id="qh-loading-logo"><span>QH</span>safety</div>
+    <div id="qh-loading-bar"><div id="qh-loading-bar-fill"></div></div>
+    <div id="qh-loading-sub">Quirino High School Safety Platform</div>
+  </div>
+
   <!-- Custom Modal -->
   <div id="qh-modal-overlay">
     <div id="qh-modal-box">
@@ -2367,6 +2404,13 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     }
 
     function render() {
+      // Hide loading splash on first render
+      const splash = document.getElementById('qh-loading-splash');
+      if (splash && !splash.classList.contains('hidden')) {
+        splash.classList.add('hidden');
+        setTimeout(() => { if (splash.parentNode) splash.parentNode.removeChild(splash); }, 500);
+      }
+
       // If any input/textarea is focused, NEVER rebuild the DOM
       if (isUserTyping()) return;
 
@@ -3855,6 +3899,13 @@ ${isGuidance?`
     }
 
     handleDeepLink();
+
+    // ── SAFETY FALLBACK: render landing after 4s even if Firebase is slow ──
+    let _didFirstRender = false;
+    const _origRender = render;
+    window.render = function() { _didFirstRender = true; _origRender(); };
+    // Patch local render reference too
+    setTimeout(() => { if (!_didFirstRender) { _didFirstRender = true; _origRender(); } }, 4000);
 
     // ── AUTO-LOGIN via Firebase session ──
     auth.onAuthStateChanged(async (user) => {
