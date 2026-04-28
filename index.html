@@ -271,8 +271,6 @@ button:not(.sidebar-item):active {
     let currentRole=null, currentUserEmail='', activeSidebarItem='Dashboard', darkMode=localStorage.getItem('qh_dark_mode')==='true', showCreateGuidanceForm=false;
     let postings=[], showPostingForm=false, postingTitle='', postingContent='', postingError='', postingPriority='Medium';
     let consultationPostings=[], showConsultationForm=false, consultationReason='', consultationDescription='', consultationPriority='Medium', consultationError='', consultationGradeLevel='';
-    let consultationContactPref='chat', consultationMoodLevel=3;
-    let showMeetScheduler={}, consultMeetDraft={date:'',time:'',link:'',notes:''};
     let postingChatDraft={}, consultationChatDraft={}, expandedPost=null, expandedConsult=null;
     let feedbackList=[], showFeedbackForm=false, feedbackRating=5, feedbackMessage='', feedbackError='';
     let systemLogs=[], logFilter='all', postingSearchQuery='', mobileDrawerOpen=false;
@@ -1323,33 +1321,24 @@ setTimeout(handleDeepLink, 1000); // 👈 add this
 function friendlyAuthError(code, fallback) {
   switch (code) {
     case 'auth/invalid-credential':
-      return '❌ Incorrect email or password. If you just signed up, verify your email first before logging in.';
     case 'auth/wrong-password':
-      return '❌ Wrong password. Please try again or use "Forgot Password?" to reset it.';
     case 'auth/user-not-found':
-      return '❌ No account found with that email. Please sign up first, or check the email you entered.';
     case 'auth/invalid-email':
-      return '❌ That does not look like a valid email address. Please check and try again.';
+      return 'Incorrect email or password. Please check your credentials and try again.';
     case 'auth/invalid-password':
-      return '❌ Incorrect password. Please try again or use "Forgot Password?" to reset it.';
+      return 'Your password is incorrect. Please try again or use "Forgot Password" to reset it.';
     case 'auth/user-disabled':
-      return '⛔ This account has been disabled. Please contact your school administrator.';
+      return 'This account has been disabled. Please contact your administrator.';
     case 'auth/too-many-requests':
-      return '⏳ Too many failed attempts. Your account is temporarily locked — wait a few minutes, then try again or reset your password.';
+      return 'Too many failed login attempts. Please wait a few minutes before trying again.';
     case 'auth/network-request-failed':
-      return '🌐 Network error. Please check your internet connection and try again.';
+      return 'Network error. Please check your internet connection and try again.';
     case 'auth/email-already-in-use':
-      return '⚠️ This email is already registered. Go to Login instead, or use "Forgot Password?" if you forgot it.';
+      return 'This email is already registered. Please log in instead.';
     case 'auth/weak-password':
-      return '🔒 Password is too weak — use at least 6 characters.';
-    case 'auth/operation-not-allowed':
-      return '⛔ Sign-up is currently disabled. Please contact your administrator.';
-    case 'auth/missing-password':
-      return '❌ Please enter your password.';
-    case 'auth/missing-email':
-      return '❌ Please enter your email address.';
+      return 'Password must be at least 6 characters long.';
     default:
-      return '❌ Something went wrong (' + (code || 'unknown') + '). Please try again. If this keeps happening, contact your administrator.';
+      return 'Login failed. Please check your email and password, then try again.';
   }
 }
 
@@ -1984,7 +1973,7 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
         }
 
         const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-        const newConsult={id:Date.now(),reason:cleanReason,description:cleanDesc,priority:finalPriority,gradeLevel:consultationGradeLevel,contactPref:consultationContactPref,studentMood:consultationMoodLevel,author:authorLabel,authorId:currentUserEmail,isAnonymous:isAnonymous,status:'Pending',riskLevel:risk.level,aiScore:risk.score,timestamp:Date.now(),messages:[]};
+        const newConsult={id:Date.now(),reason:cleanReason,description:cleanDesc,priority:finalPriority,gradeLevel:consultationGradeLevel,author:authorLabel,authorId:currentUserEmail,isAnonymous:isAnonymous,status:'Pending',riskLevel:risk.level,aiScore:risk.score,timestamp:Date.now(),messages:[]};
         await db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
 
         // 📧 Notify guidance if AI confirmed High OR Medium risk
@@ -2006,7 +1995,7 @@ if (risk.level === 'High' || risk.level === 'Medium') {
 
         // Clear form and reset UI
         consultationReason=''; consultationDescription=''; consultationPriority='Medium';
-        consultationGradeLevel=''; consultationContactPref='chat'; consultationMoodLevel=3; showConsultationForm=false; consultationError='';
+        consultationGradeLevel=''; showConsultationForm=false; consultationError='';
         addLog('Consultation submitted', authorLabel, 'info');
         render();
       } catch(e) {
@@ -2024,101 +2013,6 @@ if (risk.level === 'High' || risk.level === 'Medium') {
       catch(e){showModal("Error","Could not cancel request: "+e.message,"error");}
     }
     async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done'});addLog('Consultation marked as Done',currentUserEmail,'success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');}}
-
-  // ── CONSULTATION: SCHEDULE GOOGLE MEET ──
-async function scheduleConsultMeet(consultId) {
-  const d = consultMeetDraft;
-  if (!d.date || !d.time) { showModal('Missing Info', 'Please select both a date and time for the meeting.', 'error'); return; }
-  const isoStr = d.date + 'T' + d.time;
-  const meetData = {
-    meetDate: d.date,
-    meetTime: d.time,
-    meetDateTime: isoStr,
-    meetLink: d.link.trim() || '',
-    meetNotes: d.notes.trim() || '',
-    meetScheduledBy: currentUserEmail,
-    meetScheduledAt: Date.now(),
-    status: 'Pending'
-  };
-  try {
-    await db.collection('consultations').doc(String(consultId)).update(meetData);
-    // Notify student via chat system message
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
-    const dateLabel = new Date(isoStr).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
-    const sysMsg = {
-      sender: currentUserEmail,
-      role: 'guidance',
-      isSystem: true,
-      text: '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel + (meetData.meetLink ? '<br>🔗 <a href="' + meetData.meetLink + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '') + (meetData.meetNotes ? '<br>📝 ' + meetData.meetNotes : ''),
-      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
-      ts: Date.now()
-    };
-    await ref.update({ chatMessages: [...existing, sysMsg] });
-    showMeetScheduler[consultId] = false;
-    consultMeetDraft = {date:'',time:'',link:'',notes:''};
-    addLog('Meet scheduled for consultation #'+consultId, currentUserEmail, 'success');
-    render();
-    showModal('✅ Meeting Scheduled!', 'The student will see the meeting details in the chat.', 'success');
-  } catch(e) { showModal('Error', 'Failed to schedule meeting: ' + e.message, 'error'); }
-}
-
-async function cancelConsultMeet(consultId) {
-  const ok = await confirmModal('Cancel Meeting', 'Remove the scheduled meeting from this consultation?', 'warning');
-  if (!ok) return;
-  try {
-    await db.collection('consultations').doc(String(consultId)).update({
-      meetDate: firebase.firestore.FieldValue.delete(),
-      meetTime: firebase.firestore.FieldValue.delete(),
-      meetDateTime: firebase.firestore.FieldValue.delete(),
-      meetLink: firebase.firestore.FieldValue.delete(),
-      meetNotes: firebase.firestore.FieldValue.delete(),
-      meetScheduledBy: firebase.firestore.FieldValue.delete(),
-      meetScheduledAt: firebase.firestore.FieldValue.delete()
-    });
-    addLog('Meet cancelled for consultation #'+consultId, currentUserEmail, 'warning');
-    render();
-  } catch(e) { showModal('Error', 'Failed to cancel meeting: ' + e.message, 'error'); }
-}
-
-// ── CONSULTATION: UPDATE MOOD ──
-async function saveConsultMood(consultId, mood) {
-  try {
-    await db.collection('consultations').doc(String(consultId)).update({ studentMood: mood, moodUpdatedAt: Date.now() });
-  } catch(e) { console.warn('Mood save failed:', e); }
-}
-
-// ── CONSULTATION: MARK URGENT ──
-async function toggleConsultUrgent(consultId, currentVal) {
-  try {
-    await db.collection('consultations').doc(String(consultId)).update({ urgent: !currentVal });
-    addLog('Consultation urgency toggled', currentUserEmail, 'warning');
-  } catch(e) { showModal('Error', e.message, 'error'); }
-}
-
-// ── CONSULTATION: ADD PRIVATE GUIDANCE NOTE ──
-async function saveGuidanceNote(consultId) {
-  const noteEl = document.getElementById('guidance-note-'+consultId);
-  if (!noteEl) return;
-  const note = noteEl.value.trim();
-  try {
-    await db.collection('consultations').doc(String(consultId)).update({ guidanceNote: note, noteUpdatedAt: Date.now() });
-    showModal('✅ Saved', 'Your private note has been saved.', 'success');
-  } catch(e) { showModal('Error', e.message, 'error'); }
-}
-
-// ── CONSULTATION: REFERRAL ──
-async function saveReferral(consultId) {
-  const el = document.getElementById('referral-'+consultId);
-  if (!el) return;
-  const val = el.value.trim();
-  try {
-    await db.collection('consultations').doc(String(consultId)).update({ referredTo: val, referredAt: Date.now() });
-    showModal('✅ Referral Saved', 'Student has been referred to: ' + val, 'success');
-    addLog('Student referred to '+val, currentUserEmail, 'info');
-  } catch(e) { showModal('Error', e.message, 'error'); }
-}
 
   // ── GUIDANCE MESSAGES ──
 let guidanceMessageDraft = {}; // keyed by postingId
@@ -2285,25 +2179,6 @@ async function deleteConsultation(id) {
   
   
   
-
-// ── CONSULTATION CHAT MESSAGE RENDERER ──
-function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, textColor) {
-  const isMine = m.sender === currentUserEmail || (m.sender === 'Anonymous' && isAnonymous);
-  if (m.isSystem) {
-    return '<div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">' +
-      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + (m.time||'') + '</div></div>';
-  }
-  const bg = m.role === 'guidance' ? '#1565c0' : isMine ? primaryColor + 'dd' : textColor + '18';
-  const col = m.role === 'guidance' ? '#fff' : textColor;
-  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : m.sender.split('@')[0];
-  return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
-    '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
-    '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
-    m.text +
-    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + (m.time||'') + '</div>' +
-    '</div></div>';
-}
-
     // ── RENDER ──
     let _renderTimer = null;
     let _typingIdleTimer = null;
@@ -2448,9 +2323,9 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
         ${currentAuthFlow==='signup'?`
           ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
           ${selectedRoleForLogin==='student'?`<div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:#e3f2fd;border:1px solid #90caf955"><i data-lucide="info" style="width:15px;height:15px;color:#1565c0;margin-top:1px;flex-shrink:0"></i><p style="font-size:12px;color:#1565c0;line-height:1.5;margin:0">📧 A <strong>Gmail account (@gmail.com)</strong> is required. A verification link will be sent to your email — you must verify it before you can log in.</p></div>`:''}
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="su-email" type="email" value="${signupEmail}" oninput="signupEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="su-pass" type="password" value="${signupPassword}" oninput="signupPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Min. 6 characters" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input id="su-confirm" type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Re-enter password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${signupEmail}" oninput="signupEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${signupPassword}" oninput="signupPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Confirm password" /></div>
           <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
         `:`
           ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
@@ -2458,8 +2333,8 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
             <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
             <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">${selectedRoleForLogin==='student'?'Sign up first with your <strong>Gmail (@gmail.com)</strong> and verify your email before logging in.':'Use the email and password provided by your administrator.'}</p>
           </div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="li-email" type="email" value="${loginEmail}" oninput="loginEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="li-pass" type="password" value="${loginPassword}" oninput="loginPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${loginEmail}" oninput="loginEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${loginPassword}" oninput="loginPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
           <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
           <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
         `}
@@ -2748,15 +2623,15 @@ if(activeSidebarItem==='Postings') {
     ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
   </div>
   ${showConsultationForm?`
-  <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
+  <div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
     ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
-    <div class="p-3 rounded-lg mb-5 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
-      🤝 <strong>Consultation Guide:</strong> Describe your concern clearly. The guidance counselor will review and reply. Your request is confidential.
+    <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
+      🤝 <strong>Consultation Guide:</strong> Describe your concern clearly. The guidance counselor will review and reply via the chat below your request.
     </div>
-    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">📋 New Consultation Request</h3>
+    <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newConsultation')}</h3>
 
-    <!-- Grade Level -->
-    <div class="mb-5">
+    <!-- Grade Level Selector -->
+    <div class="mb-4">
       <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📚 Grade Level</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
@@ -2768,45 +2643,15 @@ if(activeSidebarItem==='Postings') {
           ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
         </div>
       </div>
-      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ ${consultationGradeLevel} selected</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
+      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ Selected: ${consultationGradeLevel}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
     </div>
 
-    <!-- Reason + Priority -->
-    <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📝 Reason / Topic</label>
-      <input type="text" id="consultReasonInput" placeholder="e.g. Academic stress, Family issue, Personal problem..." value="${consultationReason||''}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
-    </div>
-    <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">⚡ Priority Level</label>
-      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-semibold" style="background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${p}</button>`).join('')}</div>
-    </div>
-
-    <!-- How are you feeling (mood slider) -->
-    <div class="mb-4 p-4 rounded-xl" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">💭 How are you feeling right now?</label>
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="consultationMoodLevel=${i+1};render()" style="font-size:${consultationMoodLevel===i+1?'28px':'20px'};transition:all 0.15s;opacity:${consultationMoodLevel===i+1?'1':'0.45'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
-      </div>
-      <div style="text-align:center;font-size:12px;font-weight:600;color:${config.text_color}88">${['Very Sad','Sad','Neutral','Good','Great'][consultationMoodLevel-1]}</div>
-    </div>
-
-    <!-- Contact Preference -->
-    <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📞 Preferred Contact Method</label>
-      <div class="flex gap-2 flex-wrap">
-        ${[{v:'chat',l:'💬 Chat',d:'In-app chat'},{v:'meet',l:'📹 Google Meet',d:'Video call'},{v:'facetoface',l:'🏫 Face to Face',d:'In person'},{v:'phone',l:'📱 Phone Call',d:'Call me'}].map(o=>`<button onclick="consultationContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${consultationContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${consultationContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
-      </div>
-    </div>
-
-    <!-- Details textarea -->
-    <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">🗒️ Describe Your Concern</label>
-      <textarea id="consultDescTA" placeholder="Share as much or as little as you feel comfortable with. Everything is confidential." oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${consultationDescription||''}</textarea>
-    </div>
-
+    <input type="text" id="consultReasonInput" placeholder="${tr('reason')}" value="${consultationReason||''}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-medium" style="background:${consultationPriority===p?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${tr(p.toLowerCase())}</button>`).join('')}</div></div>
+    <textarea id="consultDescTA" placeholder="${tr('descConcern')}" oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical"></textarea>
     <div class="flex gap-3">
-      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-bold flex-1" style="background:${config.primary_action_color};color:${config.text_color}">📤 ${tr('submitRequest')}</button>
-      <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationContactPref='chat';consultationMoodLevel=3;consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
+      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submitRequest')}</button>
+      <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
     </div>
   </div>`:''}
   <div class="space-y-4">
@@ -2816,154 +2661,85 @@ if(activeSidebarItem==='Postings') {
         const isPending=c.status==='Pending';
         const gc=getGlowClass(c,isPending);
         return `
-        <div class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
-
-          <!-- TOP: badges row -->
-          <div class="flex flex-wrap gap-2 mb-3">
-            <span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${isPending?(c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'):'#66bb6a'};color:#fff">
-              ${isPending?(c.priority==='High'?'⚡ ':c.priority==='Medium'?'▲ ':'▽ ')+c.priority+' Priority':tr('resolved')}
-            </span>
-            ${c.urgent?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#b71c1c;color:#fff;animation:pulseRed 1s infinite">🚨 URGENT</span>`:''}
-            ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} AI Risk: ${c.riskLevel} · ${c.aiScore}</span>`:''}
-            ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'🎓 SHS':'📚 JHS'} · ${c.gradeLevel}</span>`:''}
-            ${c.contactPref?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone Call':'💬 Chat'}</span>`:''}
-            ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very Sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
-            ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">📅 Meet: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
-            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#e65100">↗️ Referred: ${c.referredTo}</span>`:''}
-          </div>
-
-          <!-- Title + action buttons -->
-          <div class="flex flex-col md:flex-row justify-between items-start gap-3 mb-3">
+        <div class="p-6 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+          <!-- Header row: status badge + grade level + action buttons -->
+          <div class="flex flex-col md:flex-row justify-between items-start gap-4 mb-4">
             <div class="flex-1">
+              <div class="flex items-center gap-2 mb-2 flex-wrap">
+                <span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${isPending?(c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'):'#66bb6a'};color:#fff">${isPending?(c.priority==='High'?'⚡ ':c.priority==='Medium'?'▲ ':'▽ ')+c.priority+' Priority':tr('resolved')}</span>
+                ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${tr(c.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${c.aiScore}</span>`:''}
+                ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'🎓 SHS':'📚 JHS'} · ${c.gradeLevel}</span>`:''}
+              </div>
               <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${c.reason}</h3>
-              ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}55">
-                <span>👤 ${c.studentEmail||c.author}</span>
-                <span>📋 <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
-                <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
-              </div>`:''}
             </div>
-            <div class="flex gap-2 flex-wrap shrink-0">
-              ${(c.author===myEmail||c.authorId===myEmail)&&c.status==='Pending'?`<button onclick="deleteConsultationPosting('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350;border:1px solid #ef535044">${tr('cancel')}</button>`:''}
-              ${canDelete(c,'consultation')?`<button onclick="deleteConsultation(${c.id})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef5350;color:#fff">${tr('delete')}</button>`:''}
-              ${currentRole==='guidance'&&c.status==='Pending'?`
-                <button onclick="toggleConsultUrgent('${c.id}',${!!c.urgent})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${c.urgent?'#b71c1c22':'#ff980022'};color:${c.urgent?'#b71c1c':'#e65100'};border:1px solid ${c.urgent?'#b71c1c44':'#ff980044'}">${c.urgent?'🔕 Unmark Urgent':'🚨 Mark Urgent'}</button>
-                <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markResolved')}</button>
-              `:''}
-            </div>
+            <div class="flex gap-2 shrink-0">
+  ${(c.author === myEmail || c.studentEmail === myEmail || c.authorId === myEmail) && c.status === 'Pending' ? `
+    <button onclick="deleteConsultationPosting('${c.id}')" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:#ef5350;color:#fff">
+      ${tr('cancel')}
+    </button>` : ''}
+
+  ${canDelete(c, 'consultation') ? `
+    <button onclick="deleteConsultation(${c.id})" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:#ef5350;color:#fff">
+      ${tr('delete')}
+    </button>` : ''}
+
+  ${currentRole === 'guidance' && c.status === 'Pending' ? `
+    <button onclick="updateConsultationStatus('${c.id}')" 
+            class="text-xs px-4 py-1.5 rounded-lg font-medium" 
+            style="background:${config.secondary_action_color};color:${config.text_color}">
+      ${tr('markResolved')}
+    </button>` : ''}
+</div>
           </div>
 
-          <!-- Description -->
-          <div style="max-height:80px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
-            <p style="color:${config.text_color}88;line-height:1.6;font-size:13px">${c.description}</p>
+          <!-- Description scrollable -->
+          <div style="max-height:100px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
+            <p style="color:${config.text_color}88;line-height:1.5">${c.description}</p>
           </div>
 
-          <!-- Meet Banner (if scheduled) -->
-          ${c.meetDateTime?`
-          <div class="mb-3 p-3 rounded-xl" style="background:#e8f5e9;border:1px solid #66bb6a44">
-            <div class="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <div class="font-bold text-sm" style="color:#2e7d32">📅 Scheduled Meeting</div>
-                <div class="text-xs mt-1" style="color:#388e3c">${new Date(c.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-                ${c.meetNotes?`<div class="text-xs mt-1" style="color:#388e3c">📝 ${c.meetNotes}</div>`:''}
-              </div>
-              <div class="flex gap-2">
-                ${c.meetLink?`<a href="${c.meetLink}" target="_blank" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#34a853;color:#fff;text-decoration:none">🔗 Join Meet</a>`:''}
-                ${currentRole==='guidance'?`<button onclick="cancelConsultMeet('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350">Cancel</button>`:''}
-              </div>
-            </div>
+          <!-- Meta info -->
+          ${isGuidance?`<div class="text-xs mb-3 pt-2 border-t flex gap-3 flex-wrap" style="color:${config.text_color}55;border-color:${config.text_color}11">
+            <span>👤 ${c.studentEmail||c.author}</span>
+            <span>📋 Status: <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
+            <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
           </div>`:''}
 
-          <!-- GUIDANCE TOOLS (only visible to guidance) -->
-          ${currentRole==='guidance'?`
-          <div class="mb-3" style="border:1px solid ${config.text_color}11;border-radius:12px;overflow:hidden">
-
-            <!-- Schedule Meet Accordion -->
-            <button onclick="showMeetScheduler['${c.id}']=!showMeetScheduler['${c.id}'];render()" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold" style="background:${showMeetScheduler[c.id]?'#e8f5e9':config.text_color+'08'};color:${showMeetScheduler[c.id]?'#2e7d32':config.text_color};border:none;cursor:pointer">
-              <span>📹 ${c.meetDateTime?'Reschedule Meeting':'Schedule Google Meet'}</span>
-              <i data-lucide="${showMeetScheduler[c.id]?'chevron-up':'chevron-down'}" style="width:16px;height:16px"></i>
-            </button>
-            ${showMeetScheduler[c.id]?`
-            <div class="p-4" style="background:${config.text_color}05;border-top:1px solid ${config.text_color}11">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-                <div>
-                  <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📅 DATE</label>
-                  <input type="date" id="meet-date-${c.id}" value="${consultMeetDraft.date||''}" oninput="consultMeetDraft.date=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-                </div>
-                <div>
-                  <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">⏰ TIME</label>
-                  <input type="time" id="meet-time-${c.id}" value="${consultMeetDraft.time||''}" oninput="consultMeetDraft.time=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-                </div>
-              </div>
-              <div style="margin-bottom:10px">
-                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">🔗 GOOGLE MEET LINK (optional)</label>
-                <input type="url" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-                <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 Create a meet at <a href="https://meet.google.com" target="_blank" style="color:#1565c0">meet.google.com</a> and paste the link above.</p>
-              </div>
-              <div style="margin-bottom:12px">
-                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📝 NOTES FOR STUDENT (optional)</label>
-                <input type="text" id="meet-notes-${c.id}" value="${consultMeetDraft.notes||''}" oninput="consultMeetDraft.notes=this.value;onFieldInput()" placeholder="e.g. Please bring your report card..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-              </div>
-              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2 rounded-lg font-bold text-sm" style="background:#34a853;color:#fff">📅 Confirm & Notify Student</button>
-            </div>`:''}
-
-            <!-- Private Guidance Note -->
-            <div style="border-top:1px solid ${config.text_color}11">
-              <div class="px-4 py-3 flex items-center gap-2" style="background:${config.text_color}04">
-                <i data-lucide="lock" style="width:13px;height:13px;color:${config.text_color}55"></i>
-                <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Private Guidance Note</span>
-              </div>
-              <div class="px-4 pb-3">
-                <textarea id="guidance-note-${c.id}" placeholder="Internal notes — not visible to student..." oninput="onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;min-height:60px;resize:vertical">${c.guidanceNote||''}</textarea>
-                <button onclick="saveGuidanceNote('${c.id}')" class="mt-2 px-4 py-1.5 rounded-lg text-xs font-bold" style="background:${config.text_color}18;color:${config.text_color}">💾 Save Note</button>
-                ${c.noteUpdatedAt?`<span class="text-xs ml-2" style="color:${config.text_color}44">Last saved: ${new Date(c.noteUpdatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
-              </div>
-            </div>
-
-            <!-- Referral -->
-            <div style="border-top:1px solid ${config.text_color}11">
-              <div class="px-4 py-3 flex items-center gap-2" style="background:${config.text_color}04">
-                <i data-lucide="external-link" style="width:13px;height:13px;color:${config.text_color}55"></i>
-                <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Refer Student</span>
-              </div>
-              <div class="px-4 pb-3 flex gap-2">
-                <input id="referral-${c.id}" type="text" value="${c.referredTo||''}" placeholder="e.g. School Psychologist, DSWD, Admin..." oninput="onFieldInput()" style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-                <button onclick="saveReferral('${c.id}')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#90caf9;color:#1a237e">↗️ Save</button>
-              </div>
-            </div>
-
-          </div>
-          `:''}
-
-          <!-- STUDENT: Mood Update -->
-          ${currentRole==='student'&&isPending?`
-          <div class="mb-3 p-3 rounded-xl flex items-center gap-3 flex-wrap" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
-            <span class="text-xs font-bold" style="color:${config.text_color}88">Update your mood:</span>
-            ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="saveConsultMood('${c.id}',${i+1})" style="font-size:${(c.studentMood||3)===i+1?'22px':'16px'};opacity:${(c.studentMood||3)===i+1?'1':'0.4'};background:none;border:none;cursor:pointer;transition:all 0.15s">${e}</button>`).join('')}
-          </div>`:''}
-
-          <!-- Chat Thread -->
+          <!-- Consultation Chat Thread -->
           <div style="border-top:1px solid ${config.text_color}11;padding-top:12px;margin-top:4px">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
               <i data-lucide="message-square" style="width:14px;height:14px;color:${config.text_color}55"></i>
               <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
             </div>
-            <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
-              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,currentUserEmail,isAnonymous,config.primary_action_color,config.text_color)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'44">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
+            <!-- Message thread scrollable -->
+            <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
+              ${c.chatMessages && c.chatMessages.length ? c.chatMessages.map(m=>`
+              <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?'row-reverse':'row'};gap:8px;align-items:flex-end">
+                <div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:${m.role==='guidance'?'#1565c0':(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?config.primary_action_color+'dd':config.text_color+'18'};color:${m.role==='guidance'?'#fff':config.text_color}">
+                  <div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">${m.role==='guidance'?'🎓 Guidance Counselor':m.sender==='Anonymous'?'👤 You (Anonymous)':m.sender.split('@')[0]}</div>
+                  ${m.text}
+                  <div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">${m.time||''}</div>
+                </div>
+              </div>`).join('') : `<div style="text-align:center;padding:16px 0;font-size:12px;color:${config.text_color}44">No messages yet. ${isPending?'Start the conversation below.':'This consultation is resolved.'}</div>`}
             </div>
-            ${isPending||currentRole==='guidance'?`
+            <!-- Chat input - always shown while pending, guidance can always reply -->
+            ${isPending || currentRole==='guidance' ? `
             <div style="display:flex;gap:8px">
-              <input id="consultChat_${c.id}" type="text"
+              <input id="consultChat_${c.id}" type="text" 
                 placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
                 oninput="consultationChatDraft['${c.id}']=this.value"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                 style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
-              <button onclick="sendConsultationChat('${c.id}')"
+              <button onclick="sendConsultationChat('${c.id}')" 
                 style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
                 <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
               </button>
-            </div>`:`<p style="font-size:12px;color:${config.text_color}44;text-align:center">Chat closed — consultation resolved.</p>`}
+            </div>` : `<p style="font-size:12px;color:${config.text_color}44;text-align:center">Chat closed — consultation resolved.</p>`}
           </div>
-        </div>`
+        </div>`;
       }).join('')}
   </div>
 </div>`;
