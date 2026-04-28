@@ -1321,24 +1321,33 @@ setTimeout(handleDeepLink, 1000); // 👈 add this
 function friendlyAuthError(code, fallback) {
   switch (code) {
     case 'auth/invalid-credential':
+      return '❌ Incorrect email or password. If you just signed up, verify your email first before logging in.';
     case 'auth/wrong-password':
+      return '❌ Wrong password. Please try again or use "Forgot Password?" to reset it.';
     case 'auth/user-not-found':
+      return '❌ No account found with that email. Please sign up first, or check the email you entered.';
     case 'auth/invalid-email':
-      return 'Incorrect email or password. Please check your credentials and try again.';
+      return '❌ That does not look like a valid email address. Please check and try again.';
     case 'auth/invalid-password':
-      return 'Your password is incorrect. Please try again or use "Forgot Password" to reset it.';
+      return '❌ Incorrect password. Please try again or use "Forgot Password?" to reset it.';
     case 'auth/user-disabled':
-      return 'This account has been disabled. Please contact your administrator.';
+      return '⛔ This account has been disabled. Please contact your school administrator.';
     case 'auth/too-many-requests':
-      return 'Too many failed login attempts. Please wait a few minutes before trying again.';
+      return '⏳ Too many failed attempts. Your account is temporarily locked — wait a few minutes, then try again or reset your password.';
     case 'auth/network-request-failed':
-      return 'Network error. Please check your internet connection and try again.';
+      return '🌐 Network error. Please check your internet connection and try again.';
     case 'auth/email-already-in-use':
-      return 'This email is already registered. Please log in instead.';
+      return '⚠️ This email is already registered. Go to Login instead, or use "Forgot Password?" if you forgot it.';
     case 'auth/weak-password':
-      return 'Password must be at least 6 characters long.';
+      return '🔒 Password is too weak — use at least 6 characters.';
+    case 'auth/operation-not-allowed':
+      return '⛔ Sign-up is currently disabled. Please contact your administrator.';
+    case 'auth/missing-password':
+      return '❌ Please enter your password.';
+    case 'auth/missing-email':
+      return '❌ Please enter your email address.';
     default:
-      return 'Login failed. Please check your email and password, then try again.';
+      return '❌ Something went wrong (' + (code || 'unknown') + '). Please try again. If this keeps happening, contact your administrator.';
   }
 }
 
@@ -2323,9 +2332,9 @@ async function deleteConsultation(id) {
         ${currentAuthFlow==='signup'?`
           ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
           ${selectedRoleForLogin==='student'?`<div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:#e3f2fd;border:1px solid #90caf955"><i data-lucide="info" style="width:15px;height:15px;color:#1565c0;margin-top:1px;flex-shrink:0"></i><p style="font-size:12px;color:#1565c0;line-height:1.5;margin:0">📧 A <strong>Gmail account (@gmail.com)</strong> is required. A verification link will be sent to your email — you must verify it before you can log in.</p></div>`:''}
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${signupEmail}" oninput="signupEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${signupPassword}" oninput="signupPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Confirm password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="su-email" type="email" value="${signupEmail}" oninput="signupEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="su-pass" type="password" value="${signupPassword}" oninput="signupPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Min. 6 characters" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input id="su-confirm" type="password" value="${signupConfirmPassword}" oninput="signupConfirmPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Re-enter password" /></div>
           <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
         `:`
           ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
@@ -2333,8 +2342,8 @@ async function deleteConsultation(id) {
             <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
             <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">${selectedRoleForLogin==='student'?'Sign up first with your <strong>Gmail (@gmail.com)</strong> and verify your email before logging in.':'Use the email and password provided by your administrator.'}</p>
           </div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${loginEmail}" oninput="loginEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input type="password" value="${loginPassword}" oninput="loginPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="li-email" type="email" value="${loginEmail}" oninput="loginEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="li-pass" type="password" value="${loginPassword}" oninput="loginPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
           <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
           <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
         `}
