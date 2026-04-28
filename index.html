@@ -2285,6 +2285,25 @@ async function deleteConsultation(id) {
   
   
   
+
+// ── CONSULTATION CHAT MESSAGE RENDERER ──
+function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, textColor) {
+  const isMine = m.sender === currentUserEmail || (m.sender === 'Anonymous' && isAnonymous);
+  if (m.isSystem) {
+    return '<div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">' +
+      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + (m.time||'') + '</div></div>';
+  }
+  const bg = m.role === 'guidance' ? '#1565c0' : isMine ? primaryColor + 'dd' : textColor + '18';
+  const col = m.role === 'guidance' ? '#fff' : textColor;
+  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : m.sender.split('@')[0];
+  return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
+    '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
+    '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
+    m.text +
+    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + (m.time||'') + '</div>' +
+    '</div></div>';
+}
+
     // ── RENDER ──
     let _renderTimer = null;
     let _typingIdleTimer = null;
@@ -2929,19 +2948,7 @@ if(activeSidebarItem==='Postings') {
               <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
             </div>
             <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
-              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>`
-              <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?'row-reverse':'row'};gap:8px;align-items:flex-end">
-                ${m.isSystem?`
-                <div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">
-                  ${m.text}
-                  <div style="font-size:10px;margin-top:4px;opacity:0.6">${m.time||''}</div>
-                </div>`:`
-                <div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:${m.role==='guidance'?'#1565c0':(m.sender===currentUserEmail||(m.sender==='Anonymous'&&isAnonymous))?config.primary_action_color+'dd':config.text_color+'18'};color:${m.role==='guidance'?'#fff':config.text_color}">
-                  <div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">${m.role==='guidance'?'🎓 Guidance Counselor':m.sender==='Anonymous'?'👤 You (Anonymous)':m.sender.split('@')[0]}</div>
-                  ${m.text}
-                  <div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">${m.time||''}</div>
-                </div>`}
-              </div>`).join(''):`<div style="text-align:center;padding:16px 0;font-size:12px;color:${config.text_color}44">No messages yet. ${isPending?'Start the conversation below.':'This consultation is resolved.'}</div>`}
+              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,currentUserEmail,isAnonymous,config.primary_action_color,config.text_color)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'44">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
             </div>
             ${isPending||currentRole==='guidance'?`
             <div style="display:flex;gap:8px">
@@ -2956,7 +2963,8 @@ if(activeSidebarItem==='Postings') {
               </button>
             </div>`:`<p style="font-size:12px;color:${config.text_color}44;text-align:center">Chat closed — consultation resolved.</p>`}
           </div>
-        </div>`;
+        </div>`
+      }).join('')}
   </div>
 </div>`;
       }
