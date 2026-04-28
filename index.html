@@ -1275,6 +1275,17 @@ async function handleLogin(selectedRole) {
       return;
     }
 
+    // For students: require email verification before allowing login
+    if (actualRole === 'student' && !uc.user.emailVerified) {
+      await auth.signOut();
+      loginError = '📧 Email not verified. Please check your inbox and click the verification link before logging in.';
+      // Offer to resend verification
+      const resendBtn = `<br><br><button onclick="resendVerificationEmail('${email}')" style="margin-top:8px;padding:8px 16px;background:#ffee58;color:#2c3e50;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">Resend Verification Email</button>`;
+      loginError += resendBtn;
+      render();
+      return;
+    }
+
     currentUserEmail = email;
     currentRole = selectedRole;
     isAuthenticated = true;
@@ -1323,6 +1334,15 @@ function friendlyAuthError(code, fallback) {
   }
 }
 
+async function resendVerificationEmail(email) {
+  try {
+    // Sign in temporarily to resend verification (requires password — so just guide them)
+    showModal('Verification Email', `To resend the verification email, please try signing up again with the same email, or contact your administrator.<br><br>Check your spam folder — the email from <strong>Firebase / QHsafety</strong> may have landed there.`, 'info');
+  } catch(e) {
+    showModal('Error', 'Could not resend verification email. Please try again later.', 'error');
+  }
+}
+
 function getOrCreateAnonId() {
   let id = localStorage.getItem('qh_anon_id');
   if (!id) {
@@ -1330,18 +1350,6 @@ function getOrCreateAnonId() {
     localStorage.setItem('qh_anon_id', id);
   }
   return id;
-}
-
-function loginAnonymous() {
-  const anonId = getOrCreateAnonId();
-  currentUserEmail = anonId;
-  currentRole = 'student';
-  isAuthenticated = true;
-  isAnonymous = true;
-  activeSidebarItem = 'Dashboard';
-  loadDataFromFirestore();
-  addLog('Anonymous user joined', anonId, 'info');
-  render();
 }
 
 async function handleSignup() {
@@ -1384,16 +1392,17 @@ async function handleSignup() {
       createdAt: Date.now()
     });
 
-    // Auto-login after signup
-    currentUserEmail = email;
-    currentRole = 'student';
-    isAuthenticated = true;
-    activeSidebarItem = 'Dashboard';
+    // Send email verification
+    await uc.user.sendEmailVerification();
+
+    // Sign out immediately — user must verify email before logging in
+    await auth.signOut();
+
     signupEmail = ''; signupPassword = ''; signupConfirmPassword = '';
-    loadDataFromFirestore();
-    addLog(`New student account created: ${email}`, email, 'success');
+    currentAuthFlow = 'login';
+    addLog(`New student account created (pending verification): ${email}`, email, 'success');
     render();
-    showSuccessModal('Account Created! 🎉', `Welcome to QHsafety, <strong>${email}</strong>!<br>You are now logged in as a Student.`);
+    showSuccessModal('Almost There! 📧', `A verification email was sent to <strong>${email}</strong>.<br><br>Please check your inbox and click the verification link before logging in.`);
   } catch (error) {
     signupError = friendlyAuthError(error.code, error.message);
     render();
@@ -2258,8 +2267,7 @@ async function deleteConsultation(id) {
       <button onclick="selectedRoleForLogin='guidance';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.secondary_action_color};color:${config.text_color}"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
       <button onclick="selectedRoleForLogin='admin';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:${config.text_color}"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
     </div>
-    <button onclick="loginAnonymous()" class="mt-4 px-8 py-2.5 rounded-lg font-semibold card-hover flex items-center gap-2 justify-center" style="background:transparent;color:${config.text_color}88;border:1.5px dashed ${config.text_color}33;font-size:14px"><i data-lucide="eye-off" style="width:16px;height:16px"></i>${tr('continueAnon')}</button>
-    <p class="mt-2 text-xs" style="color:${config.text_color}55">${tr('anonSubtext')}</p>
+
   </section>
   <section class="max-w-4xl mx-auto px-6 pb-16">
     <h2 class="font-bold text-center mb-8" style="font-size:${fs*1.5}px;color:${config.text_color}">${tr('aboutMission')}</h2>
