@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Security headers -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
   <title>QHsafety</title>
  
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
@@ -177,6 +181,56 @@ button:not(.sidebar-item):active {
   <div id="app" class="h-full w-full"></div>
   <script>
     
+    // ── SECURITY NOTE ──────────────────────────────────────────────────────────
+    // Firebase client-side config keys (apiKey, appId, etc.) are NOT secret —
+    // they are identifiers, not passwords. Real security is enforced via
+    // Firestore Security Rules on the Firebase console. This app requires:
+    //
+    // rules_version = '2';
+    // service cloud.firestore {
+    //   match /databases/{database}/documents {
+    //     // Only authenticated users can read/write their own data
+    //     match /users/{uid} {
+    //       allow read, write: if request.auth != null && request.auth.uid == uid;
+    //     }
+    //     match /postings/{id} {
+    //       allow read: if request.auth != null;
+    //       allow create: if request.auth != null;
+    //       allow update, delete: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //     }
+    //     match /consultations/{id} {
+    //       allow read: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //       allow create: if request.auth != null;
+    //       allow update, delete: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //     }
+    //     match /feedback/{id} {
+    //       allow read: if request.auth != null;
+    //       allow create: if request.auth != null;
+    //       allow delete: if request.auth != null &&
+    //         request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com'];
+    //     }
+    //     match /logs/{id} {
+    //       allow read, write: if request.auth != null;
+    //     }
+    //     match /counselors/{id} {
+    //       allow read, write: if request.auth != null;
+    //     }
+    //   }
+    // }
+    // ──────────────────────────────────────────────────────────────────────────
+
     const firebaseConfig = {
       apiKey:"AIzaSyD4N8D_FT_Oy8umm_79tQJiy24uWxbJ_KA",
       authDomain:"qhsafety-57c55.firebaseapp.com",
@@ -1252,6 +1306,23 @@ function containsSensitiveWords(text) {
     // ── AUTH ──
     // ── AUTH FUNCTIONS ──
 
+// ── ROLE RESOLUTION (server-side authoritative) ──────────────────────────────
+// Roles are stored in Firestore /users/{uid}.role and trusted over email heuristics.
+// The hardcoded admin list is a bootstrap fallback only (for the very first admin
+// before any Firestore user document exists). All other role checks go to Firestore.
+const BOOTSTRAP_ADMIN_EMAILS = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
+
+async function resolveRoleFromFirestore(uid, email) {
+  try {
+    const snap = await db.collection('users').doc(uid).get();
+    if (snap.exists && snap.data().role) return snap.data().role;
+  } catch(e) { /* Firestore read failed — fall through to bootstrap */ }
+  // Bootstrap: only hardcoded admins get elevated roles without a Firestore doc
+  if (BOOTSTRAP_ADMIN_EMAILS.includes(email)) return 'admin';
+  return 'student'; // default — never grant elevated access by email string pattern
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function handleLogin(selectedRole) {
   loginError = '';
   render();
@@ -1260,11 +1331,8 @@ async function handleLogin(selectedRole) {
     const uc = await auth.signInWithEmailAndPassword(loginEmail, loginPassword);
     const email = uc.user.email.toLowerCase();
 
-    const adminEmails = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
-    let actualRole = 'student';
-
-    if (adminEmails.includes(email)) actualRole = 'admin';
-    else if (email.includes('guidance') || email.includes('counselor')) actualRole = 'guidance';
+    // ── Authoritative role lookup from Firestore (not email string) ──
+    const actualRole = await resolveRoleFromFirestore(uc.user.uid, email);
 
     if (selectedRole !== actualRole) {
       await auth.signOut();
@@ -1285,7 +1353,6 @@ async function handleLogin(selectedRole) {
     if (actualRole === 'student' && !uc.user.emailVerified) {
       await auth.signOut();
       loginError = '📧 Email not verified. Please check your <strong>inbox or spam/junk folder</strong> for a verification email from Firebase (noreply@qhsafety-57c55.firebaseapp.com) and click the link before logging in. Gmail users: check your <strong>Primary</strong> tab too.';
-      // Offer to resend verification
       const resendBtn = `<br><br><button onclick="resendVerificationEmail('${email}')" style="margin-top:8px;padding:8px 16px;background:#ffee58;color:#2c3e50;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">Resend Verification Email</button>`;
       loginError += resendBtn;
       render();
@@ -1295,20 +1362,17 @@ async function handleLogin(selectedRole) {
     currentUserEmail = email;
     currentRole = selectedRole;
     isAuthenticated = true;
-    // Restore last page or default to Dashboard
     activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
-    // Save session for auto-login
     localStorage.setItem('qh_saved_role', selectedRole);
 
-    // Auto-register this device for push alerts when logging in as guidance
     if (selectedRole === 'guidance') {
       registerAsCounselor();
     }
 
     loadDataFromFirestore();
-addLog(`Logged in as ${selectedRole}`, email, 'info');
-render();
-setTimeout(handleDeepLink, 1000); // 👈 add this
+    addLog(`Logged in as ${selectedRole}`, email, 'info');
+    render();
+    setTimeout(handleDeepLink, 1000);
 
   } catch (error) {
     loginError = friendlyAuthError(error.code, error.message);
@@ -1428,6 +1492,20 @@ async function handleSignup() {
   }
 }
 
+// ── XSS PREVENTION HELPER ────────────────────────────────────────────────────
+// Use _esc() whenever inserting untrusted (user-supplied) strings into innerHTML.
+// Trusted static strings (tr(), template literals with no user data) are fine as-is.
+function _esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // ── MODAL SYSTEM ──
 let _modalResolve = null;
 
@@ -1528,6 +1606,8 @@ function _resolveModal(value) {
 }
 
 // Fixed createAdminAccount
+// Uses a secondary Firebase app instance so creating the account does NOT
+// sign the current admin out (Firebase Auth side-effect of createUserWithEmailAndPassword).
 async function createAdminAccount() {
   const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
   const password = document.getElementById('newAdminPassword').value.trim();
@@ -1537,8 +1617,12 @@ async function createAdminAccount() {
     return;
   }
 
+  let secondaryApp;
   try {
-    const uc = await auth.createUserWithEmailAndPassword(email, password);
+    // Create a temporary secondary Firebase app so we don't lose the current admin session
+    secondaryApp = firebase.initializeApp(firebase.app().options, 'admin-create-' + Date.now());
+    const secondaryAuth = secondaryApp.auth();
+    const uc = await secondaryAuth.createUserWithEmailAndPassword(email, password);
 
     await db.collection('users').doc(uc.user.uid).set({
       email,
@@ -1547,19 +1631,21 @@ async function createAdminAccount() {
       createdAt: Date.now()
     });
 
+    await secondaryAuth.signOut();
     addLog(`Created new Admin account: ${email}`, currentUserEmail, 'success');
 
     showSuccessModal(
       "New Admin Account Created!",
-      `Email: ${email}<br>Password: ${password}<br><br>Share these credentials carefully.`
+      `Email: ${_esc(email)}<br>Password: ${_esc(password)}<br><br>Share these credentials carefully.`
     );
 
-    // Clear inputs
     document.getElementById('newAdminEmail').value = '';
     document.getElementById('newAdminPassword').value = '';
 
   } catch (error) {
-    showModal("Creation Failed", error.message || "Something went wrong", "error");
+    showModal("Creation Failed", _esc(error.message) || "Something went wrong", "error");
+  } finally {
+    if (secondaryApp) secondaryApp.delete().catch(()=>{});
   }
 }
 
@@ -1573,8 +1659,11 @@ async function createGuidanceAccount() {
     return;
   }
 
+  let secondaryApp;
   try {
-    const uc = await auth.createUserWithEmailAndPassword(email, password);
+    secondaryApp = firebase.initializeApp(firebase.app().options, 'guidance-create-' + Date.now());
+    const secondaryAuth = secondaryApp.auth();
+    const uc = await secondaryAuth.createUserWithEmailAndPassword(email, password);
 
     await db.collection('users').doc(uc.user.uid).set({
       email,
@@ -1583,19 +1672,21 @@ async function createGuidanceAccount() {
       createdAt: Date.now()
     });
 
+    await secondaryAuth.signOut();
     addLog(`Created new Guidance account: ${email}`, currentUserEmail, 'success');
 
     showSuccessModal(
       "New Guidance Counselor Account Created!",
-      `Email: <strong>${email}</strong><br>Password: <strong>${password}</strong><br><br>Share these credentials carefully with the counselor.`
+      `Email: <strong>${_esc(email)}</strong><br>Password: <strong>${_esc(password)}</strong><br><br>Share these credentials carefully with the counselor.`
     );
 
-    // Clear inputs
     document.getElementById('newGuidanceEmail').value = '';
     document.getElementById('newGuidancePassword').value = '';
 
   } catch (error) {
-    showModal("Creation Failed", error.message || "Something went wrong", "error");
+    showModal("Creation Failed", _esc(error.message) || "Something went wrong", "error");
+  } finally {
+    if (secondaryApp) secondaryApp.delete().catch(()=>{});
   }
 }
 
@@ -1641,9 +1732,20 @@ function logout() {
     // ── FIRESTORE ──
     function loadDataFromFirestore() {
       firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
+
+      // Postings: guidance/admin see all; students see only their own
+      const postingsQuery = (currentRole==='guidance'||currentRole==='admin')
+        ? db.collection('postings')
+        : db.collection('postings').where('authorId','==',currentUserEmail);
+
+      // Consultations: guidance/admin see all; students query by authorId
+      const consultQuery = (currentRole==='guidance'||currentRole==='admin')
+        ? db.collection('consultations')
+        : db.collection('consultations').where('authorId','==',currentUserEmail);
+
       firestoreUnsubscribes.push(
-        db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
-        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        postingsQuery.onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        consultQuery.onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
         db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
         db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();})
       );
@@ -2861,17 +2963,17 @@ if(activeSidebarItem==='Postings') {
           const gc = getGlowClass(p, isPending);
 
           return `
-      <div data-post-id="${p.id}" data-search-text="${((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase()}" class="p-6 rounded-xl card-hover ${gc}" 
+      <div data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl card-hover ${gc}" 
            style="background:${config.surface_color};border:1px solid ${config.text_color}11">
         <div class="flex items-start justify-between mb-3">
           <div class="flex-1">
-            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${p.title}</h3>
+            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${_esc(p.title)}</h3>
             
             ${currentRole==='guidance' ? `
             <div class="flex items-center gap-2 mt-2 flex-wrap">
               ${p.riskLevel ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
                 style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">
-                ${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${tr(p.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${p.aiScore}
+                ${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${tr(p.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${_esc(String(p.aiScore||0))}
               </span>` : ''}
               
               ${p.priority ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
@@ -2879,11 +2981,11 @@ if(activeSidebarItem==='Postings') {
                 ${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${tr(p.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}
               </span>` : ''}
               
-              ${p.reasons && p.reasons.length ? `<span class="text-xs text-red-500">⚠ ${p.reasons.join(', ')}</span>` : ''}
+              ${p.reasons && p.reasons.length ? `<span class="text-xs text-red-500">⚠ ${_esc(p.reasons.join(', '))}</span>` : ''}
             </div>` : ''}
 
             <div class="text-xs mt-2" style="color:${config.text_color}66">
-              ${p.author ? `${tr('by')}: ${p.author}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
+              ${p.author ? `${tr('by')}: ${_esc(p.author)}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
             </div>
           </div>
           
@@ -3629,11 +3731,18 @@ ${isGuidance?`
     // This handler waits for auth + data to load, then auto-navigates.
     function handleDeepLink() {
       const params = new URLSearchParams(window.location.search);
-      const type  = params.get('deeplink');   // 'posting' or 'consultation'
+      const type  = params.get('deeplink');
       const id    = params.get('id');
       const risk  = params.get('risk');
       const score = params.get('score');
       if (!type || !id) return;
+
+      // ── Validate params to prevent injection via crafted URLs ──
+      const safeTypes = ['posting', 'consultation'];
+      if (!safeTypes.includes(type)) return;          // only known types
+      if (!/^\d+$/.test(id)) return;                  // id must be digits only
+      const safeRisk  = ['Low','Low-Medium','Medium','High'].includes(risk) ? risk : 'High';
+      const safeScore = /^\d+$/.test(score) ? score : '?';
 
       // Poll until data is loaded and user is authenticated as guidance
       let attempts = 0;
@@ -3673,8 +3782,8 @@ ${isGuidance?`
         // Show a banner about why they're here
         setTimeout(() => {
           showModal(
-            `🚨 ${risk || 'High'} Risk Alert`,
-            `AI Score: <strong>${score || '?'}</strong><br>A student submission was flagged and needs your attention. You have been brought directly to the item below.`,
+            `🚨 ${_esc(safeRisk)} Risk Alert`,
+            `AI Score: <strong>${_esc(safeScore)}</strong><br>A student submission was flagged and needs your attention. You have been brought directly to the item below.`,
             'error'
           );
         }, 400);
@@ -3693,17 +3802,16 @@ ${isGuidance?`
         if (!savedRole) { render(); return; }
 
         const email = user.email.toLowerCase();
-        const adminEmails = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
-        let actualRole = 'student';
-        if (adminEmails.includes(email)) actualRole = 'admin';
-        else if (email.includes('guidance') || email.includes('counselor')) actualRole = 'guidance';
+        // ── Authoritative role from Firestore (not email string heuristics) ──
+        const actualRole = await resolveRoleFromFirestore(user.uid, email);
 
         if (savedRole !== actualRole) { render(); return; }
 
         currentUserEmail = email;
-        currentRole = savedRole;
+        currentRole = actualRole; // trust Firestore, not localStorage
         isAuthenticated = true;
         activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+        localStorage.setItem('qh_saved_role', actualRole); // keep localStorage in sync
 
         if (savedRole === 'guidance') registerAsCounselor();
         loadDataFromFirestore();
