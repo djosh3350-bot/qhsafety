@@ -2051,7 +2051,7 @@ async function scheduleConsultMeet(consultId) {
       sender: currentUserEmail,
       role: 'guidance',
       isSystem: true,
-      text: '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel + (meetData.meetLink ? '<br>🔗 <a href="' + meetData.meetLink + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '') + (meetData.meetNotes ? '<br>📝 ' + meetData.meetNotes : ''),
+      text: '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel + (meetData.meetLink ? '<br>🔗 <a href="' + (meetData.meetLink.startsWith('http') ? meetData.meetLink : 'https://' + meetData.meetLink) + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '') + (meetData.meetNotes ? '<br>📝 ' + meetData.meetNotes : ''),
       time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
       ts: Date.now()
     };
@@ -2867,7 +2867,7 @@ if(activeSidebarItem==='Postings') {
                 ${c.meetNotes?`<div class="text-xs mt-1" style="color:#388e3c">📝 ${c.meetNotes}</div>`:''}
               </div>
               <div class="flex gap-2">
-                ${c.meetLink?`<a href="${c.meetLink}" target="_blank" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#34a853;color:#fff;text-decoration:none">🔗 Join Meet</a>`:''}
+                ${c.meetLink?`<a href="${c.meetLink.startsWith('http')?c.meetLink:'https://'+c.meetLink}" target="_blank" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#34a853;color:#fff;text-decoration:none">🔗 Join Meet</a>`:''}
                 ${currentRole==='guidance'?`<button onclick="cancelConsultMeet('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350">Cancel</button>`:''}
               </div>
             </div>
