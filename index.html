@@ -281,6 +281,13 @@ button:not(.sidebar-item):active {
     let showLandingSettings=false, showForgotPassword=false, forgotPasswordEmail='', forgotPasswordError='', forgotPasswordSuccess='';
     let firestoreUnsubscribes=[];
     let isAnonymous=false;
+    // ── NEW FEATURE STATE ──
+    let meetReminderTimers=[];
+    let moodHistory=[], showMoodTracker=false;
+    let analyticsTab='overview';
+    let showArchived=false;
+    let consultAttachments={}, postAttachments={};
+    let studentProgressFilter='all';
     let appLang = localStorage.getItem('qh_lang') || 'en';
     const app=document.getElementById('app');
 
@@ -1647,7 +1654,7 @@ function logout() {
       firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
       firestoreUnsubscribes.push(
         db.collection('postings').onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
-        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
+        db.collection('consultations').onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();scheduleMeetReminders();}),
         db.collection('feedback').onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();}),
         db.collection('logs').onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));safeRender();})
       );
@@ -2300,6 +2307,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
     '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
     m.text +
+    (m.attachment ? renderAttachment(m.attachment) : '') +
     '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + (m.time||'') + '</div>' +
     '</div></div>';
 }
@@ -2472,7 +2480,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     function renderDashboard() {
       const fs=config.font_size||16;
       let items,icons,itemKeys;
-      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','users','message-circle','file-text','settings'];itemKeys=['dashboard','users','feedback','logs','settings'];}
+      if(currentRole==='admin'){items=['Dashboard','Analytics','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','bar-chart-2','users','message-circle','file-text','settings'];itemKeys=['dashboard','analytics','users','feedback','logs','settings'];}
       else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
       else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
       const bottomItems=items.slice(0,5),bottomIcons=icons.slice(0,5),bottomKeys=itemKeys.slice(0,5);
@@ -2719,8 +2727,10 @@ if(activeSidebarItem==='Postings') {
 
       // ── CONSULTATIONS ──
       if(activeSidebarItem==='Consultations') {
+        let allMappedCons=[...consultationPostings].map(c=>({...c,aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim(),status:(c.status||'Pending').trim()}));
         let visibleConsultations=isGuidance
-          ?[...consultationPostings].map(c=>({...c,aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim(),status:(c.status||'Pending').trim()}))
+          ?allMappedCons
+            .filter(c=>showArchived?(c.status==='Archived'):(c.status!=='Archived'))
             .sort((a,b)=>{
               // Pending before Done
               if(a.status==='Pending'&&b.status!=='Pending')return -1;
@@ -2731,6 +2741,7 @@ if(activeSidebarItem==='Postings') {
               return(b.timestamp||0)-(a.timestamp||0);
             })
           :consultationPostings.filter(c=>c.authorId===myEmail);
+        const archivedCount=allMappedCons.filter(c=>c.status==='Archived').length;
 
         return `
         ${(currentRole === 'guidance' || currentRole === 'admin') ? `
@@ -2745,8 +2756,11 @@ if(activeSidebarItem==='Postings') {
 <div class="max-w-3xl">
   <div class="flex justify-between items-center mb-6">
     <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
-    ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
-  </div>
+    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      ${isGuidance&&archivedCount>0?`<button onclick="showArchived=!showArchived;render()" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:${showArchived?'#90caf9':config.text_color+'18'};color:${showArchived?'#1a237e':config.text_color}">📦 ${showArchived?'Active ('+(allMappedCons.length-archivedCount)+')':'Archived ('+archivedCount+')'}</button>`:''}
+      ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
+    </div>
   ${showConsultationForm?`
   <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
     ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
@@ -2814,9 +2828,11 @@ if(activeSidebarItem==='Postings') {
       ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noConsultations')}</p></div>`
       :visibleConsultations.map(c=>{
         const isPending=c.status==='Pending';
+        const isArchived=c.status==='Archived';
         const gc=getGlowClass(c,isPending);
         return `
-        <div class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
+        <div class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${isArchived?'#90caf944':config.text_color+'11'};box-shadow:0 2px 12px rgba(0,0,0,0.05);${isArchived?'opacity:0.8':''}">
+        ${isArchived?`<div style="margin-bottom:10px;padding:6px 12px;background:#90caf922;border-radius:8px;font-size:11px;font-weight:700;color:#5c9be0;display:flex;align-items:center;gap:6px"><i data-lucide="archive" style="width:12px;height:12px"></i>ARCHIVED · ${c.archivedAt?new Date(c.archivedAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</div>`:''}
 
           <!-- TOP: badges row -->
           <div class="flex flex-wrap gap-2 mb-3">
@@ -2848,7 +2864,9 @@ if(activeSidebarItem==='Postings') {
               ${currentRole==='guidance'&&c.status==='Pending'?`
                 <button onclick="toggleConsultUrgent('${c.id}',${!!c.urgent})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${c.urgent?'#b71c1c22':'#ff980022'};color:${c.urgent?'#b71c1c':'#e65100'};border:1px solid ${c.urgent?'#b71c1c44':'#ff980044'}">${c.urgent?'🔕 Unmark Urgent':'🚨 Mark Urgent'}</button>
                 <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markResolved')}</button>
+                <button onclick="archiveConsultation('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#90caf922;color:#5c9be0;border:1px solid #90caf944">📦 Archive</button>
               `:''}
+              ${currentRole==='guidance'&&c.status==='Archived'?`<button onclick="reopenConsultation('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#66bb6a22;color:#2e7d32;border:1px solid #66bb6a44">🔄 Reopen</button>`:''}
             </div>
           </div>
 
@@ -2862,7 +2880,7 @@ if(activeSidebarItem==='Postings') {
           <div class="mb-3 p-3 rounded-xl" style="background:#e8f5e9;border:1px solid #66bb6a44">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <div class="font-bold text-sm" style="color:#2e7d32">📅 Scheduled Meeting</div>
+                <div class="font-bold text-sm" style="color:#2e7d32">📅 Scheduled Meeting${c.meetDateTime&&(new Date(c.meetDateTime).getTime()-Date.now()<3600000&&new Date(c.meetDateTime).getTime()>Date.now())?'<span style="margin-left:8px;font-size:10px;padding:2px 8px;background:#ef5350;color:#fff;border-radius:6px;animation:pulseRed 1s infinite">STARTING SOON</span>':''}</div>
                 <div class="text-xs mt-1" style="color:#388e3c">${new Date(c.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}</div>
                 ${c.meetNotes?`<div class="text-xs mt-1" style="color:#388e3c">📝 ${c.meetNotes}</div>`:''}
               </div>
@@ -2931,6 +2949,9 @@ if(activeSidebarItem==='Postings') {
               </div>
             </div>
 
+            <!-- Student Progress Tracker -->
+            ${renderProgressBadge(c, fs)}
+
           </div>
           `:''}
 
@@ -2957,6 +2978,11 @@ if(activeSidebarItem==='Postings') {
                 oninput="consultationChatDraft['${c.id}']=this.value"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                 style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+              <button onclick="handleConsultAttachment('${c.id}')"
+                title="Attach image or file"
+                style="padding:9px 11px;background:${config.text_color}12;color:${config.text_color}88;border-radius:22px;font-size:13px;flex-shrink:0">
+                <i data-lucide="paperclip" style="width:14px;height:14px;display:inline;vertical-align:middle"></i>
+              </button>
               <button onclick="sendConsultationChat('${c.id}')"
                 style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
                 <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
@@ -3014,6 +3040,9 @@ if(activeSidebarItem==='Postings') {
   <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${l.user} · ${l.time}</p></div></div>`).join('')}</div>
 </div>`;
       }
+
+      // ── ANALYTICS (admin) ──
+      if(activeSidebarItem==='Analytics'&&currentRole==='admin') return renderAdminAnalytics(fs);
 
       // ── SETTINGS ──
       if(activeSidebarItem==='Settings') return `
@@ -3183,6 +3212,508 @@ ${isGuidance?`
 </div>`:''}`;
     }
 
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 1: MEET REMINDER NOTIFICATIONS
+    // ═══════════════════════════════════════════════════════════
+    function scheduleMeetReminders() {
+      // Clear old timers
+      meetReminderTimers.forEach(t => clearTimeout(t));
+      meetReminderTimers = [];
+
+      const now = Date.now();
+      const myConsults = consultationPostings.filter(c =>
+        (c.authorId === currentUserEmail || currentRole === 'guidance') &&
+        c.meetDateTime && c.status !== 'Done'
+      );
+
+      myConsults.forEach(c => {
+        const meetMs = new Date(c.meetDateTime).getTime();
+        const diff = meetMs - now;
+
+        // 1-hour reminder
+        const oneHour = diff - 60 * 60 * 1000;
+        if (oneHour > 0 && oneHour < 24 * 60 * 60 * 1000) {
+          meetReminderTimers.push(setTimeout(() => {
+            showMeetReminderBanner(c, '1 hour');
+          }, oneHour));
+        }
+
+        // 15-min reminder
+        const fifteenMin = diff - 15 * 60 * 1000;
+        if (fifteenMin > 0 && fifteenMin < 60 * 60 * 1000) {
+          meetReminderTimers.push(setTimeout(() => {
+            showMeetReminderBanner(c, '15 minutes');
+          }, fifteenMin));
+        }
+
+        // At-time reminder
+        if (diff > 0 && diff < 30 * 60 * 1000) {
+          meetReminderTimers.push(setTimeout(() => {
+            showMeetReminderBanner(c, 'NOW');
+          }, diff));
+        }
+      });
+    }
+
+    function showMeetReminderBanner(consult, timeLabel) {
+      // Create floating reminder banner
+      const banner = document.createElement('div');
+      banner.id = 'meet-reminder-banner-' + consult.id;
+      banner.style.cssText = `
+        position:fixed;top:16px;right:16px;z-index:99999;
+        background:#1b5e20;color:#fff;border-radius:16px;
+        padding:16px 20px;box-shadow:0 8px 32px rgba(0,0,0,0.3);
+        max-width:320px;font-family:'DM Sans',sans-serif;
+        animation:fadeIn 0.4s ease;border:2px solid #66bb6a;
+      `;
+      const meetLink = consult.meetLink
+        ? (consult.meetLink.startsWith('http') ? consult.meetLink : 'https://' + consult.meetLink)
+        : null;
+      banner.innerHTML = `
+        <div style="display:flex;align-items:flex-start;gap:12px">
+          <div style="font-size:24px;flex-shrink:0">📅</div>
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:14px;margin-bottom:4px">
+              ${timeLabel === 'NOW' ? '🔴 Meeting Starting Now!' : `⏰ Meeting in ${timeLabel}`}
+            </div>
+            <div style="font-size:12px;opacity:0.85;margin-bottom:10px">${consult.reason}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              ${meetLink ? `<a href="${meetLink}" target="_blank" style="background:#66bb6a;color:#fff;text-decoration:none;padding:6px 14px;border-radius:8px;font-weight:700;font-size:12px">🔗 Join Meet</a>` : ''}
+              <button onclick="document.getElementById('meet-reminder-banner-${consult.id}').remove()" style="background:#ffffff22;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-weight:600;font-size:12px;cursor:pointer">Dismiss</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(banner);
+      // Auto-dismiss after 30s
+      setTimeout(() => { if (banner.parentNode) banner.remove(); }, 30000);
+      // Also show browser notification if available
+      if (Notification && Notification.permission === 'granted') {
+        new Notification(`📅 Meeting ${timeLabel === 'NOW' ? 'Starting Now' : 'in ' + timeLabel}`, {
+          body: consult.reason,
+          icon: '/favicon.ico'
+        });
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 2: MOOD TRACKER
+    // ═══════════════════════════════════════════════════════════
+    async function saveMoodEntry(mood) {
+      const entry = {
+        mood,
+        emoji: ['😞','😕','😐','🙂','😊'][mood-1],
+        label: ['Very Sad','Sad','Neutral','Good','Great'][mood-1],
+        timestamp: Date.now(),
+        date: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),
+        author: currentUserEmail
+      };
+      try {
+        await db.collection('mood_history').add(entry);
+        showModal('✅ Mood Logged', `You logged: ${entry.emoji} ${entry.label}`, 'success');
+        loadMoodHistory();
+      } catch(e) {
+        console.warn('Mood save failed:', e);
+      }
+    }
+
+    function loadMoodHistory() {
+      db.collection('mood_history')
+        .where('author', '==', currentUserEmail)
+        .orderBy('timestamp', 'desc')
+        .limit(30)
+        .get()
+        .then(snap => {
+          moodHistory = snap.docs.map(d => d.data());
+          safeRender();
+        })
+        .catch(() => {});
+    }
+
+    function renderMoodTrackerSection(fs) {
+      const recent = moodHistory.slice(0, 14).reverse();
+      const avg = moodHistory.length
+        ? (moodHistory.slice(0,7).reduce((s,m) => s + m.mood, 0) / Math.min(moodHistory.slice(0,7).length,7)).toFixed(1)
+        : null;
+      const avgEmoji = avg ? ['😞','😕','😐','🙂','😊'][Math.round(avg)-1] : '';
+      return `
+<div class="p-6 rounded-xl mt-6" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+  <div class="flex items-center justify-between mb-4">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#ce93d822">
+        <i data-lucide="heart" style="width:18px;height:18px;color:#ce93d8"></i>
+      </div>
+      <div>
+        <h3 class="font-bold" style="color:${config.text_color}">😊 Mood Tracker</h3>
+        <p class="text-xs" style="color:${config.text_color}66">How are you feeling today?</p>
+      </div>
+    </div>
+    ${avg ? `<div class="text-center"><div style="font-size:22px">${avgEmoji}</div><div class="text-xs font-bold" style="color:${config.text_color}66">7-day avg: ${avg}</div></div>` : ''}
+  </div>
+  <div class="flex justify-center gap-3 mb-5">
+    ${['😞','😕','😐','🙂','😊'].map((e,i) => `
+      <button onclick="saveMoodEntry(${i+1})" title="${['Very Sad','Sad','Neutral','Good','Great'][i]}"
+        style="font-size:28px;background:none;border:2px solid ${config.text_color}11;border-radius:12px;cursor:pointer;padding:8px 10px;transition:all 0.15s"
+        onmouseover="this.style.borderColor='#ce93d8';this.style.transform='scale(1.15)'"
+        onmouseout="this.style.borderColor='${config.text_color}11';this.style.transform='scale(1)'">${e}</button>
+    `).join('')}
+  </div>
+  ${recent.length > 0 ? `
+  <div style="border-top:1px solid ${config.text_color}11;padding-top:14px">
+    <div class="text-xs font-bold mb-3" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Your Recent Moods</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      ${recent.map(m => `
+        <div style="text-align:center;min-width:44px">
+          <div style="font-size:20px">${m.emoji}</div>
+          <div style="font-size:10px;color:${config.text_color}55;margin-top:2px">${m.date.split(',')[0]}</div>
+        </div>
+      `).join('')}
+    </div>
+  </div>` : `<p class="text-xs text-center" style="color:${config.text_color}44;margin-top:4px">No mood entries yet. Log your first mood above!</p>`}
+</div>`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 3: ARCHIVE / CLOSE CONSULTATIONS
+    // ═══════════════════════════════════════════════════════════
+    async function archiveConsultation(id) {
+      const ok = await confirmModal('Archive Consultation', 'This will close and archive this consultation. The student can still view it.', 'warning');
+      if (!ok) return;
+      try {
+        await db.collection('consultations').doc(String(id)).update({
+          status: 'Archived',
+          archivedAt: Date.now(),
+          archivedBy: currentUserEmail
+        });
+        addLog('Consultation archived #'+id, currentUserEmail, 'info');
+        showModal('✅ Archived', 'Consultation has been closed and archived.', 'success');
+      } catch(e) {
+        showModal('Error', e.message, 'error');
+      }
+    }
+
+    async function reopenConsultation(id) {
+      try {
+        await db.collection('consultations').doc(String(id)).update({
+          status: 'Pending',
+          archivedAt: firebase.firestore.FieldValue.delete(),
+          archivedBy: firebase.firestore.FieldValue.delete()
+        });
+        addLog('Consultation reopened #'+id, currentUserEmail, 'info');
+      } catch(e) {
+        showModal('Error', e.message, 'error');
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 4: CHAT FILE/IMAGE ATTACHMENTS
+    // ═══════════════════════════════════════════════════════════
+    function handleConsultAttachment(consultId) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*,.pdf,.doc,.docx,.txt';
+      input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) {
+          showModal('File Too Large', 'Please select a file under 5MB.', 'error');
+          return;
+        }
+        // Convert to base64
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+          const base64 = ev.target.result;
+          const isImage = file.type.startsWith('image/');
+          const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+          const chatMsg = {
+            sender: authorLabel,
+            role: currentRole,
+            text: isImage ? `📎 <em>${file.name}</em>` : `📄 <em>${file.name}</em>`,
+            attachment: { name: file.name, data: base64, type: file.type, isImage },
+            time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
+            ts: Date.now()
+          };
+          try {
+            const ref = db.collection('consultations').doc(String(consultId));
+            const doc = await ref.get();
+            const existing = doc.data().chatMessages || [];
+            await ref.update({ chatMessages: [...existing, chatMsg] });
+          } catch(err) {
+            showModal('Upload Failed', err.message, 'error');
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    }
+
+    // Render attachment in chat bubble
+    function renderAttachment(attachment) {
+      if (!attachment) return '';
+      if (attachment.isImage) {
+        return `<div style="margin-top:6px"><img src="${attachment.data}" alt="${attachment.name}" style="max-width:200px;max-height:160px;border-radius:8px;cursor:pointer;display:block" onclick="window.open(this.src,'_blank')" /></div>`;
+      }
+      return `<div style="margin-top:6px"><a href="${attachment.data}" download="${attachment.name}" style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;background:rgba(255,255,255,0.15);border-radius:8px;color:inherit;text-decoration:none;font-size:12px">📄 ${attachment.name}</a></div>`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 5: ADMIN ANALYTICS DASHBOARD
+    // ═══════════════════════════════════════════════════════════
+    function renderAdminAnalytics(fs) {
+      const totalPostings = postings.length;
+      const totalConsult  = consultationPostings.length;
+      const totalFeedback = feedbackList.length;
+      const highRiskPosts = postings.filter(p => p.riskLevel === 'High').length;
+      const highRiskCons  = consultationPostings.filter(c => c.riskLevel === 'High').length;
+      const resolvedCons  = consultationPostings.filter(c => c.status === 'Done').length;
+      const archivedCons  = consultationPostings.filter(c => c.status === 'Archived').length;
+      const pendingCons   = consultationPostings.filter(c => c.status === 'Pending').length;
+      const avgFeedback   = feedbackList.length
+        ? (feedbackList.reduce((s,f) => s+(f.rating||0), 0) / feedbackList.length).toFixed(1)
+        : 'N/A';
+
+      // Mood distribution (from consults)
+      const moodCounts = [0,0,0,0,0];
+      consultationPostings.forEach(c => { if(c.studentMood>=1&&c.studentMood<=5) moodCounts[c.studentMood-1]++; });
+
+      // Risk breakdown
+      const riskBreakdown = { High:0, Medium:0, 'Low-Medium':0, Low:0 };
+      [...postings,...consultationPostings].forEach(i => {
+        const r = i.riskLevel||'Low';
+        riskBreakdown[r] = (riskBreakdown[r]||0)+1;
+      });
+
+      // Grade level breakdown
+      const gradeCounts = {};
+      consultationPostings.forEach(c => { if(c.gradeLevel) { gradeCounts[c.gradeLevel]=(gradeCounts[c.gradeLevel]||0)+1; } });
+
+      // Top risk reasons
+      const reasonCounts = {};
+      [...postings,...consultationPostings].forEach(i => {
+        (i.reasons||[]).forEach(r => { reasonCounts[r]=(reasonCounts[r]||0)+1; });
+      });
+      const topReasons = Object.entries(reasonCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+
+      // Last 7 days activity
+      const now = Date.now();
+      const day = 86400000;
+      const last7 = Array.from({length:7}, (_,i) => {
+        const dayStart = now - (6-i)*day;
+        const dayEnd   = dayStart + day;
+        return {
+          label: new Date(dayStart).toLocaleDateString('en-US',{weekday:'short'}),
+          postings: postings.filter(p => p.timestamp>=dayStart && p.timestamp<dayEnd).length,
+          consults: consultationPostings.filter(c => c.timestamp>=dayStart && c.timestamp<dayEnd).length
+        };
+      });
+
+      const maxBar = Math.max(...last7.map(d => d.postings+d.consults), 1);
+
+      return `
+<div class="max-w-4xl">
+  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
+    <div>
+      <h2 class="font-bold text-xl" style="color:${config.text_color}">📊 Analytics Dashboard</h2>
+      <p class="text-sm" style="color:${config.text_color}66">System-wide overview for administrators</p>
+    </div>
+    <div class="flex gap-2">
+      ${['overview','activity','risk','feedback'].map(t => `
+        <button onclick="analyticsTab='${t}';render()" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:${analyticsTab===t?config.primary_action_color:config.text_color+'18'};color:${analyticsTab===t?config.text_color:'inherit'}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>
+      `).join('')}
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:24px">
+    ${[
+      {icon:'megaphone',label:'Total Posts',val:totalPostings,color:'#ffee58'},
+      {icon:'users',label:'Consultations',val:totalConsult,color:'#80deea'},
+      {icon:'alert-triangle',label:'High Risk',val:highRiskPosts+highRiskCons,color:'#ef5350'},
+      {icon:'check-circle',label:'Resolved',val:resolvedCons,color:'#66bb6a'},
+      {icon:'archive',label:'Archived',val:archivedCons,color:'#90caf9'},
+      {icon:'star',label:'Avg Rating',val:avgFeedback+'★',color:'#ffd54f'},
+    ].map(k => `
+      <div class="p-4 rounded-xl" style="background:${config.surface_color}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <i data-lucide="${k.icon}" style="width:16px;height:16px;color:${k.color}"></i>
+          <span style="font-size:11px;font-weight:600;color:${config.text_color}66">${k.label}</span>
+        </div>
+        <div style="font-size:26px;font-weight:800;color:${config.text_color}">${k.val}</div>
+      </div>
+    `).join('')}
+  </div>
+
+  ${analyticsTab === 'overview' ? `
+  <!-- Consultation Status Donut-style -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div class="p-5 rounded-xl" style="background:${config.surface_color}">
+      <div class="font-bold mb-3 text-sm" style="color:${config.text_color}">📋 Consultation Status</div>
+      ${[{label:'Pending',val:pendingCons,color:'#ff9800'},{label:'Resolved',val:resolvedCons,color:'#66bb6a'},{label:'Archived',val:archivedCons,color:'#90caf9'}].map(s => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="width:10px;height:10px;border-radius:50%;background:${s.color};flex-shrink:0"></div>
+          <span style="font-size:12px;flex:1;color:${config.text_color}88">${s.label}</span>
+          <span style="font-weight:700;font-size:13px;color:${config.text_color}">${s.val}</span>
+          <div style="width:60px;height:6px;background:${config.text_color}11;border-radius:3px;overflow:hidden">
+            <div style="height:100%;background:${s.color};width:${totalConsult?Math.round(s.val/totalConsult*100):0}%;border-radius:3px"></div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="p-5 rounded-xl" style="background:${config.surface_color}">
+      <div class="font-bold mb-3 text-sm" style="color:${config.text_color}">🎓 Grade Level Breakdown</div>
+      ${Object.entries(gradeCounts).sort().map(([g,n]) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:11px;color:${config.text_color}88;width:56px">${g}</span>
+          <div style="flex:1;height:6px;background:${config.text_color}11;border-radius:3px;overflow:hidden">
+            <div style="height:100%;background:#90caf9;width:${totalConsult?Math.round(n/totalConsult*100):0}%;border-radius:3px"></div>
+          </div>
+          <span style="font-size:12px;font-weight:700;color:${config.text_color}">${n}</span>
+        </div>
+      `).join('') || `<p style="font-size:12px;color:${config.text_color}44">No data yet</p>`}
+    </div>
+  </div>
+  <!-- Student Mood Distribution -->
+  <div class="p-5 rounded-xl" style="background:${config.surface_color}">
+    <div class="font-bold mb-3 text-sm" style="color:${config.text_color}">😊 Student Mood Distribution (from consultations)</div>
+    <div style="display:flex;align-items:flex-end;gap:10px;height:80px">
+      ${['😞','😕','😐','🙂','😊'].map((e,i) => {
+        const maxM = Math.max(...moodCounts, 1);
+        const h = Math.round((moodCounts[i]/maxM)*60);
+        const colors = ['#ef5350','#ff9800','#90caf9','#66bb6a','#66bb6a'];
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px">
+          <span style="font-size:11px;font-weight:700;color:${config.text_color}88">${moodCounts[i]}</span>
+          <div style="width:100%;height:${h||4}px;background:${colors[i]};border-radius:4px 4px 0 0"></div>
+          <span style="font-size:16px">${e}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>
+  ` : ''}
+
+  ${analyticsTab === 'activity' ? `
+  <div class="p-5 rounded-xl" style="background:${config.surface_color};margin-bottom:16px">
+    <div class="font-bold mb-4 text-sm" style="color:${config.text_color}">📈 Last 7 Days Activity</div>
+    <div style="display:flex;align-items:flex-end;gap:8px;height:120px">
+      ${last7.map(d => {
+        const total = d.postings + d.consults;
+        const hP = Math.round((d.postings/maxBar)*100);
+        const hC = Math.round((d.consults/maxBar)*100);
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+          <span style="font-size:10px;font-weight:700;color:${config.text_color}66">${total||''}</span>
+          <div style="width:100%;display:flex;flex-direction:column-reverse;gap:2px">
+            <div style="width:100%;height:${hP||2}px;background:#ffee58;border-radius:3px 3px 0 0"></div>
+            <div style="width:100%;height:${hC||0}px;background:#80deea;border-radius:3px 3px 0 0"></div>
+          </div>
+          <span style="font-size:10px;color:${config.text_color}55">${d.label}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;gap:16px;margin-top:10px">
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:10px;height:10px;background:#ffee58;border-radius:2px"></div><span style="font-size:11px;color:${config.text_color}66">Postings</span></div>
+      <div style="display:flex;align-items:center;gap:6px"><div style="width:10px;height:10px;background:#80deea;border-radius:2px"></div><span style="font-size:11px;color:${config.text_color}66">Consultations</span></div>
+    </div>
+  </div>
+  ` : ''}
+
+  ${analyticsTab === 'risk' ? `
+  <div class="p-5 rounded-xl mb-4" style="background:${config.surface_color}">
+    <div class="font-bold mb-3 text-sm" style="color:${config.text_color}">🔴 Risk Level Breakdown</div>
+    ${Object.entries(riskBreakdown).map(([level,count]) => {
+      const total = totalPostings + totalConsult || 1;
+      const colors = {High:'#ef5350',Medium:'#ff9800','Low-Medium':'#ffd54f',Low:'#66bb6a'};
+      return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="width:90px;font-size:12px;font-weight:600;color:${config.text_color}88">${level}</span>
+        <div style="flex:1;height:10px;background:${config.text_color}11;border-radius:5px;overflow:hidden">
+          <div style="height:100%;background:${colors[level]||'#90caf9'};width:${Math.round(count/total*100)}%;border-radius:5px;transition:width 0.5s"></div>
+        </div>
+        <span style="font-size:13px;font-weight:700;color:${config.text_color};width:30px;text-align:right">${count}</span>
+      </div>`;
+    }).join('')}
+  </div>
+  <div class="p-5 rounded-xl" style="background:${config.surface_color}">
+    <div class="font-bold mb-3 text-sm" style="color:${config.text_color}">⚠️ Top Risk Reasons Detected</div>
+    ${topReasons.length ? topReasons.map(([reason,count],i) => `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <span style="width:20px;height:20px;background:#ef5350;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0">${i+1}</span>
+        <span style="flex:1;font-size:12px;color:${config.text_color}88">${reason}</span>
+        <span style="font-size:13px;font-weight:700;color:#ef5350">${count}x</span>
+      </div>
+    `).join('') : `<p style="font-size:12px;color:${config.text_color}44">No risk data yet</p>`}
+  </div>
+  ` : ''}
+
+  ${analyticsTab === 'feedback' ? `
+  <div class="p-5 rounded-xl" style="background:${config.surface_color}">
+    <div class="font-bold mb-4 text-sm" style="color:${config.text_color}">⭐ Feedback Ratings Distribution</div>
+    ${[5,4,3,2,1].map(star => {
+      const count = feedbackList.filter(f => f.rating===star).length;
+      const pct = feedbackList.length ? Math.round(count/feedbackList.length*100) : 0;
+      return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:12px;width:16px;text-align:right;color:${config.text_color}88">${star}★</span>
+        <div style="flex:1;height:10px;background:${config.text_color}11;border-radius:5px;overflow:hidden">
+          <div style="height:100%;background:#ffd54f;width:${pct}%;border-radius:5px"></div>
+        </div>
+        <span style="font-size:12px;font-weight:700;color:${config.text_color};width:28px">${count}</span>
+      </div>`;
+    }).join('')}
+    <div class="mt-4 p-3 rounded-lg text-center" style="background:${config.text_color}08">
+      <div style="font-size:32px;font-weight:800;color:${config.text_color}">${avgFeedback}</div>
+      <div style="font-size:12px;color:${config.text_color}66">${feedbackList.length} total ratings</div>
+    </div>
+  </div>
+  ` : ''}
+
+</div>`;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // FEATURE 6: STUDENT PROGRESS / STATUS TRACKING
+    // ═══════════════════════════════════════════════════════════
+    async function updateStudentProgress(consultId, status) {
+      const statusMap = {
+        'In Progress': { color:'#90caf9', icon:'clock' },
+        'Needs Follow-up': { color:'#ff9800', icon:'alert-circle' },
+        'Referred': { color:'#ce93d8', icon:'external-link' },
+        'Resolved': { color:'#66bb6a', icon:'check-circle' },
+      };
+      try {
+        await db.collection('consultations').doc(String(consultId)).update({
+          progressStatus: status,
+          progressUpdatedAt: Date.now(),
+          progressUpdatedBy: currentUserEmail
+        });
+        addLog(`Progress updated: "${status}" for consultation #${consultId}`, currentUserEmail, 'info');
+      } catch(e) {
+        showModal('Error', e.message, 'error');
+      }
+    }
+
+    function renderProgressBadge(c, fs) {
+      const statusMap = {
+        'In Progress': '#90caf9',
+        'Needs Follow-up': '#ff9800',
+        'Referred': '#ce93d8',
+        'Resolved': '#66bb6a',
+      };
+      const statuses = Object.keys(statusMap);
+      const current = c.progressStatus || '';
+      return `
+<div style="border-top:1px solid ${config.text_color}11">
+  <div class="px-4 py-3 flex items-center gap-2" style="background:${config.text_color}04">
+    <i data-lucide="activity" style="width:13px;height:13px;color:${config.text_color}55"></i>
+    <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Student Progress</span>
+    ${current ? `<span style="margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;background:${statusMap[current]||'#90caf9'}22;color:${statusMap[current]||'#90caf9'}">${current}</span>` : ''}
+  </div>
+  <div class="px-4 pb-3 flex flex-wrap gap-2">
+    ${statuses.map(s => `
+      <button onclick="updateStudentProgress('${c.id}','${s}')"
+        style="padding:5px 12px;border-radius:8px;font-size:11px;font-weight:700;border:2px solid ${current===s?statusMap[s]:(config.text_color+'22')};background:${current===s?(statusMap[s]+'22'):'transparent'};color:${current===s?statusMap[s]:config.text_color+'88'};cursor:pointer">${s}</button>
+    `).join('')}
+    ${c.progressUpdatedAt ? `<span style="font-size:10px;color:${config.text_color}44;align-self:center">Updated: ${new Date(c.progressUpdatedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>` : ''}
+  </div>
+</div>`;
+    }
+
     // ── DEEP LINK HANDLER ──
     // When counselor taps a OneSignal push notification, the URL contains
     // ?deeplink=posting&id=123&risk=High&score=18
@@ -3267,6 +3798,7 @@ ${isGuidance?`
 
         if (savedRole === 'guidance') registerAsCounselor();
         loadDataFromFirestore();
+        if (savedRole === 'student') { loadMoodHistory(); }
         setTimeout(handleDeepLink, 1000);
         render();
       } else if (!user) {
