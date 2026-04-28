@@ -2419,33 +2419,39 @@ async function scanFirebaseStorage() {
     let totalBytes = 0;
     const results = [];
     for (const col of collections) {
-      const snap = await db.collection(col.name).get();
-      let colBytes = 0;
-      let attachmentBytes = 0;
-      let attachmentCount = 0;
-      let docCount = snap.size;
-      snap.forEach(doc => {
-        const raw = JSON.stringify(doc.data());
-        colBytes += raw.length;
-        // Count base64 attachments separately (big contributors)
-        const msgs = doc.data().chatMessages || [];
-        msgs.forEach(m => {
-          if (m.isAttachment && m.fileData) {
-            const ab = Math.round(m.fileData.length * 0.75); // base64 to bytes
-            attachmentBytes += ab;
-            attachmentCount++;
-          }
+      try {
+        const snap = await db.collection(col.name).get();
+        let colBytes = 0;
+        let attachmentBytes = 0;
+        let attachmentCount = 0;
+        let docCount = snap.size;
+        snap.forEach(doc => {
+          const raw = JSON.stringify(doc.data());
+          colBytes += raw.length;
+          // Count base64 attachments separately (big contributors)
+          const msgs = doc.data().chatMessages || [];
+          msgs.forEach(m => {
+            if (m.isAttachment && m.fileData) {
+              const ab = Math.round(m.fileData.length * 0.75); // base64 to bytes
+              attachmentBytes += ab;
+              attachmentCount++;
+            }
+          });
         });
-      });
-      totalBytes += colBytes;
-      results.push({
-        ...col,
-        docCount,
-        bytes: colBytes,
-        attachmentBytes,
-        attachmentCount,
-        pct: FREE_TIER_LIMIT_BYTES > 0 ? (colBytes / FREE_TIER_LIMIT_BYTES) * 100 : 0
-      });
+        totalBytes += colBytes;
+        results.push({
+          ...col,
+          docCount,
+          bytes: colBytes,
+          attachmentBytes,
+          attachmentCount,
+          pct: FREE_TIER_LIMIT_BYTES > 0 ? (colBytes / FREE_TIER_LIMIT_BYTES) * 100 : 0
+        });
+      } catch(colErr) {
+        // Skip collections we don't have permission to read
+        console.warn('[QHsafety] Skipped collection "' + col.name + '" (no read permission):', colErr.message);
+        results.push({ ...col, docCount: 0, bytes: 0, attachmentBytes: 0, attachmentCount: 0, pct: 0, skipped: true });
+      }
     }
     // Sort largest first
     results.sort((a, b) => b.bytes - a.bytes);
@@ -2622,7 +2628,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     <p class="max-w-lg mb-12" style="font-size:${fs}px;color:${config.text_color}aa">${config.hero_subtitle}</p>
     <p class="text-sm font-semibold mb-6" style="color:${config.text_color}">${tr('selectRole')}</p>
     <div class="flex flex-col sm:flex-row gap-4">
-      <button onclick="selectedRoleForLogin='student';currentAuthFlow='signup';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
+      <button onclick="selectedRoleForLogin='student';currentAuthFlow='login';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
       <button onclick="selectedRoleForLogin='guidance';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.secondary_action_color};color:${config.text_color}"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
       <button onclick="selectedRoleForLogin='admin';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:${config.text_color}"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
     </div>
@@ -2952,7 +2958,7 @@ if(activeSidebarItem==='Postings') {
               // Among done: newest first
               return(b.timestamp||0)-(a.timestamp||0);
             })
-          :consultationPostings.filter(c=>c.authorId===myEmail);
+          :consultationPostings.filter(c=>c.authorId===myEmail||c.author===myEmail||c.studentEmail===myEmail);
 
         return `
         ${(currentRole === 'guidance' || currentRole === 'admin') ? `
@@ -3420,18 +3426,15 @@ if(activeSidebarItem==='Postings') {
           <div class="flex-1 min-w-0">
             <div class="flex items-center justify-between gap-2">
               <span class="font-semibold text-sm" style="color:${config.text_color}">${r.label}</span>
-              <span class="font-bold text-sm shrink-0" style="color:${config.text_color}">${formatBytes(r.bytes)}</span>
+              <span class="font-bold text-sm shrink-0" style="color:${r.skipped?'#aaa':config.text_color}">${r.skipped?'No permission':formatBytes(r.bytes)}</span>
             </div>
             <div class="flex items-center gap-2 mt-0.5" style="font-size:11px;color:${config.text_color}55">
-              <span>${r.docCount} document${r.docCount!==1?'s':''}</span>
-              <span>·</span>
-              <span>${pctOfFree}% of free limit</span>
-              ${r.attachmentCount>0?`<span>·</span><span style="color:#e65100">📎 ${r.attachmentCount} attachment${r.attachmentCount!==1?'s':''} (${formatBytes(r.attachmentBytes)})</span>`:''}
+              ${r.skipped?'<span style="color:#aaa">⚠ Collection skipped (insufficient Firestore permissions)</span>':`<span>${r.docCount} document${r.docCount!==1?'s':''}</span><span>·</span><span>${pctOfFree}% of free limit</span>${r.attachmentCount>0?`<span>·</span><span style="color:#e65100">📎 ${r.attachmentCount} attachment${r.attachmentCount!==1?'s':''} (${formatBytes(r.attachmentBytes)})</span>`:''}`}
             </div>
           </div>
         </div>
         <div style="width:100%;height:7px;background:${config.text_color}11;border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${barPct.toFixed(1)}%;background:${r.color};border-radius:4px;transition:width 0.5s ease"></div>
+          <div style="height:100%;width:${r.skipped?0:barPct.toFixed(1)}%;background:${r.color};border-radius:4px;transition:width 0.5s ease"></div>
         </div>
       </div>`;
     }).join('')}
