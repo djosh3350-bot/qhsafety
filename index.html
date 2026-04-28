@@ -2756,11 +2756,11 @@ if(activeSidebarItem==='Postings') {
 <div class="max-w-3xl">
   <div class="flex justify-between items-center mb-6">
     <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
-    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       ${isGuidance&&archivedCount>0?`<button onclick="showArchived=!showArchived;render()" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:${showArchived?'#90caf9':config.text_color+'18'};color:${showArchived?'#1a237e':config.text_color}">📦 ${showArchived?'Active ('+(allMappedCons.length-archivedCount)+')':'Archived ('+archivedCount+')'}</button>`:''}
       ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
     </div>
+  </div>
   ${showConsultationForm?`
   <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
     ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
