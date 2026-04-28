@@ -2756,11 +2756,11 @@ if(activeSidebarItem==='Postings') {
 <div class="max-w-3xl">
   <div class="flex justify-between items-center mb-6">
     <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
-    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       ${isGuidance&&archivedCount>0?`<button onclick="showArchived=!showArchived;render()" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;border:none;cursor:pointer;background:${showArchived?'#90caf9':config.text_color+'18'};color:${showArchived?'#1a237e':config.text_color}">📦 ${showArchived?'Active ('+(allMappedCons.length-archivedCount)+')':'Archived ('+archivedCount+')'}</button>`:''}
       ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
     </div>
+  </div>
   ${showConsultationForm?`
   <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
     ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
@@ -2949,6 +2949,28 @@ if(activeSidebarItem==='Postings') {
               </div>
             </div>
 
+            <!-- File Sharing Toggle -->
+            <div style="border-top:1px solid ${config.text_color}11">
+              <div class="px-4 py-3 flex items-center justify-between" style="background:${config.text_color}04">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <i data-lucide="paperclip" style="width:13px;height:13px;color:${config.text_color}55"></i>
+                  <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">File &amp; Photo Sharing</span>
+                </div>
+                <button onclick="toggleFileShare('${c.id}',${!!c.fileShareEnabled})"
+                  style="padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;border:none;cursor:pointer;background:${c.fileShareEnabled ? '#66bb6a' : '#ef535033'};color:${c.fileShareEnabled ? '#fff' : '#ef5350'};transition:all 0.2s">
+                  ${c.fileShareEnabled ? '✅ Enabled' : '🔒 Disabled'}
+                </button>
+              </div>
+              <div class="px-4 pb-2">
+                <p style="font-size:11px;color:${config.text_color}44">
+                  ${c.fileShareEnabled
+                    ? 'File sharing ON · Max 3 attachments · Images ≤400KB · Files ≤200KB · Disable when done.'
+                    : 'Enable to allow guidance to send images or files to this student.'}
+                </p>
+                ${c.fileShareEnabled ? '<div style="margin-top:4px;font-size:11px;color:' + config.text_color + '55">📎 ' + (c.chatMessages||[]).filter(m=>m.attachment).length + '/3 attachments used</div>' : ''}
+              </div>
+            </div>
+
             <!-- Student Progress Tracker -->
             ${renderProgressBadge(c, fs)}
 
@@ -2978,11 +3000,12 @@ if(activeSidebarItem==='Postings') {
                 oninput="consultationChatDraft['${c.id}']=this.value"
                 onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                 style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+              ${currentRole==='guidance'?`
               <button onclick="handleConsultAttachment('${c.id}')"
-                title="Attach image or file"
-                style="padding:9px 11px;background:${config.text_color}12;color:${config.text_color}88;border-radius:22px;font-size:13px;flex-shrink:0">
+                title="${c.fileShareEnabled?'Send file or image':'Enable file sharing first in guidance tools'}"
+                style="padding:9px 11px;background:${c.fileShareEnabled?'#1565c022':config.text_color+'0a'};color:${c.fileShareEnabled?'#90caf9':config.text_color+'44'};border-radius:22px;font-size:13px;flex-shrink:0;border:1px solid ${c.fileShareEnabled?'#90caf944':'transparent'}">
                 <i data-lucide="paperclip" style="width:14px;height:14px;display:inline;vertical-align:middle"></i>
-              </button>
+              </button>`:''}
               <button onclick="sendConsultationChat('${c.id}')"
                 style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
                 <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
@@ -3408,36 +3431,81 @@ ${isGuidance?`
     // ═══════════════════════════════════════════════════════════
     // FEATURE 4: CHAT FILE/IMAGE ATTACHMENTS
     // ═══════════════════════════════════════════════════════════
-    function handleConsultAttachment(consultId) {
+    // ── FILE ATTACHMENT LIMITS ──
+    // Max image size: 400KB (base64 ~533KB stored — safe under Firestore 1MB doc limit)
+    // Max file size: 200KB for docs
+    // Max 3 attachments per consultation total (to prevent Firestore bloat)
+    // Only guidance can send attachments
+    const ATTACH_MAX_IMAGE_BYTES = 400 * 1024;   // 400 KB raw
+    const ATTACH_MAX_FILE_BYTES  = 200 * 1024;   // 200 KB raw
+    const ATTACH_MAX_PER_CONSULT = 3;            // total attachments per consultation
+
+    async function handleConsultAttachment(consultId) {
+      // Guard: only guidance can attach files
+      if (currentRole !== 'guidance') {
+        showModal('Not Allowed', 'Only the guidance counselor can send files or photos.', 'error');
+        return;
+      }
+
+      // Check if file sharing is enabled for this consultation
+      const consult = consultationPostings.find(c => String(c.id) === String(consultId));
+      if (!consult || !consult.fileShareEnabled) {
+        showModal('File Sharing Off', 'Enable file sharing for this consultation first using the toggle in the guidance tools.', 'warning');
+        return;
+      }
+
+      // Count existing attachments in this consultation
+      const existing_msgs = consult.chatMessages || [];
+      const attachCount = existing_msgs.filter(m => m.attachment).length;
+      if (attachCount >= ATTACH_MAX_PER_CONSULT) {
+        showModal('Limit Reached', \`Max \${ATTACH_MAX_PER_CONSULT} attachments per consultation to protect storage. Delete old messages first if needed.\`, 'error');
+        return;
+      }
+
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/*,.pdf,.doc,.docx,.txt';
+      input.accept = 'image/*,.pdf,.txt';
       input.onchange = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        if (file.size > 5 * 1024 * 1024) {
-          showModal('File Too Large', 'Please select a file under 5MB.', 'error');
+
+        const isImage = file.type.startsWith('image/');
+        const maxBytes = isImage ? ATTACH_MAX_IMAGE_BYTES : ATTACH_MAX_FILE_BYTES;
+        const maxLabel = isImage ? '400KB' : '200KB';
+
+        if (file.size > maxBytes) {
+          showModal(
+            'File Too Large',
+            \`\${isImage ? 'Images' : 'Files'} must be under \${maxLabel} to protect Firebase storage.\n\nYour file: \${(file.size/1024).toFixed(0)}KB\`,
+            'error'
+          );
           return;
         }
-        // Convert to base64
+
         const reader = new FileReader();
         reader.onload = async (ev) => {
           const base64 = ev.target.result;
-          const isImage = file.type.startsWith('image/');
-          const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+
+          // Double-check base64 size won't blow Firestore doc limit
+          if (base64.length > 700 * 1024) {
+            showModal('File Too Large', 'The encoded file exceeds the safe storage limit. Please use a smaller file.', 'error');
+            return;
+          }
+
           const chatMsg = {
-            sender: authorLabel,
-            role: currentRole,
-            text: isImage ? `📎 <em>${file.name}</em>` : `📄 <em>${file.name}</em>`,
-            attachment: { name: file.name, data: base64, type: file.type, isImage },
+            sender: currentUserEmail,
+            role: 'guidance',
+            text: isImage ? \`📎 <em>\${file.name}</em>\` : \`📄 <em>\${file.name}</em>\`,
+            attachment: { name: file.name, data: base64, type: file.type, isImage, sizeKB: Math.round(file.size/1024) },
             time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
             ts: Date.now()
           };
           try {
             const ref = db.collection('consultations').doc(String(consultId));
             const doc = await ref.get();
-            const existing = doc.data().chatMessages || [];
-            await ref.update({ chatMessages: [...existing, chatMsg] });
+            const msgs = doc.data().chatMessages || [];
+            await ref.update({ chatMessages: [...msgs, chatMsg] });
+            addLog(\`Attachment sent in consultation #\${consultId} (\${Math.round(file.size/1024)}KB)\`, currentUserEmail, 'info');
           } catch(err) {
             showModal('Upload Failed', err.message, 'error');
           }
@@ -3445,6 +3513,17 @@ ${isGuidance?`
         reader.readAsDataURL(file);
       };
       input.click();
+    }
+
+    // Toggle file sharing for a consultation (guidance only)
+    async function toggleFileShare(consultId, current) {
+      if (currentRole !== 'guidance') return;
+      try {
+        await db.collection('consultations').doc(String(consultId)).update({ fileShareEnabled: !current });
+        addLog(\`File sharing \${!current?'enabled':'disabled'} for consultation #\${consultId}\`, currentUserEmail, 'info');
+      } catch(e) {
+        showModal('Error', e.message, 'error');
+      }
     }
 
     // Render attachment in chat bubble
