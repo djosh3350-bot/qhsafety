@@ -1286,7 +1286,7 @@ async function handleLogin(selectedRole) {
     // For students: require email verification before allowing login
     if (actualRole === 'student' && !uc.user.emailVerified) {
       await auth.signOut();
-      loginError = '📧 Email not verified. Please check your inbox and click the verification link before logging in.';
+      loginError = '📧 Email not verified. Please check your <strong>inbox or spam/junk folder</strong> for a verification email from Firebase (noreply@qhsafety-57c55.firebaseapp.com) and click the link before logging in. Gmail users: check your <strong>Primary</strong> tab too.';
       // Offer to resend verification
       const resendBtn = `<br><br><button onclick="resendVerificationEmail('${email}')" style="margin-top:8px;padding:8px 16px;background:#ffee58;color:#2c3e50;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px">Resend Verification Email</button>`;
       loginError += resendBtn;
@@ -1345,7 +1345,7 @@ function friendlyAuthError(code, fallback) {
 async function resendVerificationEmail(email) {
   try {
     // Sign in temporarily to resend verification (requires password — so just guide them)
-    showModal('Verification Email', `To resend the verification email, please try signing up again with the same email, or contact your administrator.<br><br>Check your spam folder — the email from <strong>Firebase / QHsafety</strong> may have landed there.`, 'info');
+    showModal('Verification Email', `To resend the verification email, please try signing up again with the same email, or contact your administrator.<br><br>📌 <strong>Can't find the email?</strong> Check your <strong>Spam / Junk</strong> folder and your <strong>Primary</strong> tab in Gmail — the email comes from Firebase (noreply@qhsafety-57c55.firebaseapp.com) and may be filtered automatically.`, 'info');
   } catch(e) {
     showModal('Error', 'Could not resend verification email. Please try again later.', 'error');
   }
@@ -1414,7 +1414,7 @@ async function handleSignup() {
     currentAuthFlow = 'login';
     addLog(`New student account created (pending verification): ${email}`, email, 'success');
     render();
-    showSuccessModal('Almost There! 📧', `A verification email was sent to <strong>${email}</strong>.<br><br>Please check your inbox and click the verification link before logging in.`);
+    showSuccessModal('Almost There! 📧', `A verification email was sent to <strong>${email}</strong>.<br><br>📌 <strong>Can't find it?</strong> Please check your:<ul style="text-align:left;margin:10px 0 0 0;padding-left:20px;line-height:2"><li><strong>Inbox</strong></li><li><strong>Spam / Junk</strong> folder</li><li><strong>Primary</strong> tab (Gmail users)</li></ul><br>The email is sent by Firebase on behalf of QHsafety. Click the verification link, then come back to log in.`);
   } catch (error) {
     signupError = friendlyAuthError(error.code, error.message);
     render();
