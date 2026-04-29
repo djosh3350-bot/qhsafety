@@ -2280,11 +2280,18 @@ if (risk.level === 'High' || risk.level === 'Medium') {
     }
     async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done',appointmentStatus:'Done',appointmentStatusUpdatedAt:Date.now()});addLog('Consultation marked as Done',currentUserEmail,'success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');}}
 
-  // ── CONSULTATION: SCHEDULE GOOGLE MEET ──
+  // ── CONSULTATION: SCHEDULE MEET OR PHONE CALL ──
 async function scheduleConsultMeet(consultId) {
   const d = consultMeetDraft;
-  if (!d.date || !d.time) { showModal('Missing Info', 'Please select both a date and time for the meeting.', 'error'); return; }
+  if (!d.date || !d.time) { showModal('Missing Info', 'Please select both a date and time.', 'error'); return; }
   const isoStr = d.date + 'T' + d.time;
+
+  // Get the consultation to check contactPref
+  const ref = db.collection('consultations').doc(String(consultId));
+  const doc = await ref.get();
+  const consultData = doc.data();
+  const isPhone = (consultData.contactPref === 'phone');
+
   const meetData = {
     meetDate: d.date,
     meetTime: d.time,
@@ -2296,27 +2303,39 @@ async function scheduleConsultMeet(consultId) {
     status: 'Pending'
   };
   try {
-    await db.collection('consultations').doc(String(consultId)).update(meetData);
-    // Notify student via chat system message
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
+    await ref.update(meetData);
+    const existing = consultData.chatMessages || [];
     const dateLabel = new Date(isoStr).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+
+    let msgText = '';
+    if (isPhone) {
+      // Phone call message — show number as a tappable tel: link
+      const phoneNum = meetData.meetLink;
+      msgText = '📱 <strong>Phone Call Scheduled!</strong><br>Date & Time: ' + dateLabel
+        + (phoneNum ? '<br>📞 <a href="tel:' + phoneNum.replace(/\s/g,'') + '" style="color:#90caf9;text-decoration:underline;font-weight:700">' + _esc(phoneNum) + '</a> (tap to call)' : '')
+        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+    } else {
+      // Google Meet message
+      msgText = '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel
+        + (meetData.meetLink ? '<br>🔗 <a href="' + (meetData.meetLink.startsWith('http') ? meetData.meetLink : 'https://' + meetData.meetLink) + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '')
+        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+    }
+
     const sysMsg = {
       sender: currentUserEmail,
       role: 'guidance',
       isSystem: true,
-      text: '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel + (meetData.meetLink ? '<br>🔗 <a href="' + (meetData.meetLink.startsWith('http') ? meetData.meetLink : 'https://' + meetData.meetLink) + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '') + (meetData.meetNotes ? '<br>📝 ' + meetData.meetNotes : ''),
+      text: msgText,
       time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
       ts: Date.now()
     };
     await ref.update({ chatMessages: [...existing, sysMsg] });
     showMeetScheduler[consultId] = false;
     consultMeetDraft = {date:'',time:'',link:'',notes:''};
-    addLog('Meet scheduled for consultation #'+consultId, currentUserEmail, 'success');
+    addLog((isPhone?'Phone call':'Meet')+' scheduled for consultation #'+consultId, currentUserEmail, 'success');
     render();
-    showModal('✅ Meeting Scheduled!', 'The student will see the meeting details in the chat.', 'success');
-  } catch(e) { showModal('Error', 'Failed to schedule meeting: ' + e.message, 'error'); }
+    showModal(isPhone ? '✅ Phone Call Scheduled!' : '✅ Meeting Scheduled!', 'The student will see the details in the chat.', 'success');
+  } catch(e) { showModal('Error', 'Failed to schedule: ' + e.message, 'error'); }
 }
 
 async function cancelConsultMeet(consultId) {
@@ -3360,9 +3379,9 @@ if(activeSidebarItem==='Postings') {
           ${currentRole==='guidance'?`
           <div class="mb-3" style="border:1px solid ${config.text_color}11;border-radius:12px;overflow:hidden">
 
-            <!-- Schedule Meet Accordion -->
+            <!-- Schedule Meet / Phone Call Accordion -->
             <button onclick="showMeetScheduler['${c.id}']=!showMeetScheduler['${c.id}'];render()" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold" style="background:${showMeetScheduler[c.id]?'#e8f5e9':config.text_color+'08'};color:${showMeetScheduler[c.id]?'#2e7d32':config.text_color};border:none;cursor:pointer">
-              <span>📹 ${c.meetDateTime?'Reschedule Meeting':'Schedule Google Meet'}</span>
+              <span>${c.contactPref==='phone'?'📱':'📹'} ${c.meetDateTime?(c.contactPref==='phone'?'Reschedule Call':'Reschedule Meeting'):(c.contactPref==='phone'?'Schedule Phone Call':'Schedule Google Meet')}</span>
               <i data-lucide="${showMeetScheduler[c.id]?'chevron-up':'chevron-down'}" style="width:16px;height:16px"></i>
             </button>
             ${showMeetScheduler[c.id]?`
@@ -3377,16 +3396,22 @@ if(activeSidebarItem==='Postings') {
                   <input type="time" id="meet-time-${c.id}" value="${consultMeetDraft.time||''}" oninput="consultMeetDraft.time=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 </div>
               </div>
+              ${c.contactPref==='phone'?`
+              <div style="margin-bottom:10px">
+                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📱 PHONE NUMBER TO CALL</label>
+                <input type="tel" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="+63 9XX XXX XXXX" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 The student will see this number and know to expect your call.</p>
+              </div>`:`
               <div style="margin-bottom:10px">
                 <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">🔗 GOOGLE MEET LINK (optional)</label>
                 <input type="url" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 Create a meet at <a href="https://meet.google.com" target="_blank" style="color:#1565c0">meet.google.com</a> and paste the link above.</p>
-              </div>
+              </div>`}
               <div style="margin-bottom:12px">
                 <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📝 NOTES FOR STUDENT (optional)</label>
                 <input type="text" id="meet-notes-${c.id}" value="${consultMeetDraft.notes||''}" oninput="consultMeetDraft.notes=this.value;onFieldInput()" placeholder="e.g. Please bring your report card..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
               </div>
-              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2 rounded-lg font-bold text-sm" style="background:#34a853;color:#fff">📅 Confirm & Notify Student</button>
+              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2 rounded-lg font-bold text-sm" style="background:#34a853;color:#fff">${c.contactPref==='phone'?'📱 Confirm & Notify Student':'📅 Confirm & Notify Student'}</button>
             </div>`:''}
 
             <!-- Private Guidance Note -->
