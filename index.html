@@ -2780,30 +2780,31 @@ async function deleteConsultation(id) {
 function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, textColor) {
   const isMine = m.sender === currentUserEmail || (m.sender === 'Anonymous' && isAnonymous);
   if (m.isSystem) {
+    // System messages are composed by guidance counselors (trusted), not students — allow HTML for meet links
     return '<div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">' +
-      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + (m.time||'') + '</div></div>';
+      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + _esc(m.time||'') + '</div></div>';
   }
   const bg = m.role === 'guidance' ? '#1565c0' : isMine ? primaryColor + 'dd' : textColor + '18';
   const col = m.role === 'guidance' ? '#fff' : textColor;
-  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : m.sender.split('@')[0];
-  // Attachment message rendering
+  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : _esc(m.sender.split('@')[0]);
   if (m.isAttachment) {
     const sizeKB = m.fileSize ? (m.fileSize/1024).toFixed(1)+'KB' : '';
+    const safeFileName = _esc(m.fileName || 'file');
     const attachContent = m.isImage
-      ? '<img src="' + m.fileData + '" alt="' + (m.fileName||'image') + '" style="max-width:200px;max-height:180px;border-radius:8px;display:block;margin-top:6px;cursor:pointer" onclick="window.open(this.src)" />'
-      : '<a href="' + m.fileData + '" download="' + (m.fileName||'file') + '" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.2);color:inherit;text-decoration:none;font-size:12px">📎 ' + (m.fileName||'File') + (sizeKB?' ('+sizeKB+')':'') + '</a>';
+      ? '<img src="' + _esc(m.fileData) + '" alt="' + safeFileName + '" style="max-width:200px;max-height:180px;border-radius:8px;display:block;margin-top:6px;cursor:pointer" onclick="window.open(this.src)" />'
+      : '<a href="' + _esc(m.fileData) + '" download="' + safeFileName + '" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.2);color:inherit;text-decoration:none;font-size:12px">📎 ' + safeFileName + (sizeKB?' ('+sizeKB+')':'') + '</a>';
     return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
       '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
       '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
       attachContent +
-      '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + (m.time||'') + '</div>' +
+      '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
       '</div></div>';
   }
   return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
     '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
     '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
-    m.text +
-    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + (m.time||'') + '</div>' +
+    _esc(m.text) +
+    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
     '</div></div>';
 }
 
@@ -3168,7 +3169,7 @@ if(activeSidebarItem==='Postings') {
     ${tr('delete')}
   </button>` : ''}
                   </div>
-        <p style="color:${config.text_color}88; line-height:1.5;max-height:120px;overflow-y:auto;padding-right:4px">${p.content}</p>
+        <p style="color:${config.text_color}88; line-height:1.5;max-height:120px;overflow-y:auto;padding-right:4px">${_esc(p.content)}</p>
 
         ${p.guidanceMessage ? `
         <div class="mt-3 p-3 rounded-lg" style="background:#e3f2fd;border-left:4px solid #1565c0">
@@ -3198,9 +3199,9 @@ if(activeSidebarItem==='Postings') {
             ${p.chatMessages.map(m=>`
             <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?'row-reverse':'row'};gap:8px;align-items:flex-end">
               <div style="max-width:75%;padding:8px 12px;border-radius:14px;font-size:13px;background:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?config.primary_action_color+'cc':config.text_color+'18'};color:${config.text_color}">
-                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.65">${m.role==='guidance'?'🎓 Guidance':m.sender==='Anonymous'?'👤 Anonymous':m.sender.split('@')[0]}</div>
-                ${m.text}
-                <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${m.time||''}</div>
+                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.65">${m.role==='guidance'?'🎓 Guidance':m.sender==='Anonymous'?'👤 Anonymous':_esc(m.sender.split('@')[0])}</div>
+                ${_esc(m.text)}
+                <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${_esc(m.time||'')}</div>
               </div>
             </div>`).join('')}
           </div>` : `<p style="font-size:12px;color:${config.text_color}44;margin-bottom:8px">No comments yet.</p>`}
@@ -3331,15 +3332,15 @@ if(activeSidebarItem==='Postings') {
             ${c.contactPref?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone Call':'💬 Chat'}</span>`:''}
             ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very Sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
             ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">📅 Meet: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
-            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#e65100">↗️ Referred: ${c.referredTo}</span>`:''}
+            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#e65100">↗️ Referred: ${_esc(c.referredTo)}</span>`:''}
           </div>
 
           <!-- Title + action buttons -->
           <div class="flex flex-col md:flex-row justify-between items-start gap-3 mb-3">
             <div class="flex-1">
-              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${c.reason}</h3>
+              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${_esc(c.reason)}</h3>
               ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}55">
-                <span>👤 ${c.studentEmail||c.author}</span>
+                <span>👤 ${_esc(c.studentEmail||c.author)}</span>
                 <span>📋 <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
                 <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
               </div>`:''}
@@ -3356,7 +3357,7 @@ if(activeSidebarItem==='Postings') {
 
           <!-- Description -->
           <div style="max-height:80px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
-            <p style="color:${config.text_color}88;line-height:1.6;font-size:13px">${c.description}</p>
+            <p style="color:${config.text_color}88;line-height:1.6;font-size:13px">${_esc(c.description)}</p>
           </div>
 
           <!-- Meet Banner (if scheduled) -->
@@ -3481,7 +3482,7 @@ if(activeSidebarItem==='Postings') {
               <div><strong>Submitted:</strong> ${c.timestamp?new Date(c.timestamp).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'-'}</div>
               ${c.gradeLevel?`<div><strong>Grade:</strong> ${c.gradeLevel}</div>`:''}
               ${c.contactPref?`<div><strong>Preferred Contact:</strong> ${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone':' 💬 Chat'}</div>`:''}
-              ${c.referredTo?`<div><strong>Referred to:</strong> ${c.referredTo}</div>`:''}
+              ${c.referredTo?`<div><strong>Referred to:</strong> ${_esc(c.referredTo)}</div>`:''}
               ${c.meetScheduledAt?`<div><strong>Meet scheduled by:</strong> ${c.meetScheduledBy||'Guidance'} on ${new Date(c.meetScheduledAt).toLocaleDateString()}</div>`:''}
               ${c.reminderSentAt?`<div><strong>Reminder sent:</strong> ${new Date(c.reminderSentAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>`:''}
               ${c.sessionRating?`<div><strong>Session rating:</strong> ${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)} ${c.sessionFeedback?'— "'+c.sessionFeedback+'"':''}</div>`:''}
@@ -3630,7 +3631,7 @@ if(activeSidebarItem==='Postings') {
   ${currentRole!=='admin'?`<div class="mb-8"><button onclick="showFeedbackForm=!showFeedbackForm;render()" class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('leaveFeedback')}</button></div>`:''}
   ${showFeedbackForm?`<div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">${feedbackError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${feedbackError}</div>`:''}<h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('leaveFeedback')}</h3><div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('rating')}</label><div class="flex gap-2">${[1,2,3,4,5].map(n=>`<button onclick="feedbackRating=${n};render()" class="w-10 h-10 rounded-lg font-bold text-lg" style="background:${feedbackRating>=n?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${n}</button>`).join('')}</div></div><textarea placeholder="${tr('writeFeedback')}" oninput="feedbackMessage=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${feedbackMessage}</textarea><div class="flex gap-3"><button onclick="addFeedback()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submit')}</button><button onclick="showFeedbackForm=false;feedbackMessage='';feedbackRating=5;feedbackError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button></div></div>`:''}
   <div class="space-y-4">
-    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noFeedback')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}88">${f.authorRole||'Student'}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#ffee58':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}55">${f.date||''}</span></div><p style="color:${config.text_color}88;margin-top:8px">${f.message}</p></div>`).join('')}
+    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noFeedback')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}88">${f.authorRole||'Student'}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#ffee58':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}55">${f.date||''}</span></div><p style="color:${config.text_color}88;margin-top:8px">${_esc(f.message)}</p></div>`).join('')}
   </div>
 </div>`;
       }
@@ -3868,7 +3869,7 @@ if(activeSidebarItem==='Postings') {
       <div class="flex justify-between items-start mb-2">
         <div>
           <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#90caf922;color:#5c9be0;border:1px solid #90caf944">${appLang==='tl'?'Konsultasyon':'Consultation'}</span></div>
-          <h3 class="font-bold" style="color:${config.text_color}">${c.reason}</h3>
+          <h3 class="font-bold" style="color:${config.text_color}">${_esc(c.reason)}</h3>
           <div class="flex gap-2 mt-1 flex-wrap">
             <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.priority==='High'?'⚡':c.priority==='Medium'?'▲':'▽'} ${tr(c.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}</span>
             <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${c.riskLevel} Risk · AI:${c.aiScore}</span>
@@ -3876,8 +3877,8 @@ if(activeSidebarItem==='Postings') {
         </div>
         <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg shrink-0 font-semibold" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markDone')}</button>
       </div>
-      <p class="text-sm mb-2" style="color:${config.text_color}88">${c.description}</p>
-      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Estudyante:':'Student:'} ${c.studentEmail||c.author} · ${c.date||''}</p>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(c.description)}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Estudyante:':'Student:'} ${_esc(c.studentEmail||c.author)} · ${_esc(c.date||'')}</p>
     </div>`;}).join('')}
   </div>`:''}
   ${problemPostings.length>0?`
@@ -3894,7 +3895,7 @@ if(activeSidebarItem==='Postings') {
           ${p.reasons&&p.reasons.length?`<span class="text-xs px-2 py-0.5 rounded-full font-semibold" style="background:#ef535018;color:#ef5350">⚠ ${p.reasons[0]}${p.reasons.length>1?' +'+(p.reasons.length-1)+' more':''}</span>`:''}
         </div>
       </div>
-      <p class="text-sm mb-2" style="color:${config.text_color}88">${p.content}</p>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(p.content)}</p>
       <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Ni':'By'}: ${p.author} · ${p.timestamp?new Date(p.timestamp).toLocaleDateString():''}</p>
     </div>`;}).join('')}
   </div>`:''}
