@@ -165,6 +165,14 @@ button:not(.sidebar-item) {
 button:not(.sidebar-item):active {
   transform: scale(0.97);
 }
+
+/* ── Dark mode: inputs, selects, textareas ── */
+input, textarea, select {
+  color-scheme: inherit;
+}
+input::placeholder, textarea::placeholder {
+  opacity: 0.5;
+}
   </style>
 </head>
 <body class="h-full w-full overflow-auto">
@@ -1306,7 +1314,156 @@ function containsSensitiveWords(text) {
     // ── AUTH ──
     // ── AUTH FUNCTIONS ──
 
-// ── ROLE RESOLUTION (server-side authoritative) ──────────────────────────────
+// ── ADMIN ACCOUNT CHECKER ─────────────────────────────────────────────────────
+let _acLastUid = null;
+
+function _acShow(type, html) {
+  const el = document.getElementById('acResult');
+  if (!el) return;
+  el.style.display = 'block';
+  // Use semi-transparent tints so they work in both light and dark mode
+  if (type === 'success') {
+    el.style.background = '#2e7d3222'; el.style.border = '1px solid #66bb6a55'; el.style.color = darkMode ? '#a5d6a7' : '#1b5e20';
+  } else if (type === 'error') {
+    el.style.background = '#c6282822'; el.style.border = '1px solid #ef9a9a55'; el.style.color = darkMode ? '#ef9a9a' : '#b71c1c';
+  } else {
+    el.style.background = '#1565c022'; el.style.border = '1px solid #90caf955'; el.style.color = darkMode ? '#90caf9' : '#0d47a1';
+  }
+  el.innerHTML = html;
+}
+
+async function adminCheckAccount() {
+  const email    = (document.getElementById('acEmail').value    || '').trim().toLowerCase();
+  const password = (document.getElementById('acPassword').value || '').trim();
+  const wantRole = (document.getElementById('acRole').value     || '');
+  const fixBtn   = document.getElementById('acFixBtn');
+  const checkBtn = document.getElementById('acCheckBtn');
+  _acLastUid = null;
+  if (fixBtn) fixBtn.style.display = 'none';
+  if (!email || !password) { _acShow('error', '❌ Enter both email and password.'); return; }
+
+  if (checkBtn) { checkBtn.disabled = true; checkBtn.innerHTML = '⏳ Checking...'; }
+  try {
+    // Use a secondary app so admin session is not disturbed
+    const tempApp  = firebase.initializeApp(firebase.app().options, 'ac-check-' + Date.now());
+    const tempAuth = tempApp.auth();
+    const uc = await tempAuth.signInWithEmailAndPassword(email, password);
+    const uid = uc.user.uid;
+    _acLastUid = uid;
+    const verified = uc.user.emailVerified;
+    await tempAuth.signOut();
+    tempApp.delete().catch(()=>{});
+
+    const snap = await db.collection('users').doc(uid).get();
+    const hasDoc = snap.exists;
+    const storedRole = hasDoc ? (snap.data().role || '— no role field —') : null;
+
+    let lines = [];
+    lines.push(`<strong>UID:</strong> <code style="font-size:11px;word-break:break-all">${_esc(uid)}</code>`);
+    lines.push(`<strong>Email verified:</strong> ${verified ? '✅ Yes' : '⚠️ No'}`);
+    lines.push(`<strong>Firestore doc:</strong> ${hasDoc ? '✅ Exists' : '❌ Missing'}`);
+    lines.push(`<strong>Stored role:</strong> <strong>${_esc(storedRole || 'none')}</strong>`);
+
+    if (wantRole) {
+      if (!hasDoc || storedRole !== wantRole) {
+        lines.push(`<br>⚠️ Role mismatch or missing. Click <strong>Fix Role</strong> to set it to <strong>${_esc(wantRole)}</strong>.`);
+        if (fixBtn) { fixBtn.style.display = 'inline-flex'; fixBtn.textContent = `🔧 Fix → set role to "${wantRole}"`; }
+        _acShow('error', lines.join('<br>'));
+      } else {
+        lines.push(`<br>✅ Role matches! This account should log in correctly as <strong>${_esc(wantRole)}</strong>.`);
+        _acShow('success', lines.join('<br>'));
+      }
+    } else {
+      _acShow('info', lines.join('<br>'));
+    }
+  } catch(e) {
+    _acShow('error', '❌ ' + _esc(e.message || 'Login failed. Check email and password.'));
+  }
+  if (checkBtn) { checkBtn.disabled = false; checkBtn.innerHTML = '<i data-lucide="search" style="width:15px;height:15px;display:inline;vertical-align:middle"></i> Check Account'; lucide.createIcons(); }
+}
+
+async function adminFixAccount() {
+  const email    = (document.getElementById('acEmail').value    || '').trim().toLowerCase();
+  const password = (document.getElementById('acPassword').value || '').trim();
+  const wantRole = (document.getElementById('acRole').value     || '');
+  const fixBtn   = document.getElementById('acFixBtn');
+  if (!wantRole)   { _acShow('error', '❌ Select a role first.'); return; }
+  if (!_acLastUid) { _acShow('error', '❌ Run Check first.'); return; }
+
+  if (fixBtn) { fixBtn.disabled = true; fixBtn.textContent = '⏳ Fixing...'; }
+  try {
+    const tempApp  = firebase.initializeApp(firebase.app().options, 'ac-fix-' + Date.now());
+    const tempAuth = tempApp.auth();
+    const uc = await tempAuth.signInWithEmailAndPassword(email, password);
+    const uid = uc.user.uid;
+    await tempAuth.signOut();
+    tempApp.delete().catch(()=>{});
+
+    const snap = await db.collection('users').doc(uid).get();
+    if (snap.exists) {
+      await db.collection('users').doc(uid).update({ role: wantRole, email });
+    } else {
+      await db.collection('users').doc(uid).set({ email, role: wantRole, createdAt: Date.now() });
+    }
+
+    addLog(`Admin fixed role for ${email} → ${wantRole}`, currentUserEmail, 'success');
+    if (fixBtn) { fixBtn.style.display = 'none'; fixBtn.disabled = false; }
+    _acShow('success', `✅ Done! Role for <strong>${_esc(email)}</strong> is now <strong>${_esc(wantRole)}</strong>. They can log in normally.`);
+  } catch(e) {
+    if (fixBtn) { fixBtn.disabled = false; fixBtn.textContent = '🔧 Fix Role'; }
+    _acShow('error', '❌ Fix failed: ' + _esc(e.message));
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// Creates the /users/{uid} Firestore document for accounts that were created
+// manually in Firebase Auth (guidance/admin) and never got a Firestore doc.
+// Only shown on the login screen when "Access Denied" error occurs.
+let bootstrapStatus = ''; // '', 'loading', 'success', 'error'
+let bootstrapMsg = '';
+
+async function bootstrapUserDocument(role) {
+  bootstrapStatus = 'loading';
+  bootstrapMsg = '';
+  render();
+
+  if (!loginEmail.trim() || !loginPassword.trim()) {
+    bootstrapStatus = 'error';
+    bootstrapMsg = 'Please enter your email and password above first.';
+    render(); return;
+  }
+
+  try {
+    // Sign in to get the UID
+    const uc = await auth.signInWithEmailAndPassword(loginEmail.trim().toLowerCase(), loginPassword.trim());
+    const uid = uc.user.uid;
+    const email = uc.user.email.toLowerCase();
+
+    // Check if doc already exists
+    const existing = await db.collection('users').doc(uid).get();
+    if (existing.exists) {
+      // Doc exists — just fix the role
+      await db.collection('users').doc(uid).update({ role, email });
+    } else {
+      // Create new doc
+      await db.collection('users').doc(uid).set({ email, role, createdAt: Date.now() });
+    }
+
+    await auth.signOut();
+    bootstrapStatus = 'success';
+    bootstrapMsg = `✅ Done! Your account has been registered as "${role}". You can now log in normally.`;
+    render();
+  } catch(e) {
+    await auth.signOut().catch(()=>{});
+    bootstrapStatus = 'error';
+    bootstrapMsg = '❌ ' + (e.message || 'Something went wrong. Check your email/password and try again.');
+    render();
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
 // Roles are stored in Firestore /users/{uid}.role and trusted over email heuristics.
 // The hardcoded admin list is a bootstrap fallback only (for the very first admin
 // before any Firestore user document exists). All other role checks go to Firestore.
@@ -2693,7 +2850,8 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
       const prevScroll = document.getElementById('main-scroll');
       const savedScrollTop = prevScroll ? prevScroll.scrollTop : 0;
 
-      config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#f5f5f5'}:{...defaultConfig};
+      config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#e6e6e6'}:{...defaultConfig};
+      document.body.style.colorScheme = darkMode ? 'dark' : 'light';
       if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
       else{renderDashboard();}
       lucide.createIcons();
@@ -2750,7 +2908,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
       const fs=config.font_size||16;
       app.innerHTML=`
 <div class="grid-bg fade-in" style="height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 24px;background-color:${config.background_color};overflow-y:auto">
-  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${config.text_color}88;background:none;border:none;cursor:pointer"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
+  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';bootstrapStatus='';bootstrapMsg='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${config.text_color}88;background:none;border:none;cursor:pointer"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
   <div class="w-full max-w-sm">
     <div class="text-center mb-8">
       <span class="mono font-bold mb-2" style="font-size:${fs*2}px;color:${config.text_color}"><span style="color:${config.primary_action_color}">QH</span>safety</span>
@@ -2769,13 +2927,8 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
           <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='signup'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Sign Up</button>
           <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='login'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Login</button>
         </div>
-        `:`
-        <div class="flex gap-2 mb-6">
-          <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='login'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Login</button>
-          <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='signup'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Sign Up</button>
-        </div>
-        `}
-        ${currentAuthFlow==='signup'?`
+        `:``}
+        ${(currentAuthFlow==='signup' && selectedRoleForLogin==='student')?`
           ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
           ${selectedRoleForLogin==='student'?`<div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:#e3f2fd;border:1px solid #90caf955"><i data-lucide="info" style="width:15px;height:15px;color:#1565c0;margin-top:1px;flex-shrink:0"></i><p style="font-size:12px;color:#1565c0;line-height:1.5;margin:0">📧 A <strong>Gmail account (@gmail.com)</strong> is required. A verification link will be sent to your email — you must verify it before you can log in.</p></div>`:''}
           <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="su-email" type="email" value="${signupEmail}" oninput="signupEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
@@ -3388,8 +3541,52 @@ if(activeSidebarItem==='Postings') {
     <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="shield" style="width:28px;height:28px;color:#90caf9"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Admin</h3></div><input type="email" id="newAdminEmail" placeholder="admin@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newAdminPassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createAdminAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:#90caf9;color:${config.text_color}">Create Admin Account</button></div>
     <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="users" style="width:28px;height:28px;color:#ffee58"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Guidance Counselor</h3></div><input type="email" id="newGuidanceEmail" placeholder="counselor@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newGuidancePassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createGuidanceAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">Create Guidance Account</button></div>
   </div>
+
+  <!-- ── ACCOUNT CHECKER ── -->
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color};border:2px solid ${config.primary_action_color}33">
+    <div class="flex items-center gap-3 mb-1">
+      <i data-lucide="search" style="width:22px;height:22px;color:${config.primary_action_color}"></i>
+      <h3 class="font-bold" style="color:${config.text_color};font-size:${fs*1.05}px">Account Checker & Role Fixer</h3>
+    </div>
+    <p class="text-sm mb-5" style="color:${config.text_color}66">Verify whether an account has the correct Firestore role, and fix it instantly if not.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">EMAIL</label>
+        <input type="email" id="acEmail" placeholder="user@example.com"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">PASSWORD</label>
+        <input type="password" id="acPassword" placeholder="••••••••"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">EXPECTED ROLE</label>
+        <select id="acRole"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px">
+          <option value="">— just check —</option>
+          <option value="student">Student</option>
+          <option value="guidance">Guidance Counselor</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex gap-3 mb-4">
+      <button onclick="adminCheckAccount()" id="acCheckBtn"
+        style="padding:10px 22px;border-radius:8px;background:${config.primary_action_color};color:${config.text_color};border:none;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
+        <i data-lucide="search" style="width:15px;height:15px"></i> Check Account
+      </button>
+      <button onclick="adminFixAccount()" id="acFixBtn"
+        style="padding:10px 22px;border-radius:8px;background:#f57f17;color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer;display:none;align-items:center;gap:6px">
+        <i data-lucide="wrench" style="width:15px;height:15px"></i> Fix Role
+      </button>
+    </div>
+    <div id="acResult" style="display:none;padding:14px;border-radius:10px;font-size:13px;line-height:1.7"></div>
+  </div>
+
   <div class="p-6 rounded-xl" style="background:${config.surface_color}"><p style="color:${config.text_color}88">• New accounts are created immediately.<br>• Only these credentials will allow login with the correct role.</p></div>
 </div>`;
+
 
       // ── FEEDBACK ──
       if(activeSidebarItem==='Feedback') {
