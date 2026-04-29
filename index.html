@@ -327,7 +327,7 @@ input::placeholder, textarea::placeholder {
     let consultationContactPref='chat', consultationMoodLevel=3;
     let showMeetScheduler={}, consultMeetDraft={date:'',time:'',link:'',notes:''};
     // Attachment limits (Firebase free tier safe)
-    const ATTACH_MAX_SIZE_BYTES = 200 * 1024;
+    const ATTACH_MAX_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
     const ATTACH_MAX_PER_CONSULT = 3;
     const ATTACH_MAX_TOTAL_PER_USER = 5;
     let consultSessionRating={}, consultSessionFeedback={};
@@ -2402,7 +2402,7 @@ async function sendConsultAttachment(consultId) {
 
   // Size check
   if (file.size > ATTACH_MAX_SIZE_BYTES) {
-    showModal('File Too Large', `Maximum file size is 200KB. Your file is ${(file.size/1024).toFixed(1)}KB. Please compress or crop the image first.`, 'error');
+    showModal('File Too Large', `Maximum file size is 1MB. Your file is ${(file.size/1024).toFixed(1)}KB. Please compress or crop the image first.`, 'error');
     input.value = '';
     return;
   }
@@ -3524,7 +3524,7 @@ if(activeSidebarItem==='Postings') {
                     <i data-lucide="paperclip" style="width:13px;height:13px"></i> ${blockIcon} ${blockMsg}
                   </div>`:`
                   <label style="display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px dashed ${config.text_color}33;color:${config.text_color}77;background:${config.text_color}05">
-                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> Attach (max 200KB)
+                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> Attach (max 1MB)
                     <input id="attachInput_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx" style="display:none" onchange="sendConsultAttachment('${c.id}')" />
                   </label>`}
                 <span style="font-size:11px;color:${storageBlocked?blockColor:config.text_color+'44'}">${(c.chatMessages||[]).filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} files used</span>`;
