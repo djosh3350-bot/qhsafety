@@ -1267,7 +1267,12 @@ function containsProfanity(text) {
   const n = normalizeText(text);
   return hardBlockList.some(w => {
     const wn = normalizeText(w);
-    return n.includes(wn);
+    if (!wn) return false;
+    // Whole-word match only — prevents 'tit' blocking 'submitted',
+    // 'ass' blocking 'harassed', 'cum' blocking 'documented', etc.
+    const escaped = wn.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const regex = new RegExp('(?<![a-z])' + escaped + '(?![a-z])', 'i');
+    return regex.test(n);
   });
 }
 
