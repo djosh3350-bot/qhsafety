@@ -1111,6 +1111,9 @@ const hardBlockList = [
   'mag masturbate','mag masterbate','mag-masturbate',
 
   // ── KANTOT AND SEXUAL ACTS ──
+  // NOTE: rape, molest, ginahasa, gahasain, sext, sexting are intentionally
+  // REMOVED from this block list — students must be able to report abuse.
+  // These words are handled by detectRisk() which flags them for counselor review.
   'kantot','kantutin','nagkakantot','nakantot','kantutan',
   'hindot','hindotin','naghihindot','hindutan',
   'iyot','nag-iiyot','nagiiyot','iyutin','iyutan',
@@ -1118,10 +1121,6 @@ const hardBlockList = [
   'nagmamasturbate','nagmamasterbate',
   'nagkakantot','naghihindot','nagiiyot',
   'chupa','chupahin','nagchuchupa','chupaan',
-  'raming','ramihin','ginahasa','gahasain','gahasahin',
-  'rape','raping','rapist','raped',
-  'molest','molesting','molested','molester',
-  'sext','sexting','seksing',
   'kinantot','kinalantot',
 
   // ── GENITALS - FILIPINO ──
@@ -1188,42 +1187,35 @@ const hardBlockList = [
   'clusterfuck','cluster fuck',
 
   // ── ENGLISH SEXUAL ──
+  // NOTE: sex, sexual, naked, nude, penis, vagina, condom, sext, sexting, fingering
+  // are intentionally REMOVED — students need these words to report sexual abuse.
+  // detectRisk() flags them for counselor review instead of blocking the post.
   'porn','pornography','porno','pornhub','xvideos','xnxx',
   'horny','horniest','hornier',
   'cum','cumshot','cumming','cummed',
   'clit','clits','clitoris',
   'boob','boobs','boobies','boobie',
   'tit','tits','titties','titty',
-  'nude','nudes','nudity','nudie',
-  'naked','nakedness',
-  'sex','sexual','sexuality','sexed','sexy',
-  'penis','penises','vagina','vaginas',
-  'testicle','testicles','balls','ballsack',
   'orgasm','orgasms','orgasmic',
   'erection','erections','erect',
   'ejaculate','ejaculation','ejaculating',
   'jerkoff','jerk off','jacking off','jack off',
   'wank','wanking','wanker','wankers',
   'handjob','hand job','blowjob','blow job',
-  'fingering','finger blasting',
   'dildo','dildos','vibrator','vibrators',
-  'condom','condoms',
-  'sexting','sext','sexts',
   'nudepic','nude pic','nude photo',
-  'stripper','strippers','strip','striptease',
-  'escort','escorts','prostitute','prostitution','hooker','hookers',
+  'stripper','strippers','striptease',
   'onlyfans','only fans',
   'hentai','ecchi','lemon',
   'threesome','foursome','gangbang','gang bang',
   'bdsm','fetish','fetishes',
 
   // ── THREATS AND VIOLENCE ──
-  'putuguin','patayin','papatayin','pumatay','pumatay ka',
-  'pukpukin','sapukin','sapakin','sapakin kita','bibigyan kita',
+  // NOTE: 'shoot you','stab you','hurt you' removed — students need to report
+  // threats made against them. Only block directed-outward threat phrases.
   'kill yourself','kys','kill urself','kil yourself',
   'go die','just die','you should die','drop dead',
   'i will kill','ill kill','im gonna kill','imma kill',
-  'shoot you','stab you','hurt you',
   'pahirapan','gaguhin','lokohin kita',
   'bubugbugin','bugbugin','ibubulag',
 
@@ -1236,12 +1228,9 @@ const hardBlockList = [
   'midget','dwarf','cripple',
 
   // ── DRUG REFERENCES ──
-  'shabu','meth','methamphetamine','crystal','ice drug',
-  'rugby','solvent','solvent abuser',
-  'marijuana','weed','cannabis','dope','stoned',
-  'cocaine','coke','crack','heroin','ecstasy','mdma',
-  'drug addict','druggie','junkie','pusher',
-  'nagshshabu','nagshshabow','nagshabu',
+  // NOTE: shabu, meth, marijuana, cocaine etc. are intentionally REMOVED from
+  // the block list — students must be able to report drug involvement/threats.
+  // detectRisk() already flags these for counselor review.
 
   // ── SPAM / IRRELEVANT / DISRESPECTFUL ──
   'suicidebait','suicide bait',
