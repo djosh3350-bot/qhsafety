@@ -1657,6 +1657,16 @@ function _esc(str) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── EMAIL MASKING (for logs display) ──
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return email;
+  const [local, domain] = email.split('@');
+  if (local.length <= 2) return local[0] + '***@' + domain;
+  const visible = local.slice(0, 3);
+  const masked = '*'.repeat(Math.min(local.length - 3, 5));
+  return visible + masked + '@' + domain;
+}
+
 // ── MODAL SYSTEM ──
 let _modalResolve = null;
 
@@ -2895,7 +2905,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${config.primary_action_color}">QH</span>safety</span>
     <button onclick="showLandingSettings=!showLandingSettings;render()" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
   </nav>
-  ${showLandingSettings?`<div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this){showLandingSettings=false;render()}"><div class="rounded-xl p-6 w-96" style="background:${config.surface_color}"><div class="flex items-center justify-between mb-6"><h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">Settings</h2><button onclick="showLandingSettings=false;render()" class="text-2xl" style="color:${config.text_color}">&times;</button></div><div class="flex items-center justify-between p-4 rounded-lg mb-3" style="background:${config.text_color}08"><div class="flex items-center gap-3"><i data-lucide="${darkMode?'moon':'sun'}" style="width:20px;height:20px;color:${config.text_color}"></i><span style="font-weight:600;color:${config.text_color}">${tr('darkMode')}</span></div><button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="relative w-14 h-7 rounded-full" style="background:${darkMode?config.primary_action_color+'cc':config.text_color}33"><div class="absolute w-6 h-6 rounded-full" style="top:0.5px;${darkMode?'right:0.5px':'left:0.5px'};background:${config.text_color}"></div></button></div><div class="p-4 rounded-lg" style="background:${config.text_color}08"><div class="flex items-center gap-3 mb-3"><i data-lucide="languages" style="width:20px;height:20px;color:${config.text_color}"></i><span style="font-weight:600;color:${config.text_color}">${tr('langSetting')}</span></div><div class="flex gap-2"><button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">🇺🇸 English</button><button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()" style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">🇵🇭 Filipino</button></div></div></div></div>`:''}
+  ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);background:rgba(0,0,0,0.45)" onclick="if(event.target===this){showLandingSettings=false;render()}"><div style="background:${darkMode?'rgba(30,34,44,0.92)':'rgba(255,255,255,0.92)'};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid ${darkMode?'rgba(255,255,255,0.10)':'rgba(0,0,0,0.08)'};border-radius:20px;padding:28px;width:360px;max-width:90vw;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px"><div style="display:flex;align-items:center;gap:10px"><div style="width:34px;height:34px;border-radius:10px;background:${config.primary_action_color}22;display:flex;align-items:center;justify-content:center"><i data-lucide="settings-2" style="width:17px;height:17px;color:${config.primary_action_color}"></i></div><h2 style="font-weight:700;font-size:18px;color:${config.text_color};margin:0">Settings</h2></div><button onclick="showLandingSettings=false;render()" style="width:32px;height:32px;border-radius:50%;border:none;background:${config.text_color}12;cursor:pointer;display:flex;align-items:center;justify-content:center;color:${config.text_color};font-size:18px;line-height:1">&times;</button></div><div style="height:1px;background:${config.text_color}10;margin-bottom:20px"></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${config.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><div style="width:30px;height:30px;border-radius:8px;background:${darkMode?'#5c6bc022':'#fdd83522'};display:flex;align-items:center;justify-content:center"><i data-lucide="${darkMode?'moon':'sun'}" style="width:15px;height:15px;color:${darkMode?'#7986cb':'#f9a825'}"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">${darkMode?'Currently on':'Currently off'}</div></div></div><button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" style="position:relative;width:48px;height:26px;border-radius:13px;border:none;cursor:pointer;background:${darkMode?config.primary_action_color:'#ccc'};flex-shrink:0"><div style="position:absolute;top:3px;${darkMode?'right:3px':'left:3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.25)"></div></button></div><div style="padding:14px 16px;border-radius:14px;background:${config.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="width:30px;height:30px;border-radius:8px;background:#42a5f522;display:flex;align-items:center;justify-content:center"><i data-lucide="languages" style="width:15px;height:15px;color:#42a5f5"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('langSetting')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">Choose display language</div></div></div><div style="display:flex;gap:8px"><button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇺🇸 English</button><button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇵🇭 Filipino</button></div></div></div></div>`:''}
   <section class="flex flex-col items-center justify-center text-center px-6 py-20 fade-in">
     <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${config.secondary_action_color}33;color:${config.text_color}">🛡️ School Safety Platform</div>
     <h1 class="font-bold leading-tight mb-4" style="font-size:${fs*3}px;color:${config.text_color}">${config.hero_title}</h1>
@@ -2969,7 +2979,7 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
     function renderDashboard() {
       const fs=config.font_size||16;
       let items,icons,itemKeys;
-      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Storage','Settings'];icons=['layout-dashboard','users','message-circle','file-text','database','settings'];itemKeys=['dashboard','users','feedback','logs','storage','settings'];}
+      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','users','message-circle','file-text','settings'];itemKeys=['dashboard','users','feedback','logs','settings'];}
       else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
       else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
       const bottomItems=items,bottomIcons=icons,bottomKeys=itemKeys;
@@ -3639,140 +3649,11 @@ if(activeSidebarItem==='Postings') {
     <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">System Logs</h1>
     <div class="flex gap-2">${['all','info','warning','error','success'].map(t=>`<button onclick="logFilter='${t}';render()" class="px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:${logFilter===t?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
   </div>
-  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${l.user} · ${l.time}</p></div></div>`).join('')}</div>
+  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${maskEmail(l.user)} · ${l.time}</p></div></div>`).join('')}</div>
 </div>`;
       }
 
-      // ── STORAGE MONITOR (admin) ──
-      if(activeSidebarItem==='Storage'&&currentRole==='admin') {
-        const FREE_GB = 1;
-        const FREE_BYTES = FREE_GB * 1024 * 1024 * 1024;
-        const levelColors = { safe:'#2e7d32', caution:'#f57c00', warning:'#e65100', critical:'#c62828' };
-        const levelBg    = { safe:'#e8f5e9',  caution:'#fff8e1',  warning:'#fff3e0', critical:'#ffebee' };
-        const levelBorder= { safe:'#66bb6a33',caution:'#ffcc0244',warning:'#ff980044',critical:'#ef535044' };
-        const levelIcon  = { safe:'✅', caution:'⚠️', warning:'🔶', critical:'🚨' };
-        const levelMsg   = {
-          safe:     'Storage usage is healthy. No action needed.',
-          caution:  'Storage is growing. Consider cleaning old records periodically.',
-          warning:  'Over 50% used. Start deleting old postings, chats, and attachments to stay under the free limit.',
-          critical: 'CRITICAL: Over 80% of free storage used! Delete data immediately or Firestore may stop accepting writes.'
-        };
 
-        const st = storageStats;
-        return `
-<div class="max-w-3xl">
-  <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
-    <div>
-      <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">Firebase Storage Monitor</h1>
-      <p class="text-sm mt-1" style="color:${config.text_color}66">Free Tier: 1 GiB Firestore · estimates based on document JSON size</p>
-    </div>
-    <button onclick="scanFirebaseStorage()" ${storageLoading?'disabled':''} class="flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:${storageLoading?'wait':'pointer'}">
-      <i data-lucide="${storageLoading?'loader':'refresh-cw'}" style="width:16px;height:16px${storageLoading?';animation:spin 1s linear infinite':''}"></i>
-      ${storageLoading?'Scanning...':'Scan Now'}
-    </button>
-  </div>
-
-  ${!st&&!storageLoading?`
-  <!-- Empty state -->
-  <div class="p-10 rounded-2xl flex flex-col items-center gap-4" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
-    <i data-lucide="database" style="width:48px;height:48px;color:${config.text_color}33"></i>
-    <div style="text-align:center">
-      <p class="font-bold" style="color:${config.text_color}">No scan data yet</p>
-      <p class="text-sm mt-1" style="color:${config.text_color}66">Click <strong>Scan Now</strong> to measure your Firestore usage across all collections.</p>
-    </div>
-  </div>`:''}
-
-  ${storageLoading?`
-  <div class="p-10 rounded-2xl flex flex-col items-center gap-4" style="background:${config.surface_color}">
-    <i data-lucide="loader" style="width:40px;height:40px;color:${config.primary_action_color};animation:spin 1s linear infinite"></i>
-    <p class="font-semibold" style="color:${config.text_color}88">Reading all Firestore documents…</p>
-    <p class="text-xs" style="color:${config.text_color}44">This may take a few seconds depending on your data size.</p>
-  </div>`:''}
-
-  ${st&&st.error?`
-  <div class="p-6 rounded-xl" style="background:#ffebee;border:1px solid #ef535033">
-    <p class="font-bold" style="color:#c62828">❌ Scan Failed</p>
-    <p class="text-sm mt-1" style="color:#c62828">${st.error}</p>
-  </div>`:''}
-
-  ${st&&!st.error?`
-  <!-- ── ALERT BANNER ── -->
-  <div class="p-4 rounded-xl mb-5 flex items-start gap-3" style="background:${levelBg[st.level]};border:2px solid ${levelBorder[st.level]}">
-    <span style="font-size:22px;line-height:1">${levelIcon[st.level]}</span>
-    <div style="flex:1">
-      <div class="font-bold" style="color:${levelColors[st.level]};font-size:15px">${st.level.charAt(0).toUpperCase()+st.level.slice(1).replace('caution','Caution').replace('warning','Warning').replace('critical','Critical Warning')}</div>
-      <p class="text-sm mt-1" style="color:${levelColors[st.level]}">${levelMsg[st.level]}</p>
-    </div>
-  </div>
-
-  <!-- ── TOTAL GAUGE ── -->
-  <div class="p-5 rounded-2xl mb-5" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
-    <div class="flex justify-between items-end mb-2">
-      <div>
-        <span class="font-bold" style="font-size:28px;color:${levelColors[st.level]}">${formatBytes(st.totalBytes)}</span>
-        <span class="text-sm ml-2" style="color:${config.text_color}66">used of 1 GiB free</span>
-      </div>
-      <span class="font-bold text-lg" style="color:${levelColors[st.level]}">${st.totalPct.toFixed(2)}%</span>
-    </div>
-    <!-- Progress bar -->
-    <div style="width:100%;height:14px;background:${config.text_color}15;border-radius:8px;overflow:hidden">
-      <div style="height:100%;width:${Math.min(st.totalPct,100)}%;border-radius:8px;background:${levelColors[st.level]};transition:width 0.6s ease"></div>
-    </div>
-    <div class="flex justify-between mt-1" style="font-size:11px;color:${config.text_color}44">
-      <span>0 B</span>
-      <span style="color:${config.text_color}66">⚠️ 512 MB (50%)</span>
-      <span style="color:#c62828">🚨 819 MB (80%)</span>
-      <span>1 GiB</span>
-    </div>
-    <p class="text-xs mt-3" style="color:${config.text_color}44">Last scanned: ${new Date(st.scannedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</p>
-  </div>
-
-  <!-- ── BREAKDOWN BY COLLECTION ── -->
-  <div class="rounded-2xl overflow-hidden mb-5" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
-    <div class="px-5 py-4" style="border-bottom:1px solid ${config.text_color}11">
-      <h3 class="font-bold" style="color:${config.text_color}">Breakdown by Collection</h3>
-      <p class="text-xs mt-1" style="color:${config.text_color}55">Size estimated from document JSON. Attachments stored as base64 are listed separately.</p>
-    </div>
-    ${st.results.map(r=>{
-      const barPct = st.totalBytes > 0 ? (r.bytes / st.totalBytes) * 100 : 0;
-      const pctOfFree = (r.bytes / FREE_BYTES * 100).toFixed(3);
-      return `
-      <div class="px-5 py-4" style="border-bottom:1px solid ${config.text_color}08">
-        <div class="flex items-center gap-3 mb-2">
-          <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background:${r.color}22">
-            <i data-lucide="${r.icon}" style="width:15px;height:15px;color:${r.color}"></i>
-          </div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-semibold text-sm" style="color:${config.text_color}">${r.label}</span>
-              <span class="font-bold text-sm shrink-0" style="color:${r.skipped?'#aaa':config.text_color}">${r.skipped?'No permission':formatBytes(r.bytes)}</span>
-            </div>
-            <div class="flex items-center gap-2 mt-0.5" style="font-size:11px;color:${config.text_color}55">
-              ${r.skipped?'<span style="color:#aaa">⚠ Collection skipped (insufficient Firestore permissions)</span>':`<span>${r.docCount} document${r.docCount!==1?'s':''}</span><span>·</span><span>${pctOfFree}% of free limit</span>${r.attachmentCount>0?`<span>·</span><span style="color:#e65100">📎 ${r.attachmentCount} attachment${r.attachmentCount!==1?'s':''} (${formatBytes(r.attachmentBytes)})</span>`:''}`}
-            </div>
-          </div>
-        </div>
-        <div style="width:100%;height:7px;background:${config.text_color}11;border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${r.skipped?0:barPct.toFixed(1)}%;background:${r.color};border-radius:4px;transition:width 0.5s ease"></div>
-        </div>
-      </div>`;
-    }).join('')}
-  </div>
-
-  <!-- ── TIPS TO REDUCE USAGE ── -->
-  <div class="p-5 rounded-2xl" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
-    <h3 class="font-bold mb-3" style="color:${config.text_color}">💡 Tips to Reduce Storage</h3>
-    <div class="space-y-2" style="font-size:13px;color:${config.text_color}77;line-height:1.7">
-      <div>📎 <strong>Attachments are the biggest contributors.</strong> Each image stored as base64 in Firestore can be 100–200KB. Students are limited to 3 per consultation and 5 total.</div>
-      <div>🗂️ <strong>Delete resolved consultations</strong> once sessions are done — their chat histories accumulate fast.</div>
-      <div>📋 <strong>Old postings</strong> with long chat threads should be pruned periodically.</div>
-      <div>🔄 <strong>Run scans regularly</strong> to catch growth early — especially after busy periods.</div>
-      <div>🔗 <strong>For larger scale:</strong> consider moving attachments to Firebase Storage (separate from Firestore) which has a 5 GB free tier.</div>
-    </div>
-  </div>
-  `:''}
-</div>`;
-      }
 
       // ── SETTINGS ──
       if(activeSidebarItem==='Settings') return `
