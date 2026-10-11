@@ -82,6 +82,14 @@ Also editable near the top of the v10 section in `app.js`: `SCHOOL_HOURS` and `D
 - **Monthly report** shows counts by grade level, by strand and by age, and the CSV has Strand and Age columns.
 - Landing page and About text use the paper's title wording.
 
+## What was fixed in v14 (phones)
+
+- Nothing is wider than the screen any more: long words, links and e-mail addresses wrap, and fields shrink so the Send / Save button beside them stays inside the card (chat rows, Refer Student, the date and time pickers).
+- Bottom bar shows at most five items: four pages plus **More**, which opens the full menu. The page you are on is always shown.
+- The small pill controls ("Assign to me", "Saved replies…", "Remind me to follow up", the filters) are the same size on a phone and easier to tap.
+- Full-width buttons have their label centred again.
+- Mood faces share the row on narrow phones.
+
 ## Server-side reminders — optional setup
 `/api/remind` emails and pushes the guidance office about High (30 min) and Medium (4 h) items nobody has answered,
 at most once every 3 hours per item. It does nothing until you add two variables on Vercel:

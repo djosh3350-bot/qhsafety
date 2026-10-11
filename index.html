@@ -51,7 +51,7 @@
     img,svg,video{display:block;max-width:100%}
     img,video{height:auto}
     button,input,select,textarea{font:inherit;color:inherit;letter-spacing:inherit;background:transparent}
-    button{cursor:pointer;text-align:inherit}
+    button{cursor:pointer}
     textarea{resize:vertical}
     .mono{font-family:'Space Mono',ui-monospace,monospace}
 .absolute{position:absolute}
@@ -215,12 +215,33 @@
     }
     .mobile-bottom-nav::-webkit-scrollbar { display:none; } /* Chrome/Safari */
     .mobile-bottom-nav button {
-      flex:1 0 56px; min-width:56px; height:100%; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      flex:1 1 0; min-width:0; height:100%; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
       background:none; border:none; cursor:pointer; padding:6px 4px; color:#ffffffa6;
       font-size:10px; font-family:'DM Sans',sans-serif; transition:color 0.2s;
     }
     .mobile-bottom-nav button.active { color:#ffee58; }
     .mobile-bottom-nav button svg { width:22px; height:22px; }
+    .mobile-bottom-nav .nav-label { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* Phone layout safety net: long words, links and e-mail addresses wrap instead of widening the page;
+       fields and flexible columns may shrink, so the button beside them stays inside the card. */
+    #main-scroll, .qh-sheet, #qh-modal-overlay { overflow-wrap:anywhere; }
+    #main-scroll { overflow-x:hidden; }
+    #main-scroll input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]), #main-scroll textarea, #main-scroll select { min-width:0; max-width:100%; }
+    #main-scroll [style*="flex:1"], #main-scroll .flex-1 { min-width:0; }
+    #main-scroll [style*="grid-template-columns"] > * { min-width:0; }
+    #main-scroll img, #main-scroll video { max-width:100%; height:auto; }
+    #main-scroll pre { white-space:pre-wrap; }
+    #main-scroll table { max-width:100%; }
+    /* Small pill buttons and pill dropdowns ("Assign to me", "Saved replies…", "Remind me to follow up") are one
+       family: same size on a phone, big enough to tap. iPhones keep 16px on the dropdowns, otherwise Safari
+       zooms the page when one is opened. */
+    @media (max-width:767px) {
+      body .assign-btn { padding:7px 12px; font-size:12px; white-space:normal; max-width:100%; text-align:left; }
+      body select.assign-btn, body select.filter-chip { font-size:12px !important; max-width:100%; }
+      body select.assign-btn { white-space:nowrap; }
+      body .filter-chip { padding:8px 13px; }
+    }
+    @supports (-webkit-touch-callout:none) { @media (max-width:767px) { body select.assign-btn, body select.filter-chip { font-size:16px !important; } } }
     .mobile-topbar {
       position:sticky; top:0; z-index:90; background:#2c3e50;
       display:flex; align-items:center; justify-content:space-between;
@@ -474,7 +495,7 @@ input::placeholder, textarea::placeholder {
   </div>
   <div id="app" class="h-full w-full"><div id="qh-boot" data-key="boot"><span class="qh-logo" style="font-size:26px"><svg width="44" height="44" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z" fill="var(--lm-a)" stroke="var(--lm-a)" stroke-width="3" stroke-linejoin="round"/><path d="M24 6.9 37.6 11.9v10.6c0 8.5-5.5 15.3-13.6 18.6-8.1-3.3-13.6-10.1-13.6-18.6V11.9Z" fill="none" stroke="var(--lm-b)" stroke-width="1.1" stroke-linejoin="round" opacity=".5"/><g fill="none" stroke="var(--lm-b)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="18" cy="21.9" rx="4.2" ry="5.1"/><path d="M19.9 24.3l2.5 3"/><path d="M27.2 17.1v9.6M34.2 17.1v9.6M27.2 21.9h7"/></g></svg><span><b>QH</b>safety</span></span></div></div>
     <noscript><p style="padding:24px;text-align:center">QHsafety needs JavaScript to run. Please enable it and reload.</p></noscript>
-    <script defer src="/risk-engine.js?v=13"></script>
-    <script defer src="/app.js?v=13"></script>
+    <script defer src="/risk-engine.js?v=14"></script>
+    <script defer src="/app.js?v=14"></script>
 </body>
 </html>
