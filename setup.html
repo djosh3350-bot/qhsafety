@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>QHsafety · Account Setup</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f8f6f1;color:#2c3e50;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .card{background:#fff;border-radius:16px;box-shadow:0 8px 28px rgba(0,0,0,.08);padding:28px;width:100%;max-width:420px}
+  h1{font-size:22px;margin-bottom:4px}h1 span{background:#ffee58;padding:0 4px;border-radius:4px}
+  p.sub{font-size:13px;color:#6b7a89;margin-bottom:20px;line-height:1.5}
+  label{display:block;font-size:13px;font-weight:600;margin:14px 0 6px}
+  input,select{width:100%;padding:12px;border:2px solid #e3e6ea;border-radius:10px;font-size:15px;background:#fff;color:inherit;outline:none}
+  input:focus,select:focus{border-color:#2c3e50}
+  button{width:100%;margin-top:20px;padding:13px;border:0;border-radius:10px;background:#ffee58;color:#2c3e50;font-weight:700;font-size:15px;cursor:pointer}
+  button:disabled{opacity:.6;cursor:wait}
+  #msg{margin-top:16px;padding:12px;border-radius:10px;font-size:13px;line-height:1.5;display:none}
+  .ok{background:#e8f5e9;color:#1b5e20}.err{background:#fdecea;color:#b71c1c}
+  .row{display:flex;gap:8px;align-items:center}.row input{flex:1}
+  .row button{width:auto;margin:0;padding:12px 14px;background:#eceff1;font-size:13px}
+  small{display:block;margin-top:14px;font-size:11px;color:#8a97a3;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1><span>QH</span>safety setup</h1>
+  <p class="sub">Create a Guidance or Admin account, or repair the role of an existing one.</p>
+
+  <label for="role">Account type</label>
+  <select id="role"><option value="guidance">Guidance Counselor</option><option value="admin">Administrator</option></select>
+
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="off" placeholder="name@example.com">
+
+  <label for="pw">Password (min 6 characters)</label>
+  <div class="row"><input id="pw" type="password" autocomplete="new-password"><button type="button" id="show">Show</button></div>
+
+  <button id="go">Create account</button>
+  <div id="msg"></div>
+  <small>Anyone who finds this page can use it. Delete <b>setup.html</b> and <b>api/setup-account.js</b> right after you create your account.</small>
+</div>
+<script>
+(function(){
+  var $=function(i){return document.getElementById(i)},msg=$('msg');
+  function show(t,c){msg.className=c;msg.textContent=t;msg.style.display='block'}
+  $('show').onclick=function(){var p=$('pw');p.type=p.type==='password'?'text':'password';this.textContent=p.type==='password'?'Show':'Hide'};
+  $('go').onclick=async function(){
+    var b=this;msg.style.display='none';
+    var body={role:$('role').value,email:$('email').value,password:$('pw').value};
+    if(!body.email||!body.password){show('Fill in every field.','err');return}
+    b.disabled=true;b.textContent='Working…';
+    try{
+      var r=await fetch('/api/setup-account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      var d=await r.json().catch(function(){return{}});
+      if(r.ok&&d.ok){show((d.existed?'Existing account updated: ':'Account created: ')+d.email+' is now '+d.role+'. You can log in from the main page.','ok');$('pw').value=''}
+      else show(d.error||'Something went wrong.','err');
+    }catch(e){show('Network error. Check your connection.','err')}
+    b.disabled=false;b.textContent='Create account';
+  };
+})();
+</script>
+</body>
+</html>
