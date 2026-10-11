@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "functions": {
+    "api/analyze.js": { "includeFiles": "risk-engine.js" }
+  },
   "headers": [
     {
       "source": "/(.*)",
@@ -7,6 +10,12 @@
         { "key": "X-Content-Type-Options", "value": "nosniff" },
         { "key": "X-Frame-Options", "value": "DENY" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    },
+    {
+      "source": "/(app\\.js|risk-engine\\.js|index\\.html|)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
       ]
     },
     {

@@ -4,18 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#2c3e50">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c3e50'/%3E%3Ctext x='32' y='42' font-family='monospace' font-weight='700' font-size='26' text-anchor='middle' fill='%23ffee58'%3EQH%3C/text%3E%3C/svg%3E">
   <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="description" content="QHsafety — a private line between Quirino High School students and the guidance office.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://firestore.googleapis.com">
+  <link rel="preconnect" href="https://identitytoolkit.googleapis.com">
   <title>QHsafety</title>
  
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
-  <script defer src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
 <script>
+  try { if (localStorage.getItem('qh_dark_mode') === 'true') document.documentElement.setAttribute('data-theme', 'dark'); } catch (e) {}
   window.OneSignalDeferred = window.OneSignalDeferred || [];
   OneSignalDeferred.push(async function(OneSignal) {
     await OneSignal.init({
@@ -147,6 +153,8 @@
 .w-9{width:2.25rem}
 .w-full{width:100%}
 .hover\:opacity-80:hover{opacity:.8}
+.space-y-4>*+*{margin-top:1rem}
+.space-y-2>*+*{margin-top:.5rem}
 @media(min-width:640px){.sm\:flex-row{flex-direction:row}}
 @media(min-width:768px){.md\:block{display:block}}
 @media(min-width:768px){.md\:flex-row{flex-direction:row}}
@@ -187,8 +195,8 @@
     .desktop-sidebar-user { margin:12px; padding:12px; border-radius:12px; background:rgba(255,255,255,0.07); display:flex; align-items:center; gap:10px; }
     .desktop-sidebar-nav { flex:1; padding:8px 0; overflow-y:auto; }
     .desktop-sidebar-footer { border-top:1px solid rgba(255,255,255,0.07); padding:4px 0; }
-    .card-hover { transition:transform 0.2s; }
-    @media (hover:hover){ .card-hover:hover { transform:translateY(-2px); } }
+    .card-hover { transition:box-shadow .18s ease, border-color .18s ease; }
+    @media (hover:hover){ .card-hover:hover { box-shadow:0 6px 18px rgba(44,62,80,.10); } }
     .fade-in { animation:fadeIn 0.3s ease; }
     @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     .mobile-bottom-nav {
@@ -201,8 +209,8 @@
     }
     .mobile-bottom-nav::-webkit-scrollbar { display:none; } /* Chrome/Safari */
     .mobile-bottom-nav button {
-      flex:0 0 auto; min-width:64px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
-      background:none; border:none; cursor:pointer; padding:6px 8px; color:#ffffff66;
+      flex:1 0 56px; min-width:56px; height:100%; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+      background:none; border:none; cursor:pointer; padding:6px 4px; color:#ffffffa6;
       font-size:10px; font-family:'DM Sans',sans-serif; transition:color 0.2s;
     }
     .mobile-bottom-nav button.active { color:#ffee58; }
@@ -226,25 +234,25 @@
   }
   #qh-modal-overlay.open { opacity:1;pointer-events:all;visibility:visible; }
   #qh-modal-box {
-    background:#fff;border-radius:20px;padding:32px;max-width:420px;width:100%;
+    background:var(--qh-surface);border-radius:20px;padding:28px;max-width:420px;width:100%;max-height:calc(100dvh - 48px);overflow-y:auto;
     box-shadow:0 24px 48px rgba(0,0,0,0.22);transform:scale(0.95);
     transition:transform 0.2s;position:relative;
   }
   #qh-modal-overlay.open #qh-modal-box { transform:scale(1); }
-  .qh-modal-icon { width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 16px; }
-  .qh-modal-title { font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:#2c3e50; }
-  .qh-modal-body { font-size:14px;text-align:center;color:#5a6a7a;line-height:1.6;margin-bottom:24px; }
-  .qh-modal-input { width:100%;padding:12px 14px;border:2px solid #e0e0e0;border-radius:10px;font-size:15px;margin-bottom:20px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color 0.2s; }
+  .qh-modal-icon { width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 14px; }
+  .qh-modal-title { font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:var(--qh-text); }
+  .qh-modal-body { font-size:14px;text-align:center;color:var(--qh-muted);line-height:1.6;margin-bottom:24px;overflow-wrap:anywhere; }
+  .qh-modal-input { width:100%;padding:12px 14px;border:2px solid var(--qh-line);border-radius:10px;font-size:16px;margin-bottom:20px;font-family:'DM Sans',sans-serif;outline:none;transition:border-color 0.2s;color:var(--qh-text);background:var(--qh-bg); }
   .qh-modal-input:focus { border-color:#ef5350; }
   .qh-modal-btns { display:flex;gap:10px;justify-content:center; }
-  .qh-modal-btn { flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:700;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;transition:all 0.15s; }
+  .qh-modal-btn { flex:1;padding:12px;border-radius:10px;font-size:14px;font-weight:700;border:none;cursor:pointer;text-align:center;font-family:'DM Sans',sans-serif;transition:all 0.15s; }
   .qh-modal-btn:active { transform:scale(0.97); }
   .qh-modal-btn-primary { background:#ef5350;color:#fff; }
   .qh-modal-btn-primary:hover { background:#c62828; }
   .qh-modal-btn-success { background:#66bb6a;color:#fff; }
   .qh-modal-btn-success:hover { background:#388e3c; }
-  .qh-modal-btn-secondary { background:#f0f0f0;color:#5a6a7a; }
-  .qh-modal-btn-secondary:hover { background:#e0e0e0; }
+  .qh-modal-btn-secondary { background:var(--qh-chip);color:var(--qh-text); }
+  .qh-modal-btn-secondary:hover { filter:brightness(.95); }
   
   @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
 
@@ -276,25 +284,95 @@ input::placeholder, textarea::placeholder {
 }
   /* Low-end devices / user preference: kill decorative motion */
   html.lite *,html.lite *::before,html.lite *::after{animation:none !important;transition:none !important}
+  html.lite #qh-boot>span{animation:none !important}
   html.lite .guidance-high-risk::after,html.lite .guidance-high-priority::after,html.lite .guidance-critical::after,html.lite .guidance-medium-risk::after{opacity:.55}
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important}}
   /* long lists: skip layout/paint of off-screen cards */
   [data-post-id]{content-visibility:auto;contain-intrinsic-size:auto 220px}
-  #qh-boot{height:100%;display:flex;align-items:center;justify-content:center;background:#f8f6f1;color:#2c3e50;font-weight:700;font-size:20px}
+  #qh-boot{height:100%;display:flex;align-items:center;justify-content:center;background:var(--qh-bg);color:var(--qh-text);font-weight:700;font-size:20px;font-family:'Space Mono',ui-monospace,monospace}
+  #qh-boot>span{animation:bootPulse 1.4s ease-in-out infinite}
+  @keyframes bootPulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+  /* ── theme tokens (for the pieces that live outside the app root: modal, toasts, splash) ── */
+  :root{--qh-bg:#f8f6f1;--qh-surface:#fff;--qh-text:#2c3e50;--qh-muted:#5a6a7a;--qh-line:#e0e0e0;--qh-chip:#f0f0f0;--qh-ring:rgba(44,62,80,.6)}
+  :root[data-theme="dark"]{--qh-bg:#1a1a1a;--qh-surface:#2d2d2d;--qh-text:#e6e6e6;--qh-muted:#b4b4b4;--qh-line:#444;--qh-chip:#3a3a3a;--qh-ring:rgba(255,238,88,.85)}
+  body{background:var(--qh-bg)}
+  :root[data-theme="dark"] .grid-bg{background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px)}
+
+  /* full-height screens that respect mobile browser toolbars */
+  .screen{height:100vh;height:100dvh}
+  .hero{padding-top:56px;padding-bottom:48px}
+  .hero-title{font-size:clamp(34px,9vw,48px)}
+  .role-row{width:100%;max-width:520px}
+  .role-row>button{flex:1;padding-left:12px;padding-right:12px;white-space:nowrap}
+  svg[data-lucide]{flex-shrink:0}
+  .quick-google{width:100%;max-width:300px;margin-top:8px}
+  @media(min-width:768px){.hero{padding-top:80px;padding-bottom:64px}}
+
+  /* keyboard focus is always visible; mouse clicks stay clean */
+  :focus{outline:none}
+  :focus-visible{outline:2px solid var(--qh-ring);outline-offset:2px}
+  input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--qh-ring);outline-offset:0}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  button:disabled:active{transform:none !important}
+  /* 16px inputs stop iOS from zooming the page on focus */
+  @media(max-width:767px){input[type="text"],input[type="email"],input[type="password"],input[type="tel"],input[type="url"],input[type="date"],input[type="time"],textarea,select{font-size:16px !important}}
+
+  .btn-row{display:flex;align-items:center;justify-content:center;gap:8px;text-align:center}
+  .btn-danger-ghost{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;color:#c62828;background:transparent;border:1px solid rgba(198,40,40,.35);white-space:nowrap}
+  .btn-danger-ghost:hover{background:rgba(198,40,40,.08)}
+  :root[data-theme="dark"] .btn-danger-ghost{color:#ef9a9a;border-color:rgba(239,154,154,.4)}
+
+  .google-btn{display:flex;align-items:center;justify-content:center;gap:10px;padding:11px 16px;border-radius:8px;background:#fff;color:#1f1f1f;border:1px solid #dadce0;font-weight:600;font-size:14px}
+  @media(hover:hover){.google-btn:hover{background:#f6f7f8}}
+  .or-line{display:flex;align-items:center;gap:12px;margin:16px 0;font-size:12px}
+  .or-line::before,.or-line::after{content:'';flex:1;height:1px;background:currentColor;opacity:.35}
+
+  .qh-switch{position:relative;width:46px;height:26px;border-radius:13px;background:#9aa3ab;flex-shrink:0;transition:background-color .15s ease}
+  .qh-switch.on{background:#f9a825}
+  .qh-switch>span{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s ease}
+  .qh-switch.on>span{transform:translateX(20px)}
+
+  .qh-spin{width:16px;height:16px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;display:inline-block;animation:spin .7s linear infinite;flex-shrink:0}
+  html.lite .qh-spin{animation:spin .7s linear infinite !important}
+
+  #qh-toasts{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:9998;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;width:max-content;max-width:calc(100vw - 32px)}
+  @media(min-width:768px){#qh-toasts{bottom:28px}}
+  .qh-toast{background:#2c3e50;color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:999px;box-shadow:0 6px 20px rgba(0,0,0,.25);opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease;text-align:center}
+  .qh-toast.show{opacity:1;transform:none}
+  .qh-toast-success{background:#2e7d32}
+  .qh-toast-error{background:#c62828}
+  :root[data-theme="dark"] .qh-toast{background:#f1f1f1;color:#1a1a1a}
+  :root[data-theme="dark"] .qh-toast-success{background:#a5d6a7;color:#10310f}
+  :root[data-theme="dark"] .qh-toast-error{background:#ef9a9a;color:#3b0a0a}
+
+  .qh-viewer{position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}
+  .qh-viewer img{max-width:100%;max-height:100%;border-radius:8px}
+
+  /* chat boxes stay pinned to the newest message without any scripting */
+  .chat-scroll{display:flex;flex-direction:column-reverse;overflow-y:auto}
+  .chat-list{display:flex;flex-direction:column;gap:8px}
+
+  /* thin, quiet scrollbars inside cards */
+  #app *{scrollbar-width:thin;scrollbar-color:rgba(128,128,128,.35) transparent}
+  details>summary::-webkit-details-marker{display:none}
+  a{overflow-wrap:anywhere}
   </style>
 </head>
 <body class="h-full w-full overflow-auto">
   <!-- Custom Modal -->
   <div id="qh-modal-overlay">
-    <div id="qh-modal-box">
+    <div id="qh-modal-box" role="dialog" aria-modal="true" aria-labelledby="qh-modal-title">
       <div class="qh-modal-icon" id="qh-modal-icon-wrap"></div>
       <div class="qh-modal-title" id="qh-modal-title"></div>
       <div class="qh-modal-body" id="qh-modal-body"></div>
-      <input class="qh-modal-input" id="qh-modal-input" style="display:none" placeholder="Type DELETE to confirm" />
+      <input class="qh-modal-input" id="qh-modal-input" aria-label="Confirmation text" autocomplete="off" style="display:none" placeholder="Type DELETE to confirm" />
       <div class="qh-modal-btns" id="qh-modal-btns"></div>
     </div>
   </div>
-  <div id="app" class="h-full w-full"><div id="qh-boot"><span><span style="color:#fbc02d">QH</span>safety</span></div></div>
-    <script defer src="/app.js"></script>
+  <div id="app" class="h-full w-full"><div id="qh-boot" data-key="boot"><span><span style="color:#fbc02d">QH</span>safety</span></div></div>
+    <noscript><p style="padding:24px;text-align:center">QHsafety needs JavaScript to run. Please enable it and reload.</p></noscript>
+    <script defer src="/risk-engine.js?v=8"></script>
+    <script defer src="/app.js?v=8"></script>
 </body>
 </html>

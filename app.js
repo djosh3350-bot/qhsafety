@@ -166,6 +166,7 @@
     let showLandingSettings=false, showForgotPassword=false, forgotPasswordEmail='', forgotPasswordError='', forgotPasswordSuccess='';
     let firestoreUnsubscribes=[];
     let isAnonymous=false;
+    let announcementBusy=false;
     let appLang = localStorage.getItem('qh_lang') || 'en';
     const app=document.getElementById('app');
 
@@ -177,7 +178,7 @@
         publish:'Publish', cancel:'Cancel', submit:'Submit', delete:'Delete',
         title:'Title', content:'Content', priority:'Priority Level', search:'Search postings...',
         low:'Low', medium:'Medium', high:'High',
-        postGuide:'📋 <strong>Posting Guide:</strong> Share what you\'re going through honestly. You can post anonymously. The guidance office may reply with support directly on your post.',
+        postGuide:'<strong>Posting guide:</strong> Share what you\'re going through honestly. You can post anonymously. The guidance office may reply with support directly on your post.',
         noPostings:'No postings yet', noConsultations:'No consultations yet', noFeedback:'No feedback yet',
         by:'By', markResolved:'Mark Resolved', markDone:'Mark Done',
         appearance:'Appearance', darkMode:'Dark Mode', language:'Language', account:'Account',
@@ -190,9 +191,9 @@
         dashHint_guidance:'Monitor student postings, manage consultations, and review feedback.',
         dashHint_admin:'View feedback, logs, and manage settings.',
         guidanceReply:'Reply to this posting:', send:'Send',
-        msgFromGuidance:'💬 Message from Guidance Office',
+        msgFromGuidance:'Message from Guidance Office',
         reason:'Reason / Topic', descConcern:'Describe your concern in detail...',
-        submitRequest:'Submit Request', resolved:'✅ Resolved',
+        submitRequest:'Submit Request', resolved:'Resolved',
         rating:'Rating', writeFeedback:'Write your feedback...',
         deleteAllPostings:'Delete All Postings', deleteAllConsult:'Delete All Consultations', deleteAllFeedback:'Delete All Feedback',
         signedInAs:'Signed in as Anonymous',
@@ -208,6 +209,7 @@
         aboutDesc:'Supporting Quirino High School students through accessible guidance consultations, safety reporting, and proactive mental health awareness.',
         langSetting:'Language / Wika',
         logs:'Logs', users:'Users', by:'By', markDone:'Mark Done', storage:'Storage',
+        'low-medium':'Low-Medium', loading:'Loading…', noMatch:'No postings match your search.',
       },
       tl: {
         postings:'Mga Post', consultations:'Mga Konsultasyon', feedback:'Feedback',
@@ -216,7 +218,7 @@
         publish:'I-publish', cancel:'Kanselahin', submit:'Isumite', delete:'Burahin',
         title:'Pamagat', content:'Nilalaman', priority:'Antas ng Prioridad', search:'Hanapin ang post...',
         low:'Mababa', medium:'Katamtaman', high:'Mataas',
-        postGuide:'📋 <strong>Gabay sa Pag-post:</strong> Ibahagi ang iyong nararamdaman nang tapat. Maaari kang mag-post nang hindi nagpapakilala. Maaaring sumagot ang gabay ng paaralan dito.',
+        postGuide:'<strong>Gabay sa pag-post:</strong> Ibahagi ang iyong nararamdaman nang tapat. Maaari kang mag-post nang hindi nagpapakilala. Maaaring sumagot ang gabay ng paaralan dito.',
         noPostings:'Wala pang mga post', noConsultations:'Wala pang konsultasyon', noFeedback:'Wala pang feedback',
         by:'Ni', markResolved:'Markahan bilang Nalutas', markDone:'Tapos Na',
         appearance:'Hitsura', darkMode:'Madilim na Mode', language:'Wika', account:'Account',
@@ -229,9 +231,9 @@
         dashHint_guidance:'Subaybayan ang mga post ng estudyante, pamahalaan ang mga konsultasyon.',
         dashHint_admin:'Tingnan ang feedback, logs, at pamahalaan ang mga setting.',
         guidanceReply:'Sumagot sa post na ito:', send:'Ipadala',
-        msgFromGuidance:'💬 Mensahe mula sa Gabay ng Paaralan',
+        msgFromGuidance:'Mensahe mula sa Gabay ng Paaralan',
         reason:'Dahilan / Paksa', descConcern:'Ilarawan ang iyong alalahanin nang detalyado...',
-        submitRequest:'Isumite ang Kahilingan', resolved:'✅ Nalutas',
+        submitRequest:'Isumite ang Kahilingan', resolved:'Nalutas',
         rating:'Rating', writeFeedback:'Isulat ang iyong feedback...',
         deleteAllPostings:'Burahin Lahat ng Post', deleteAllConsult:'Burahin Lahat ng Konsultasyon', deleteAllFeedback:'Burahin Lahat ng Feedback',
         signedInAs:'Naka-sign in bilang Anonymous',
@@ -247,600 +249,163 @@
         aboutDesc:'Sinusuportahan ang mga estudyante ng Quirino High School sa pamamagitan ng accessible na gabay, pag-uulat ng kaligtasan, at kamalayan sa mental health.',
         langSetting:'Language / Wika',
         logs:'Mga Log', users:'Mga User', storage:'Storage',
+        'low-medium':'Mababa-Katamtaman', loading:'Naglo-load…', noMatch:'Walang post na tumutugma.',
       }
     };
     function tr(key) { return (T[appLang]||T.en)[key] || T.en[key] || key; }
 
 
-    // ── ADVANCED AI RISK DETECTION (Claude API + Regex fallback) ──
+    // ── RISK DETECTION ──
+// The rules themselves live in risk-engine.js, one file shared by this page, the server (/api/analyze)
+// and the tests (node tests/risk.test.js) so the three can never disagree.
+const { analyzeRisk, detectThreatToOthers, containsProfanity, maskProfanity, languageGate, applyFloors, levelRank, maxLevel } = window.QHRisk;
+const detectRiskRegex = analyzeRisk;
+const detectRisk = analyzeRisk;
 
-// Claude API-powered risk analysis — returns same shape as detectRisk
-async function detectRiskAI(text) {
-  const regexRisk = detectRiskRegex(text);
+// Second opinion from the server-side AI. Never throws and never hangs: on any failure the local rules stand.
+async function detectRiskAI(text, local) {
+  local = local || analyzeRisk(text);
   let ctrl = null, timer = null;
   try {
     ctrl = ('AbortController' in window) ? new AbortController() : null;
-    if (ctrl) timer = setTimeout(() => ctrl.abort(), 15000); // never hang on slow networks
-    const response = await fetch("/api/analyze", {
-      method: "POST",
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), 12000);
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
       headers: await authHeaders(),
       body: JSON.stringify({ text: String(text || '').slice(0, 1800) }),
       signal: ctrl ? ctrl.signal : undefined
     });
-    if (!response.ok) {
-      console.warn('[QHsafety] AI analyze error:', response.status);
-      return regexRisk;
-    }
+    if (!response.ok) { console.warn('[QHsafety] AI analyze error:', response.status); return local; }
     const parsed = await response.json();
-    if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
-      parsed.flagged = (typeof parsed.flagged === 'boolean') ? parsed.flagged : (parsed.score >= 3 || parsed.level !== 'Low');
-      // Hard floor: a threat to harm others is ALWAYS High, whatever the AI says
-      if (detectThreatToOthers(text)) {
-        parsed.level = 'High';
-        parsed.score = Math.max(parsed.score, 16);
-        parsed.flagged = true;
-        parsed.reasons = [...new Set([...(parsed.reasons || []), 'Threat of violence against others (A4)'])];
-        return parsed;
-      }
-      // Safety net: if the local rules see a High risk but the AI says Low, never let it pass silently
-      if (regexRisk.level === 'High' && (parsed.level === 'Low' || parsed.level === 'Low-Medium')) {
-        parsed.level = 'Medium';
-        parsed.score = Math.max(parsed.score, 7);
-        parsed.flagged = true;
-        parsed.reasons = [...new Set([...(parsed.reasons || []), ...regexRisk.reasons])];
-      }
-      return parsed;
+    if (parsed && typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
+      // The AI may raise or lower ordinary scores; a clear threat stays High and a local High never drops below Medium.
+      return applyFloors(text, parsed, local);
     }
-    console.warn('[QHsafety] Unexpected AI response shape:', parsed);
-  } catch(e) {
-    console.warn('[QHsafety] AI risk detection fallback to regex:', e && e.name);
+    console.warn('[QHsafety] Unexpected AI response shape');
+  } catch (e) {
+    console.warn('[QHsafety] AI risk detection unavailable, using local rules:', e && e.name);
   } finally {
     if (timer) clearTimeout(timer);
   }
-  return regexRisk;
+  return local;
 }
 
-// The original regex engine — used as fallback when API is unavailable
-function detectRisk(text) {
-  return detectRiskRegex(text);
+// A student's own "High priority" only stands when the content is rated High.
+function priorityFor(chosen, risk) {
+  const p = chosen || 'Medium';
+  return (p === 'High' && risk.level !== 'High') ? 'Medium' : p;
 }
 
-function detectThreatToOthers(text) {
-  const t = String(text || '').toLowerCase();
-  const patterns = [
-    // English: stated intent to harm others ("myself" is excluded - that is self-harm, handled elsewhere)
-    /\b(i|we)\s*(will|'ll|'?m going to|am going to|'?m gonna|am gonna|gonna|going to|want to|wanna|plan to|am planning to|'?m planning to|should|might|could|can)\s+(kill|murder|shoot|stab|massacre|slaughter|bomb|blow up|burn down|attack|hurt|harm|beat up|rape|poison)\b(?!\s*(my ?self|it\b|this (exam|test|quiz)|that (exam|test|quiz)|the (exam|test|quiz)))/i,
-    /\b(kill|murder|shoot|stab|massacre|slaughter)\s+(all|every ?one|every ?body|them|him|her|you|some ?one|some ?body|any ?one|students?|teachers?|people|classmates?|kids|everyone)\b/i,
-    /\b(shoot(ing)? up|bomb(ing)?|blow(ing)? up|burn(ing)? down|attack(ing)?)\s+(the |this |our |my )?(school|campus|classroom|class|canteen|gym|building)\b/i,
-    /\bschool shooting\b|\bmass (shooting|murder|killing)\b|\bmake them pay\b/i,
-    // Tagalog / Taglish
-    /\b(papatayin|patayin|susugatan|sasaksakin|sasaksak|babarilin|bubugbugin|sasaktan|sisirain|pasasabugin)\s+ko\b(?!\s+(na\s+)?(ang\s+)?(sarili|sarili ko))/i,
-    /\b(papatay|mamamatay[- ]?tao|mamamaril|mamaril|manaksak|manakit|mananakit|pumatay)\b(?!\s+ng\s+sarili)/i,
-    /\bpapatay\s+(ako|ng)\b/i,
-  ];
-  return patterns.some(p => p.test(t));
+// Email + push to the guidance office. Fire-and-forget: the student never waits on it.
+function alertGuidance(kind, authorLabel, heading, body, risk, id) {
+  notifyGuidanceOfHighRisk(kind, authorLabel, heading, body, risk.score, risk.level, risk.reasons).catch(() => {});
+  sendOneSignalPush(
+    `🚨 ${risk.level.toUpperCase()} RISK ${kind.toUpperCase()} — AI Score: ${risk.score}`,
+    `${authorLabel}: "${heading}" — ${(risk.reasons || []).slice(0, 2).join(', ')}`,
+    id, kind === 'Posting' ? 'posting' : 'consultation', risk.level, risk.score, risk.reasons
+  ).catch(() => {});
+  addLog(`🚨 ${risk.level}-risk ${kind.toLowerCase()} alert sent`, authorLabel, 'warning');
 }
 
-function detectRiskRegex(text) {
-  if (!text) return { score: 0, level: "Low", flagged: false, reasons: [] };
-
-  const t = text.toLowerCase().trim();
-  let score = 0;
-  let reasons = [];
-
-  // === THREAT TO OTHERS (homicidal ideation) — always High ===
-  if (detectThreatToOthers(t)) {
-    score += 14;
-    reasons.push('Threat of violence against others (A4)');
+// Runs AFTER the item is already saved and on screen. A local High alerts at once;
+// everything else waits for the AI's verdict so counselors are not paged for nothing.
+async function refineRiskInBackground(col, item, text, local, kind, heading, body, chosenPriority) {
+  const authorLabel = item.author;
+  let alerted = false;
+  const alertOnce = (risk) => { if (alerted) return; alerted = true; alertGuidance(kind, authorLabel, heading, body, risk, item.id); };
+  if (local.level === 'High') alertOnce(local);
+  const risk = await detectRiskAI(text, local);
+  if (risk.level !== local.level || risk.score !== local.score || risk.reasons.join('|') !== local.reasons.join('|')) {
+    db.collection(col).doc(String(item.id)).update({
+      aiScore: risk.score, riskLevel: risk.level, flagged: !!risk.flagged, reasons: risk.reasons,
+      priority: priorityFor(chosenPriority, risk)
+    }).catch(e => console.warn('[QHsafety] could not store refined risk:', e && e.code));
   }
+  if (risk.level === 'High' || risk.level === 'Medium') alertOnce(risk);
+  if (risk.flagged) addLog('⚠ Flagged ' + kind.toLowerCase() + ' (' + ((risk.reasons || []).join(', ') || 'Sensitive content') + ')', authorLabel, 'warning');
+}
 
-  // === HIGH RISK: Direct suicidal / homicidal intent ===
-  const highRiskPatterns = [
-    // English — suicidal
-    /i want to (hurt|kill|die|end it|hurt myself|kill myself|commit suicide)/i,
-    /i (will|gonna|going to) (kill myself|hurt myself|die|end it all|take my life)/i,
-    /i feel like (hurting|killing) myself/i,
-    /\b(kill|killing|hurt|hurting|harm|harming) (myself|my self)\b/i,
-    /\bi'?m (gonna|going to) (kill|hurt|end) (myself|it all)\b/i,
-    /i (might|should|could) (hurt|kill) myself/i,
-    /i can't (take|handle|do) this (anymore|no more)/i,
-    /i want to (disappear|not exist|be gone|cease to exist)/i,
-    /better off (dead|without me|gone)/i,
-    /no (point|reason|purpose) in (living|life|continuing)/i,
-    /i('m| am) done (with life|living|with everything)/i,
-    /please (just let me die|kill me|end my life)/i,
-    /i wish i (was|were|am) dead/i,
-    /i don't want to (be here|exist|live|wake up) anymore/i,
-    /end (it all|my life|my suffering|my pain|everything)/i,
-    /just (kill me|let me die|end it|make it stop)/i,
-    /i('ve| have) been (thinking about|considering|planning) (suicide|killing myself|ending my life)/i,
-    /what('s| is) the point (of|in) (living|going on|continuing)/i,
-    /i (can't|cannot) keep (going|living|doing this)/i,
-    /tired of (being alive|living|everything|waking up)/i,
-    /no (one|reason) to (live|go on|stay)/i,
-    /maybe (i should|it would be better if i) (just die|not wake up|disappear)/i,
-    /i don't (deserve|want) to (be alive|live|exist)/i,
-    /cutting (myself|my wrists|my arms|my skin)/i,
-    /i (have been|been) (cutting|burning|hurting|harming) (myself|my body)/i,
-    /marks (on|all over) (my arms|my wrists|my body|my legs)/i,
-    /self(-)?(harm|harming|injury|injuring)/i,
+// A student can reveal something serious in a chat reply long after the first post.
+// Chat messages are now checked too, and the item is raised (never lowered) when they do.
+function escalateFromChat(col, id, msg) {
+  if (currentRole !== 'student') return;
+  const r = analyzeRisk(msg);
+  if (levelRank(r.level) < levelRank('Medium')) return;
+  const list = col === 'postings' ? postings : consultationPostings;
+  const item = list.find(x => String(x.id) === String(id)) || {};
+  if (levelRank(r.level) <= levelRank(item.riskLevel)) return;      // already at this level — no second alarm
+  const reasons = [...new Set([...(item.reasons || []), ...r.reasons])];
+  const risk = { level: r.level, score: Math.max(Number(item.aiScore || 0), r.score), reasons };
+  db.collection(col).doc(String(id)).update({ riskLevel: risk.level, aiScore: risk.score, flagged: true, reasons }).catch(() => {});
+  const kind = col === 'postings' ? 'Posting' : 'Consultation';
+  alertGuidance(kind, item.author || (isAnonymous ? 'Anonymous' : currentUserEmail), (item.title || item.reason || 'Chat message'), msg, risk, id);
+}
 
-    // Tagalog — direct suicidal / wanting to die
-    /magp(a)?pakamatay (na)? ako/i,
-    /magpapatiwakal (na)? ako/i,
-    /papatayin ko (na)? (ang)? sarili ko/i,
-    /patayin (nyo|mo|na lang|ninyo|kayo) (na)? ako/i,
-    /gusto ko(ng)? (na)? (mamatay|magpakamatay|patayin ang sarili)/i,
-    /mamatay (na)? ako (sana|na lang|na)/i,
-    /sana (mamatay|patay|wala) na (ako|lang ako)/i,
-    /patay (na)? (sana)? ako/i,
-    /ayaw ko na(ng)? (mabuhay|ng buhay|umiral)/i,
-    /mas (mabuti|mainam|maganda|mabuti pa) (kung)? (patay|wala na|hindi na umiral) (na)? ako/i,
-    /wala nang (saysay|kwenta|dahilan) (para)? (mabuhay|sa buhay ko)/i,
-    /tapos na ako (sa buhay|sa lahat|na)/i,
-    /gusto ko(ng)? (maglaho|mawala na|hindi na umiral|mawala)/i,
-    /sawa na ako sa (buhay|lahat|mundo)/i,
-    /hindi ko na (kaya|kayang tiisin|kayang harapin) (ang)? (buhay|lahat|ito)/i,
-    /tulungan (nyo|mo|ninyo) (na)? akong (mamatay|magpakamatay)/i,
-    /gusto ko(ng)? (masaktan|patayin) (ang)? sarili ko/i,
-    /(sasaktan|papatayin|susugatan) ko (ang)? sarili ko/i,
-    /pakiramdam ko(ng)? gusto ko(ng)? (mamatay|masaktan ang sarili|mawala)/i,
-    /wala na(ng)? dahilan para (mabuhay|magpatuloy)/i,
-    /hindi na (ako)? (babalik|magpapatuloy|magigising)/i,
-    /ito na (ang)? (huli|katapusan|wakas) (ko|ng buhay ko)/i,
+// Language check used by every post, request and chat message. Returns the text to store, or null if refused.
+function passLanguageGate(text, risk) {
+  const g = languageGate(text, risk);
+  return g.block ? null : g.text;
+}
+const LANGUAGE_REFUSAL = 'That wording can\'t be posted. Please say it another way — if something is wrong, tell us what happened and it will go straight through.';
 
-    // Tagalog — asking others to harm them
-    /patayin (na)? (nyo|mo|ninyo) (na)? ako/i,
-    /saktan (na)? (nyo|mo|ninyo) (na)? ako/i,
-    /tulungan (nyo|mo) akong (mamatay|mawala)/i,
-  ];
-
-  highRiskPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 8;
-      reasons.push("Direct self-harm / suicidal intent");
+// Re-check stored items: anything saved before the threat rules existed is raised to High on load,
+// and guidance writes the correction back once. Memoised, so a snapshot of 150 items costs nothing on repeat.
+const _threatFixed = new Set();
+const _threatMemo = new Map();
+function upgradeThreatRisk(d, kind) {
+  try {
+    if (d.riskLevel === 'High') return d;
+    const txt = kind === 'posting' ? (d.title + ' ' + d.content) : (d.reason + ' ' + d.description);
+    const memoKey = kind + d.id + ':' + txt.length;
+    let isThreat = _threatMemo.get(memoKey);
+    if (isThreat === undefined) { isThreat = detectThreatToOthers(txt); if (_threatMemo.size > 2000) _threatMemo.clear(); _threatMemo.set(memoKey, isThreat); }
+    if (isThreat) {
+      d.riskLevel = 'High';
+      d.aiScore = Math.max(Number(d.aiScore || 0), 16);
+      d.flagged = true;
+      d.reasons = [...new Set([...(d.reasons || []), window.QHRisk.THREAT_REASON])];
+      const key = kind + d.id;
+      if (currentRole === 'guidance' && !_threatFixed.has(key)) {
+        _threatFixed.add(key);
+        const col = kind === 'posting' ? 'postings' : 'consultations';
+        db.collection(col).doc(String(d.id)).update({ riskLevel: 'High', aiScore: d.aiScore, flagged: true, reasons: d.reasons }).catch(()=>{});
+        try { notifyGuidanceOfHighRisk(kind === 'posting' ? 'Posting' : 'Consultation', d.author || 'Unknown', kind === 'posting' ? d.title : d.reason, kind === 'posting' ? d.content : d.description, d.aiScore, 'High', d.reasons).catch(()=>{}); } catch(e) {}
+      }
     }
-  });
+  } catch(e) {}
+  return d;
+}
 
-  // === MEDIUM-HIGH: Planning, methods, or specific means ===
-  const planPatterns = [
-    // English
-    /how to (kill myself|hurt myself|commit suicide|overdose)/i,
-    /(pill|knife|rope|jump|cut|bleed|overdose|poison|gun|hang).*(myself|suicide|die)/i,
-    /i have (a plan|the means|everything ready|a way)/i,
-    /i('ve| have) been (cutting|hurting|harming) myself/i,
-    /taking (too many|a lot of|all my) (pills|tablets|meds)/i,
-
-    // Tagalog — method or means
-    /paano (magpakamatay|masaktan ang sarili|magpatiwakal|mamatay)/i,
-    /(tableta|kutsilyo|lubid|hagdan|tumalon|magpugo|dumugo|lason|baril|bibitay).*(sarili|pagpapakamatay|mamatay)/i,
-    /may (plano|paraan|gamit|handa) na ako (para mamatay|para magpakamatay)/i,
-    /bibigyan ko (ng wakas|ng katapusan) (ang)? (sarili|buhay) ko/i,
-    /iinom (ng maraming|lahat ng) (gamot|tableta|pills)/i,
-    /handa na (ako)? (para|na) (mamatay|magpakamatay)/i,
-    /gagawin ko (na)? (ito|ang plano ko)/i,
-    /(nagpuputol|nagsusugatsunog|nagsasaktan) (ako)? ng sarili (ko)?/i,
-  ];
-  planPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 6;
-      reasons.push("Possible plan or method");
-    }
-  });
-
-  // === EMOTIONAL DISTRESS ===
-  const distressPatterns = [
-    // English
-    /i (am|feel) (depressed|hopeless|worthless|empty|broken|numb|suicidal|devastated)/i,
-    /i hate (everything|my life|myself|being alive|this world)/i,
-    /i feel (lost|alone|trapped|overwhelmed|tired of everything|like a burden)/i,
-    /nobody (cares|understands|would miss me|loves me)/i,
-    /i('m| am) (falling apart|at my limit|on the edge|so tired|exhausted)/i,
-    /life is (pointless|meaningless|not worth it|too hard|unfair)/i,
-    /i (can't|cannot) (go on|continue|keep going|do this)/i,
-    /i feel like (a burden|nothing|nobody|invisible)/i,
-    /everything is (falling apart|too much|hopeless|pointless)/i,
-
-    // Tagalog — emotional distress / hopelessness
-    /pakiramdam ko(ng)? (depresado|walang pag-asa|walang kwenta|walang laman|sira|manhid|basura|pabigat)/i,
-    /kinasusuklaman ko (ang lahat|ang buhay ko|ang sarili ko|ang mabuhay|ang mundo)/i,
-    /pakiramdam ko(ng)? (nawawala|nag-iisa|nakulong|napalibutan|pagod na sa lahat|wala nang pag-asa)/i,
-    /walang (nagmamalasakit|nakakaunawa|makakapalad kung mawala ako|nagmamahal sa akin)/i,
-    /nasa (gilid|dulo|hangganan|labi) na ako/i,
-    /ang buhay (ko)? (ay)? (walang saysay|walang kabuluhan|hindi sulit|masyadong mahirap)/i,
-    /hindi ko na (makayanan|kakayanin) (ito|ang lahat|ang buhay)/i,
-    /pakiramdam ko(ng)? (pabigat|problema|sakit) (lang)? ako (sa lahat|sa mundo)/i,
-    /sobrang (lungkot|sakit|hirap|pagod) ko (na)? (sa buhay|sa lahat|na)/i,
-    /walang (mahal sa akin|nagpapahalaga sa akin|nagmamalasakit sa akin)/i,
-    /wala (akong)? (halaga|silbi|kwenta) (sa mundo|sa buhay|sa lahat)/i,
-    /pagod (na)? (na)? ako (sa buhay|sa lahat|sa mundo|sa pag-iral)/i,
-    /hindi ko na (kayang ituloy|kayang magpatuloy) (ang buhay|ito)/i,
-  ];
-  distressPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 3;
-      reasons.push("Emotional distress / hopelessness");
-    }
-  });
-
-  // === ADDICTION / SUBSTANCE ABUSE ===
-  const addictionPatterns = [
-    // English
-    /i (am|'m) (addicted|hooked|dependent) (on|to) (drugs|alcohol|substances|shabu|meth)/i,
-    /i (can't|cannot) stop (using|taking|drinking|smoking)/i,
-    /i (use|take|do) (drugs|shabu|meth|weed|alcohol) (every day|all the time|regularly)/i,
-    /i (need|crave) (drugs|alcohol|shabu|a fix|my fix)/i,
-    /been (using|on) (drugs|shabu|meth|substances) (for|since)/i,
-
-    // Tagalog — addiction
-    /adik (na)? (ako|na ako)/i,
-    /naka(-)?(adik|depende) (na)? ako (sa|kay)/i,
-    /gumagamit (na)? ako ng (droga|shabu|rugby|solvent|inhalant|alak|sigarilyo)/i,
-    /hindi ko na (mapigilan|mapigil|pigilan) (ang)? (paggamit|pag-inom|pagdadrug)/i,
-    /kailangan ko (ng|ang) (droga|shabu|fix|dose|gamot ko)/i,
-    /(nag-iinject|nag-iinom|nag-iinhale|gumagamit) (ako)? ng (droga|shabu|rugby)/i,
-    /(tulak|dealer|pushers?) (ako|siya|sila)/i,
-    /(nagbebenta|nagbibili) (ako)? ng (droga|shabu)/i,
-    /lagi (na)? (akong|ako) (high|lasing|drugged|naka-shabu)/i,
-    /ang (sarap|ganda|galing) ng (shabu|droga|rugby) (para sa akin)?/i,
-    /adik adik (na)? ako/i,
-  ];
-  addictionPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 5;
-      reasons.push("Substance use / addiction");
-    }
-  });
-
-  // === ABUSE / VIOLENCE / DANGER ===
-  const abusePatterns = [
-    // English
-    /i (am|'m) being (abused|beaten|hurt|harassed|molested|raped)/i,
-    /someone (is|has been) (hurting|abusing|threatening|hitting) me/i,
-    /(my parent|my father|my mother|my stepfather|my stepmother|someone) (hits|beats|hurts|abuses) me/i,
-    /i (was|got) (raped|molested|abused|assaulted|touched)/i,
-    /i (am|'m) (scared|afraid) (for my life|to go home|of him|of her|of them)/i,
-    /they (threatened|will hurt|are going to hurt) me/i,
-    /i (am|'m) in (danger|trouble|an abusive)/i,
-
-    // Tagalog — abuse / violence / danger
-    /(ginagabatan|niyayabang|binubugbog|sinasapak|sinisipa|tinatampal) (ako|niya|nila)/i,
-    /(sinasalakay|ginagahasa|nangha-harass|nang-aabuso) (ako|niya|nila)/i,
-    /natatakot (ako|na ako) (sa|kay) (tatay|nanay|stepfather|stepmother|kapitbahay|classmate|guro)/i,
-    /tinatakot (ako|niya|nila) (na|ng)/i,
-    /(binubugbog|sinasapak|sinisipa) (ako)? (ng|ni|nina) (tatay|nanay|kuya|ate|stepfather|stepmother)/i,
-    /naranasan ko (ang)? (pang-aabuso|panggagahasa|pananakit)/i,
-    /may (nangdadamot|nang-aabuso|nananakit|nangha-harass) sa akin/i,
-    /nangangamba (ako) (para sa buhay ko|na manakit sila sa akin)/i,
-    /ligtas (ba)? (ako|ba ako)/i,
-    /tulong (po|no)? may (nanakit|nangharang|nang-abuso) sa akin/i,
-  ];
-  abusePatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 5;
-      reasons.push("Possible abuse or danger");
-    }
-  });
-
-  // === BULLYING ===
-  const bullyingPatterns = [
-    // English
-    /i (am|'m) being (bullied|harassed|threatened|cyberbullied|targeted|humiliated)/i,
-    /they (keep|always|won't stop) (bullying|making fun of|threatening|humiliating|embarrassing|excluding) me/i,
-    /people (at school|online|in class|in my grade) (bully|harass|threaten|hurt|mock) me/i,
-    /(classmates?|schoolmates?|batchmates?|friends?) (are|keep) (bullying|threatening|hurting|excluding|mocking) me/i,
-    /someone (spread|is spreading) (rumors|lies|photos) (about me|of me)/i,
-    /(group chat|gc|group message) (is|was) (used to|bullying|humiliating|spreading) (me|against me)/i,
-    /they (post|posted|share|shared) (embarrassing|humiliating) (things|photos|videos) (of|about) me (online|on social media)/i,
-    /i (am|feel) (excluded|left out|ignored|isolated) (by|from) (my class|my classmates|my friends|my group)/i,
-
-    // Tagalog — bullying
-    /(ina-away|inaasar|binubully|tinutukso|niloloko|inaabuso|pinagtatawanan) (ako)? (ng|ni|nina|nila)/i,
-    /(classmate|kaklase|batchmate|grupo) (ko)? (ay)? (nambubully|nananakit|nagbabanta|umaaway) sa akin/i,
-    /palagi (akong|nilang) (inaabuso|inasar|inaaway|pinagtatawanan)/i,
-    /hindi ako (mapayapang|matahimik na) (pumunta sa school|pumasok|mag-aral)/i,
-    /ayaw ko (nang)? (pumasok|pumunta sa school) (dahil|kasi) (sa|natatakot)/i,
-    /nambubully (sa akin|sila sa akin)/i,
-  ];
-  bullyingPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 4;
-      reasons.push("Bullying or harassment");
-    }
-  });
-
-  // === EATING DISORDERS / DANGEROUS DIET BEHAVIORS ===
-  const eatingDisorderPatterns = [
-    // English
-    /i (haven't|have not|don't|did not) (eat|eaten|had food) (in days|for days|today|all day|all week)/i,
-    /i (purge|make myself|force myself) (throw up|vomit|puke)/i,
-    /i (starve|am starving) (myself|on purpose)/i,
-    /i (skip|skipping|avoid|avoiding) (all my meals|eating|food)/i,
-    /i (hate|am disgusted by) (my body|my weight|how i look)/i,
-    /i need to (lose weight|be thinner|be skinnier) (or else|because|so that)/i,
-    /(laxatives|diet pills|purging|binging and purging|binge eating)/i,
-    /i feel (fat|disgusting|gross) (after eating|when i eat|about myself)/i,
-    /i (count|track) every (calorie|bite|piece of food) (obsessively|every day|all the time)/i,
-
-    // Tagalog — eating disorder
-    /hindi (ako|na ako) (kumakain|nakakakain) (ng maayos|nang maayos|sa loob ng|ng ilang araw)/i,
-    /sinisadya ko(ng)? (hindi kumain|mag-starve|ayunan)/i,
-    /nagtatago (ako)? ng (pagkain|food) (para|dahil)/i,
-    /kinasusuklaman ko (ang)? (katawan ko|timbang ko|hitsura ko)/i,
-    /(nagsusuka|pinipilit kong sumuka) (ako)? (pagkatapos kumain|para|dahil)/i,
-  ];
-  eatingDisorderPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 5;
-      reasons.push("Eating disorder / dangerous diet behavior");
-    }
-  });
-
-  // === SEXUAL HARASSMENT / ASSAULT / EXPLOITATION ===
-  const sexualHarmPatterns = [
-    // English
-    /i (was|got|have been) (sexually|inappropriately) (touched|assaulted|harassed|abused|exploited)/i,
-    /someone (touched|grabbed|forced|pressured) me (sexually|inappropriately|without consent)/i,
-    /(my teacher|my coach|my classmate|my relative|someone) (touched|groped|forced|pressured) me/i,
-    /(sent|receiving|sharing) (nude|naked|sexual|explicit) (photos|pictures|videos) (of me|without consent)/i,
-    /i (was|got) (raped|molested|sexually abused)/i,
-    /(sexting|sextortion|nude photos|leaked photos) (of me|involving me|my photos)/i,
-    /someone (is blackmailing|blackmailed) me (with|using) (photos|videos|pictures)/i,
-    /online (predator|grooming|exploitation)/i,
-    /someone (older|adult) (wants|wanted|asked|pressured) me to (have sex|do sexual things|send photos)/i,
-
-    // Tagalog — sexual harm
-    /(hinalikan|hinawakan|ginagahasa|nilalasog|pinagsamantalahan) (ako)? (ng|ni|nina)/i,
-    /may (humawak|humipo|nangdestabo|nang-abuso|nanghalay) sa akin (nang walang pahintulot|ng hindi ko gusto)/i,
-    /(nagpapadala|pinapadalhan|pinipilit) (ng|ako ng) (hubad na larawan|bold na litrato|sexual na content)/i,
-    /(nire-record|nila-livestream|kinukuha ng video) (ako)? (nang hindi ko alam|ng walang pahintulot)/i,
-    /may (nagbabanta|nagba-blackmail) sa akin (gamit|ng|ng litrato|ng video)/i,
-  ];
-  sexualHarmPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 6;
-      reasons.push("Sexual harassment, assault, or exploitation");
-    }
-  });
-
-  // === GANG INVOLVEMENT / THREATS / VIOLENCE ===
-  const gangViolencePatterns = [
-    // English
-    /i (am|'m) (in|involved in|part of) a (gang|group that fights|barkada that hurts people)/i,
-    /(they|someone) (threatened|is threatening) (to hurt|to kill|to jump) me/i,
-    /i (have|carry|brought) a (weapon|knife|gun|balisong) (to school|with me)/i,
-    /(fight|brawl|rumble) (is happening|will happen|being planned) (at school|near school|after class)/i,
-    /i (was|got) (jumped|stabbed|shot at|threatened at gunpoint)/i,
-    /someone (has a gun|brought a knife|has a weapon) (at school|nearby)/i,
-    /(gang|group) (is after|targeting|following) me/i,
-
-    // Tagalog — gang / violence
-    /(miyembro|kasali|nakapasok) (ako)? (sa|ng) (gang|barkada na nag-aaway|grupo na mapanganib)/i,
-    /may (banta|nagbabanta|naghahanap sa akin) (sa|ng) (gang|grupo)/i,
-    /(may dala|nagdala) (ako|siya|sila) ng (patalim|kutsilyo|baril|armas) (sa eskuwela)?/i,
-    /(away|gulo|rumble) (na|gagawin|mangyayari) (sa|malapit sa) (eskuwela|paaralan)/i,
-    /(sinaksak|tinaboy|pinagbabaril|binalatan) (ako|niya|nila)/i,
-  ];
-  gangViolencePatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 6;
-      reasons.push("Gang involvement or violent threat");
-    }
-  });
-
-  // === FAMILY CRISIS / HOME DANGER ===
-  const familyCrisisPatterns = [
-    // English
-    /(my parents|my mom|my dad|my family) (fight|hit each other|hurt each other) (all the time|every night|constantly)/i,
-    /i (am|'m) (scared|afraid) to go home/i,
-    /(domestic violence|abuse at home) (is happening|in my house|in my family)/i,
-    /my (parent|father|mother|stepparent) (is|has been) (drinking|drunk|on drugs) (and|then) (hurts|hits|abuses)/i,
-    /i (was|got) (kicked out|thrown out|locked out) (of my house|of my home)/i,
-    /i (have|haven't had) (no|a) place to (sleep|stay|go home)/i,
-    /running away (from home|from my family)/i,
-    /(neglected|starved|locked up|isolated) (by my family|at home)/i,
-
-    // Tagalog — family crisis
-    /(nagaaway|nagsasagupaan|nagsasaksakan|nagsasuntukan) (ang|si|sina) (tatay|nanay|magulang|pamilya) (ko)? (palagi|lagi|araw-araw)/i,
-    /natatakot (ako)? (umuwi|sa bahay) (dahil|kasi)/i,
-    /(lasing|high|nalasing|naka-droga) (ang|si) (tatay|nanay|magulang) ko (at|tapos) (nananakit|umaaway)/i,
-    /(pinalayas|pinaalis|sinibak) (ako)? (sa bahay|ng magulang|ng pamilya)/i,
-    /wala (akong|na akong) (matulungan|matutuluyan|matirhan|puntahan)/i,
-    /tumakas (na|na lang) (ako)? (sa bahay|sa pamilya)/i,
-  ];
-  familyCrisisPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 5;
-      reasons.push("Family crisis or home danger");
-    }
-  });
-
-  // === ACADEMIC / SCHOOL CRISIS ===
-  const academicCrisisPatterns = [
-    // English
-    /i (am|'m) (going to|about to) (fail|drop out|be expelled|get expelled)/i,
-    /i (cheated|was caught cheating|plagiarized) (on a test|in an exam|in school)/i,
-    /i (can't|cannot) (afford|pay for) (school|tuition|my fees) (anymore|this year)/i,
-    /i (might|will) have to (stop|quit|leave) (school|studying) (because|due to)/i,
-    /(teachers?|school staff|principal) (is|are) (harassing|threatening|discriminating against) me/i,
-    /i (feel|am|so) (overwhelmed|crushed|destroyed) by (school|exams|grades|pressure)/i,
-
-    // Tagalog — academic crisis
-    /mababagsak (na)? (ako|na ako) (sa lahat|sa subject|sa klase)/i,
-    /(mapapalayas|mae-expel|matataboy) (na)? (ako)? (sa eskuwela|sa paaralan)/i,
-    /hindi (na|ko) (kaya|kayang) (bayaran|tulungan|harapin) (ang|ang bayad sa) (eskuwela|tuition)/i,
-    /kailangan (na)? (akong) (mag-drop|umalis sa eskuwela|tumigil mag-aral)/i,
-  ];
-  academicCrisisPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 3;
-      reasons.push("Academic or school-related crisis");
-    }
-  });
-
-  // === MENTAL HEALTH CRISIS (panic, psychosis, dissociation, severe anxiety) ===
-  const mentalHealthPatterns = [
-    // English
-    /i (can't|cannot) (breathe|think|function|stop crying|stop shaking)/i,
-    /i (feel|am) (like i'm going crazy|losing my mind|out of control|like a different person)/i,
-    /i (hear|see|experience) things (that aren't real|that others don't)/i,
-    /(panic attack|anxiety attack|mental breakdown|nervous breakdown)/i,
-    /i (can't|cannot) (stop|control) (my thoughts|my urges|myself)/i,
-    /i (feel|am) (completely numb|emotionally dead|disconnected from everything)/i,
-    /i (haven't|have not) (slept|eaten|left my room|gone outside) (in days|for days|for weeks)/i,
-    /i (am|feel like i'm) (disappearing|not real|watching myself from outside)/i,
-    /(medication|meds|pills) (aren't|not) (working|helping) (anymore|at all)/i,
-    /diagnosed with (depression|anxiety|bipolar|schizophrenia|ptsd|ocd|eating disorder)/i,
-
-    // Tagalog — mental health crisis
-    /hindi (ako|na ako) (makatulog|makakain|makagalaw|makaalis) (ng ilang araw|sa loob ng|nang ilang)/i,
-    /parang (nababaliw|nasisiraan ng ulo|wala na akong kontrol|iba na ako)/i,
-    /(naririnig|nakakakita) (ako)? ng (bagay|tinig|boses) na (hindi totoo|hindi nakikita ng iba)/i,
-    /(panic attack|anxiety attack|mental breakdown) (na naman|palagi|nangyayari)/i,
-    /hindi ko (mapigilan|kontrolin) (ang)? (sarili ko|mga iniisip ko|mga nararamdaman ko)/i,
-    /parang (hindi ko totoo|hindi ako totoo|nanunuod lang ako sa sarili ko)/i,
-  ];
-  mentalHealthPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 4;
-      reasons.push("Mental health crisis or breakdown");
-    }
-  });
-
-  // === LOWER WEIGHT: Isolation, stress, passive ideation ===
-  const isolationPatterns = [
-    // English
-    /no one (understands|cares|listens|loves me)/i,
-    /i feel (so alone|completely alone|invisible|abandoned|unwanted)/i,
-    /i can't handle this/i,
-    /everything (hurts|is too much|is falling apart)/i,
-    /i (have|has) no (friends|one|purpose|reason to live)/i,
-    /i don't (belong|fit in|matter)/i,
-    /i (feel|am) (like a burden|useless|worthless|a failure)/i,
-    /nobody (would notice|would care|would miss) if i (was gone|disappeared|died)/i,
-    /i (give up|quit|stop trying|can't do this anymore)/i,
-
-    // Tagalog — isolation / low distress
-    /walang (nakakaintindi|nagpapahalaga|nakikinig|nagmamahal) sa akin/i,
-    /pakiramdam ko(ng)? (sobrang nag-iisa|ganap na nag-iisa|hindi nakikita|abandunado|ayaw sa akin)/i,
-    /hindi ko na (kaya|kayang tiisin) ito/i,
-    /lahat ay (masakit|sobra na|laban sa akin)/i,
-    /nag-iisa (ako|na lang ako) (palagi|lagi|sa lahat)/i,
-    /wala (akong)? (kaibigan|kakampi|makapitan|matakbuhan)/i,
-    /hindi (ako)? (kasama|kasali|kabilang) (sa grupo|sa lahat)/i,
-    /pakiramdam ko(ng)? (hindi ako mahalaga|hindi ako kailangan|hindi ako gusto)/i,
-    /stressed (na)? (na)? (ako|na ako) (sobra|na)/i,
-    /hindi ko (alam|mahanap) (ang)? (dahilan|rason|paraan) para (magpatuloy|maging masaya)/i,
-    /parang (wala|walang silbi|walang kwenta) (na)? (ako|ang buhay ko)/i,
-    /walang (makakapansin|magmamalasakit|makakaalam) kung (mawala|nawala|maging wala) (na)? ako/i,
-  ];
-  isolationPatterns.forEach(p => {
-    if (p.test(t)) {
-      score += 1.5;
-      reasons.push("Isolation or high stress");
-    }
-  });
-
-  // === COMBO BOOSTERS ===
-  // English
-  if (/i want to/.test(t) && /(hurt|kill|die|end it)/.test(t)) {
-    score += 4;
-    reasons.push("Strong intent phrase combination");
+// Everything read from Firestore passes through here, so one malformed document
+// (wrong type, missing field, hand-made id) can never crash a counselor's screen.
+const PRIORITIES = ['Low', 'Medium', 'High'];
+function cleanDoc(d, kind) {
+  if (!d || !/^\d{1,20}$/.test(String(d.id))) return null;
+  const str = (v) => (v == null ? '' : String(v));
+  d.priority  = PRIORITIES.includes(str(d.priority).trim()) ? str(d.priority).trim() : 'Medium';
+  d.riskLevel = window.QHRisk.LEVELS.includes(str(d.riskLevel).trim()) ? str(d.riskLevel).trim() : 'Low';
+  d.aiScore   = Number(d.aiScore) || 0;
+  d.reasons   = Array.isArray(d.reasons) ? d.reasons.map(str) : [];
+  d.timestamp = Number(d.timestamp) || 0;
+  d.author    = str(d.author);
+  d.authorId  = str(d.authorId);
+  d.chatMessages = Array.isArray(d.chatMessages) ? d.chatMessages.filter(m => m && typeof m === 'object') : [];
+  if (kind === 'posting') { d.title = str(d.title); d.content = str(d.content); }
+  else {
+    d.reason = str(d.reason); d.description = str(d.description);
+    d.status = str(d.status).trim() === 'Done' ? 'Done' : 'Pending';
+    d.gradeLevel = str(d.gradeLevel);
+    const r = Math.round(Number(d.sessionRating)); d.sessionRating = r >= 1 && r <= 5 ? r : 0;
+    const m = Math.round(Number(d.studentMood));   d.studentMood   = m >= 1 && m <= 5 ? m : 0;
   }
-  if (/(hurt|kill) myself/.test(t) && /(feel|am|want)/.test(t)) {
-    score += 3;
-    reasons.push("Self-directed harm language");
-  }
-  // Tagalog — direct death/harm intent
-  if (/(gusto ko|gusto kong|gusto na)/.test(t) && /(mamatay|magpakamatay|patayin|masaktan)/.test(t)) {
-    score += 4;
-    reasons.push("Strong intent phrase combination");
-  }
-  if (/(sarili ko|ang sarili|sarili)/.test(t) && /(patayin|saktan|sugatan|masaktan|saktan|putulin)/.test(t)) {
-    score += 3;
-    reasons.push("Self-directed harm language");
-  }
-  // Tagalog — asking others to kill/hurt
-  if (/(patayin|saktan|tulungan).*(nyo|mo|ninyo|kayo)/.test(t) && /ako/.test(t)) {
-    score += 4;
-    reasons.push("Strong intent phrase combination");
-  }
-  // Addiction + distress combo
-  if (/(adik|droga|shabu|rugby)/.test(t) && /(mamatay|magpakamatay|wala nang pag-asa|sawa na)/.test(t)) {
-    score += 3;
-    reasons.push("Substance use with suicidal ideation");
-  }
-
-  // === KEYWORD / WORD-BASED SCORING (catches casual short phrases regex misses) ===
-  const words = t.split(/\s+/);
-
-  const highRiskWords = ['magpakamatay','magpatiwakal','pakamatay','patiwakal','suicidal','suicide','selfharm','self-harm'];
-  const medRiskWords  = ['mamatay','patay','nakakamatay','overdose','bigti','tumalon','kutsilyo','lason','burned myself'];
-  const substanceWords= ['shabu','meth','rugby','droga','inhalant','solvent','vape','vapong','e-cigarette'];
-  const addictWords   = ['adik','nag-shabu','nagshabu','nagdodroga','nag-vaping'];
-  const distressWords = ['hopeless','depressed','depresado','nawawala','pagod','sawa','wala-na','walanasaysay','breakdown','nababaliw','nasisiraan'];
-  const newRiskWords  = ['purging','starving','sextortion','balisong','nawala-ako'];
-
-  let hasSubstance = false;
-  let hasAddiction = false;
-  let hasDistress  = false;
-
-  words.forEach(w => {
-    if (highRiskWords.some(k => w.includes(k))) {
-      score += 8;
-      reasons.push('Direct self-harm / suicidal intent');
-    }
-    if (medRiskWords.some(k => w.includes(k))) {
-      score += 4;
-      reasons.push('Possible plan or method');
-    }
-    if (substanceWords.some(k => w.includes(k))) {
-      score += 4;
-      reasons.push('Substance use / addiction');
-      hasSubstance = true;
-    }
-    if (addictWords.some(k => w.includes(k))) {
-      score += 5;
-      reasons.push('Substance use / addiction');
-      hasAddiction = true;
-    }
-    if (distressWords.some(k => w.includes(k))) {
-      score += 2;
-      reasons.push('Emotional distress / hopelessness');
-      hasDistress = true;
-    }
-    if (newRiskWords.some(k => w.includes(k))) {
-      score += 4;
-      reasons.push('Additional risk signal detected');
-    }
-  });
-
-  // Also scan full text for key fragments (handles concatenated / space-free writing)
-  if (/adik/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasAddiction = true; }
-  if (/shabu|rugby|droga/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasSubstance = true; }
-  if (/self.?harm|selfharm|cutting myself|burn myself/.test(t)) { score += 6; reasons.push('Direct self-harm / suicidal intent'); }
-  if (/\brap(e|ed|ing)\b|molest|sexual.?assault|sextortion/.test(t)) { score += 6; reasons.push('Sexual harassment, assault, or exploitation'); }
-  if (/panic.?attack|mental.?breakdown|nervous.?breakdown/.test(t)) { score += 4; reasons.push('Mental health crisis or breakdown'); }
-  if (/\bgangs?\b|barkada.*(away|gulo)|\brumble\b/.test(t)) { score += 4; reasons.push('Gang involvement or violent threat'); }
-  if (/purging|binge.*purge|purge.*binge|not eating|stop eating|starv/.test(t)) { score += 4; reasons.push('Eating disorder / dangerous diet behavior'); }
-  if (hasSubstance && hasAddiction) { score += 3; reasons.push('Confirmed substance addiction'); }
-  if ((hasSubstance || hasAddiction) && hasDistress) { score += 3; reasons.push('Substance use with suicidal ideation'); }
-
-
-  // Deduplicate reasons
-  reasons = [...new Set(reasons)];
-  const uniqueReasonCount = reasons.length;
-
-  let level = "Low";
-  // Sensitive thresholds — prefer false positives over missed risks
-  if (score >= 12 || (score >= 9 && uniqueReasonCount >= 2)) level = "High";
-  else if (score >= 6 || (score >= 4 && uniqueReasonCount >= 2)) level = "Medium";
-  else if (score >= 2) level = "Low-Medium";
-
-  // Flag at a lower threshold — any meaningful signal gets flagged
-  const flagged = score >= 3 || level !== "Low";
-
-  return { score: Math.round(score), level, flagged, reasons };
+  return upgradeThreatRisk(d, kind);
+}
+function stars(n) { n = Math.max(0, Math.min(5, Math.round(Number(n) || 0))); return '★'.repeat(n) + '☆'.repeat(5 - n); }
+function newDocId() { return Date.now() * 1000 + Math.floor(Math.random() * 1000); }
+function safeHttpUrl(u) {
+  u = String(u || '').trim(); if (!u) return '';
+  if (!/^https?:\/\//i.test(u)) u = 'https://' + u;
+  try { const x = new URL(u); return (x.protocol === 'https:' || x.protocol === 'http:') ? x.href : ''; } catch (e) { return ''; }
 }
 
 // ── URGENCY SCORE (for sorting — higher = more urgent) ──
@@ -854,6 +419,7 @@ function getUrgencyScore(item) {
 
   // Bonus for multiple risk signals
   if (item.reasons && item.reasons.length >= 2) base += 40;
+  if (item.urgent) base += 300;
 
   return Math.round(base);
 }
@@ -883,295 +449,13 @@ function getGlowClass(item, isPending) {
   return '';
 }
 
-// ── PROFANITY & SENSITIVE WORD SYSTEM ──
-// Words that are HARD BLOCKED (never allowed — explicit/slurs)
-const hardBlockList = [
-
-  // ── FILIPINO CORE PROFANITY ──
-  'tangina','tanginamo','putangina','putanginamo','ptangina','tngina',
-  'puta','putang','putangkayo','putangina',
-  'gago','gaga','gagong','gaguhin','kagaguhan',
-  
-  'hayupak','hinayupak','hayvop',
-  
-  
-  'pakshet','pakshit','pakingshet','pakingsit',
-  'piste','lintek','letse','leche',
-  'punyeta','punyetang','bunyeta',
-  'bwisit','bwisitin',
-  'pakyu','pakyo','packyou','packu',
-  
-  
-  'pokpok','pulpol',
-  'hampaslupa','hampas lupa',
-  'tarantado','tarantadong',
-  'manyak','manyakin','manyakis',
-  'buraot','burauts',
-  
-  'paksit',
-  'kingina','kinginamo',
-  'amputa','amputang',
-  'inamo','inamohin',
-  'yawa','yawang',
-  
-  
-  
-  
-  
-  
-  
-  'gawa ng puta','anak ng puta','anak ng bitch',
-  'putanginang','tang ina','tang ina mo',
-  
-  
-  'ampotang','ampota',
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-
-  // ── JAKOL AND ALL VARIANTS ──
-  'jakol','jakal','jakul','jakkol','jakoll','jacol','jakohl','jokol','djakol',
-  'nagjajakol','nagjajakul','nagjajakal','najakol',
-  'jakulin','jakolin','jakoling','jakutin','jijakol','mag jakol','mag-jakol',
-  'jakolan','jakolers','jakoler',
-
-  // ── SALSAL AND ALL VARIANTS ──
-  'salsal','salsalin','nagsasal','nagsasalsal','nagsalsal',
-  'ssalsal','salsall','sarsal','mag salsal','mag-salsal',
-  'salsalan','salsalers',
-
-  // ── MASTURBATE / MASTERBATE / MASTERBAIT AND ALL VARIANTS ──
-  'masturbate','masturbating','masturbation','masturbated',
-  'masterbate','masterbating','masterbation','masterbated',
-  'masterbait','masterbeyt','mastorbeyt','masturbayt','mastarbeyt',
-  'mastrubate','mastrubation','mastrubating',
-  'masturbasyon','mastorbasyon','mastorb','masturb',
-  'mastorbet','masterbet','mastorbeat','masterbeat',
-  'nagmamasturbate','nagmamasterbate','nagmamasturba',
-  'mag masturbate','mag masterbate','mag-masturbate',
-
-  // ── KANTOT AND SEXUAL ACTS ──
-  // NOTE: rape, molest, ginahasa, gahasain, sext, sexting are intentionally
-  // REMOVED from this block list — students must be able to report abuse.
-  // These words are handled by detectRisk() which flags them for counselor review.
-  'kantot','kantutin','nagkakantot','nakantot','kantutan',
-  'hindot','hindotin','naghihindot','hindutan',
-  'iyot','nag-iiyot','nagiiyot','iyutin','iyutan',
-  'jakolin','jakulin','salsalin',
-  'nagmamasturbate','nagmamasterbate',
-  'nagkakantot','naghihindot','nagiiyot',
-  'chupa','chupahin','nagchuchupa','chupaan',
-  'kinantot','kinalantot',
-
-  // ── GENITALS - FILIPINO ──
-  'tite','titi','titit',
-  'burat','burats','burak','burak',
-  
-  'kepyas','kepya',
-  'puke','puki','pukiin','pekpek','pepek',
-  'pepe','pepeng',
-  
-  
-  
-  
-  
-  
-  
-
-  // ── SEXUAL SLANG - FILIPINO ──
-  
-  
-  
-  'pokpok','pokpokin','magpokpok',
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-
-  // ── ENGLISH PROFANITY ──
-  'fuck','fucking','fucked','fucker','fucks','fuckup','fck','fuk','fvck','f uck',
-  'fack','facking','facked','facker','facks','phuck','phucking','phuk','phuking',
-  'shit','shitting','shitty','shits','sht','sh1t','shlt',
-  'bitch','bitching','bitches','bitchy','b1tch','bich',
-  'asshole','assholes','ass hole','azzhole','assholee',
-  'bastard','bastards','baztard',
-  'cunt','cunts','cvnt',
-  'whore','whores','wh0re','whoree',
-  'slut','slutty','sluts','sl0t',
-  'dick','dicks','d1ck','diick',
-  'cock','cocks','c0ck','cok',
-  'pussy','pussies','p0ssy',
-  'nigger','nigga','niga','n1gger','nigg',
-  'retard','retarded','retards',
-  'faggot','faggots','fag','fagot',
-  'motherfucker','motherf','mofo',
-  'piss','pissed','pisser',
-  
-  'asshat','dipshit','jackass','jerkoff','jerk off',
-  'bullshit','bull shit',
-  'wtf','stfu','gtfo',
-  
-  
-  
-  
-  
-  
-  'dumbfuck','dumb fuck',
-  'clusterfuck','cluster fuck',
-
-  // ── ENGLISH SEXUAL ──
-  // NOTE: sex, sexual, naked, nude, penis, vagina, condom, sext, sexting, fingering
-  // are intentionally REMOVED — students need these words to report sexual abuse.
-  // detectRisk() flags them for counselor review instead of blocking the post.
-  'porn','pornography','porno','pornhub','xvideos','xnxx',
-  'horny','horniest','hornier',
-  'cum','cumshot','cumming','cummed',
-  'clit','clits','clitoris',
-  'boob','boobs','boobies','boobie',
-  'titties','titty',
-  'orgasm','orgasms','orgasmic',
-  'erection','erections','erect',
-  'ejaculate','ejaculation','ejaculating',
-  'jerkoff','jerk off','jacking off','jack off',
-  'wank','wanking','wanker','wankers',
-  'handjob','hand job','blowjob','blow job',
-  'dildo','dildos','vibrator','vibrators',
-  
-  'stripper','strippers','striptease',
-  'onlyfans','only fans',
-  'hentai','ecchi',
-  'threesome','foursome','gangbang','gang bang',
-  'bdsm','fetish','fetishes',
-
-  // ── THREATS AND VIOLENCE ──
-  // NOTE: 'shoot you','stab you','hurt you' removed — students need to report
-  // threats made against them. Only block directed-outward threat phrases.
-  'kill yourself','kill urself','kil yourself',
-  'go die','you should die','drop dead',
-  
-  'pahirapan','gaguhin','lokohin kita',
-  'bubugbugin','bugbugin','ibubulag',
-
-  // ── HATE SPEECH AND SLURS ──
-  'nigger','nigga','niga','chink','gook','spic','wetback','cracker',
-  'kike','raghead','towelhead','sandnigger','zipperhead',
-  'tranny','shemale','ladyboy',
-  'faggot','fag',
-  'retard','retarded','tard','spaz','spastic',
-  
-
-  // ── DRUG REFERENCES ──
-  // NOTE: shabu, meth, marijuana, cocaine etc. are intentionally REMOVED from
-  // the block list — students must be able to report drug involvement/threats.
-  // detectRisk() already flags these for counselor review.
-
-  // ── SPAM / IRRELEVANT / DISRESPECTFUL ──
-  'suicidebait','suicide bait',
-  
-  
-  
-  
-
-];
-
-// Soft censor list cleared — sensitive words display as typed, still detected by detectRisk()
-const softCensorList = [];
-
-// Leet-speak / repeated-letter normaliser applied to ONE token at a time
-function normalizeToken(w) {
-  return w.toLowerCase()
-    .replace(/ph/g,'f')
-    .replace(/[4@]/g,'a').replace(/8/g,'b').replace(/3/g,'e')
-    .replace(/[1!|]/g,'i').replace(/0/g,'o').replace(/[5$]/g,'s').replace(/7/g,'t')
-    .replace(/[^a-z]/g,'')
-    .replace(/(.)\1+/g,'$1');
-}
-function normalizeText(text) { return text ? text.split(/\s+/).map(normalizeToken).join(''):''; }
-
-// Built ONCE (the old version rebuilt ~700 RegExps on every keystroke-submit)
-let _profSingle = null, _profPhrases = null;
-function _buildProfanityIndex() {
-  _profSingle = new Set(); _profPhrases = [];
-  hardBlockList.forEach(w => {
-    if (/\s/.test(w.trim())) {
-      const p = w.trim().split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
-      if (p) _profPhrases.push(' ' + p + ' ');
-    } else {
-      const n = normalizeToken(w);
-      if (n.length >= 2) _profSingle.add(n);
-    }
-  });
-}
-
-function containsProfanity(text) {
-  if (!text) return false;
-  if (!_profSingle) _buildProfanityIndex();
-  const rawTokens = String(text).split(/[\s.,;:?"()\[\]{}<>\/\\*_+=~`^-]+/).filter(Boolean);
-  const tokens = rawTokens.map(normalizeToken).filter(Boolean);
-  for (const t of tokens) if (_profSingle.has(t)) return true;
-  // "f u c k" style: join runs of single letters
-  let run = '';
-  for (const w of rawTokens) {
-    if (w.length === 1) { run += normalizeToken(w); }
-    else { if (run.length >= 3 && _profSingle.has(run.replace(/(.)\1+/g,'$1'))) return true; run = ''; }
-  }
-  if (run.length >= 3 && _profSingle.has(run.replace(/(.)\1+/g,'$1'))) return true;
-  if (_profPhrases.length) {
-    const joined = ' ' + tokens.join(' ') + ' ';
-    for (const p of _profPhrases) if (joined.includes(p)) return true;
-  }
-  return false;
-}
-
-// A student who may be at risk must never be blocked from reaching help just because of rough language
-function shouldBlockForLanguage(text) {
-  return containsProfanity(text) && !detectRiskRegex(text).flagged;
-}
-
-// Censors soft words in text, returns cleaned version
-function censorText(text) {
-  if (!text) return text;
-  let result = text;
-  softCensorList.forEach(({word, mask}) => {
-    // Case-insensitive whole-word replacement
-    const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g,'\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-    result = result.replace(regex, mask);
-  });
-  return result;
-}
-
-// Returns true if text contains any soft-censored words (for flagging)
-function containsSensitiveWords(text) {
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  return softCensorList.some(({word}) => lower.includes(word));
-}
-
     // ── LOGGING ──
     async function addLog(action,user,type) {
       user=user||'system';type=type||'info';
       const id=Date.now()*1000+Math.floor(Math.random()*1000);
       const log={id,action,user,type,time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'}),timestamp:Date.now()};
       try{await db.collection('logs').doc(String(id)).set(log);}
-      catch(e){systemLogs.unshift(log);scheduleRender();}
+      catch(e){systemLogs.unshift(log);if(currentRole==='admin')scheduleRender();}
     }
 
     // ── AUTH ──
@@ -1242,7 +526,7 @@ async function adminCheckAccount() {
   } catch(e) {
     _acShow('error', '❌ ' + _esc(e.message || 'Login failed. Check email and password.'));
   }
-  if (checkBtn) { checkBtn.disabled = false; checkBtn.innerHTML = '<i data-lucide="search" style="width:15px;height:15px;display:inline;vertical-align:middle"></i> Check Account'; lucide.createIcons(); }
+  if (checkBtn) { checkBtn.disabled = false; checkBtn.innerHTML = iconSvg('search', ' style="width:15px;height:15px"') + ' Check Account'; }
 }
 
 async function adminFixAccount() {
@@ -1280,53 +564,6 @@ async function adminFixAccount() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-// Creates the /users/{uid} Firestore document for accounts that were created
-// manually in Firebase Auth (guidance/admin) and never got a Firestore doc.
-// Only shown on the login screen when "Access Denied" error occurs.
-let bootstrapStatus = ''; // '', 'loading', 'success', 'error'
-let bootstrapMsg = '';
-
-async function bootstrapUserDocument(role) {
-  bootstrapStatus = 'loading';
-  bootstrapMsg = '';
-  render();
-
-  if (!loginEmail.trim() || !loginPassword.trim()) {
-    bootstrapStatus = 'error';
-    bootstrapMsg = 'Please enter your email and password above first.';
-    render(); return;
-  }
-
-  try {
-    // Sign in to get the UID
-    const uc = await auth.signInWithEmailAndPassword(loginEmail.trim().toLowerCase(), loginPassword.trim());
-    const uid = uc.user.uid;
-    const email = uc.user.email.toLowerCase();
-
-    // Check if doc already exists
-    const existing = await db.collection('users').doc(uid).get();
-    if (existing.exists) {
-      // Doc exists — just fix the role
-      await db.collection('users').doc(uid).update({ role, email });
-    } else {
-      // Create new doc
-      await db.collection('users').doc(uid).set({ email, role, createdAt: Date.now() });
-    }
-
-    await auth.signOut();
-    bootstrapStatus = 'success';
-    bootstrapMsg = `✅ Done! Your account has been registered as "${role}". You can now log in normally.`;
-    render();
-  } catch(e) {
-    await auth.signOut().catch(()=>{});
-    bootstrapStatus = 'error';
-    bootstrapMsg = '❌ ' + (e.message || 'Something went wrong. Check your email/password and try again.');
-    render();
-  }
-}
-// ─────────────────────────────────────────────────────────────────────────────
-
-
 // Roles are stored in Firestore /users/{uid}.role and trusted over email heuristics.
 // The hardcoded admin list is a bootstrap fallback only (for the very first admin
 // before any Firestore user document exists). All other role checks go to Firestore.
@@ -1343,66 +580,129 @@ async function resolveRoleFromFirestore(uid, email) {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleLogin(selectedRole) {
-  loginError = '';
-  render();
+// ── SIGN-IN ──
+// Students may only use these email domains (add your school's Google Workspace domain here if it has one).
+const STUDENT_EMAIL_DOMAINS = ['gmail.com'];
+function isAllowedStudentEmail(email) { return STUDENT_EMAIL_DOMAINS.some(d => String(email || '').toLowerCase().endsWith('@' + d)); }
 
+let authBusy = '';            // '', 'login', 'google', 'signup', 'reset' — drives the button spinners
+let signInFlowActive = false; // stops the auto-login listener from racing an explicit sign-in
+
+// Shared by email/password and Google sign-in: checks the role, then opens the app.
+async function finishSignIn(user, selectedRole, viaGoogle) {
+  const email = (user.email || '').toLowerCase();
+  const fail = async (msg) => { try { await auth.signOut(); } catch (e) {} loginError = msg; };
+
+  // ── Authoritative role lookup from Firestore (not email string) ──
+  let docExists = null, actualRole = null;
   try {
-    const uc = await auth.signInWithEmailAndPassword((loginEmail||'').trim().toLowerCase(), loginPassword);
-    const email = uc.user.email.toLowerCase();
+    const snap = await db.collection('users').doc(user.uid).get();
+    docExists = snap.exists;
+    if (snap.exists && snap.data().role) actualRole = snap.data().role;
+  } catch (e) { /* read failed — fall through to bootstrap/default below */ }
+  if (!actualRole) actualRole = BOOTSTRAP_ADMIN_EMAILS.includes(email) ? 'admin' : 'student';
 
-    // ── Authoritative role lookup from Firestore (not email string) ──
-    const actualRole = await resolveRoleFromFirestore(uc.user.uid, email);
+  if (selectedRole !== actualRole) {
+    const names = { student: 'Student', guidance: 'Counselor', admin: 'Administrator' };
+    return fail(`Access denied: this account is registered as <strong>${names[actualRole] || 'Student'}</strong>, not ${names[selectedRole] || _esc(selectedRole)}. Go back and choose the right role.`);
+  }
+  if (actualRole === 'student' && !isAllowedStudentEmail(email)) {
+    return fail('🔒 Only Gmail accounts (@gmail.com) are allowed for students.');
+  }
+  // Google has already verified the address; password accounts must click the emailed link first.
+  if (actualRole === 'student' && !viaGoogle && !user.emailVerified) {
+    let resent = false;
+    try { await user.sendEmailVerification(); resent = true; } catch (e) {}
+    return fail('📧 Email not verified. ' + (resent ? 'We just sent you a <strong>new verification link</strong> — ' : '') + 'please check your <strong>inbox or spam/junk folder</strong> and click the link before logging in. Or use <strong>Continue with Google</strong> to skip this step.');
+  }
+  // First Google sign-in for a student: create their profile (never touches an existing role).
+  if (viaGoogle && actualRole === 'student' && docExists === false) {
+    try { await db.collection('users').doc(user.uid).set({ email, role: 'student', provider: 'google', createdAt: Date.now() }); }
+    catch (e) { console.warn('[QHsafety] could not create user profile:', e && e.code); }
+    addLog(`New student account created with Google: ${email}`, email, 'success');
+  }
 
-    if (selectedRole !== actualRole) {
-      await auth.signOut();
-      loginError = `Access Denied: Your account is not registered as "${selectedRole}". Please select the correct role.`;
-      render();
-      return;
-    }
+  currentUserEmail = email;
+  currentRole = actualRole;
+  isAuthenticated = true;
+  loginError = ''; loginPassword = '';
+  activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+  localStorage.setItem('qh_saved_role', actualRole);
+  if (actualRole === 'guidance') registerAsCounselor();
+  loadDataFromFirestore();
+  addLog(`Logged in as ${actualRole}` + (viaGoogle ? ' (Google)' : ''), email, 'info');
+  setTimeout(handleDeepLink, 1000);
+}
 
-    // For students: require Gmail address
-    if (actualRole === 'student' && !email.endsWith('@gmail.com')) {
-      await auth.signOut();
-      loginError = '🔒 Only Gmail accounts (@gmail.com) are allowed for students.';
-      render();
-      return;
-    }
-
-    // For students: require email verification before allowing login
-    if (actualRole === 'student' && !uc.user.emailVerified) {
-      let resent = false;
-      try { await uc.user.sendEmailVerification(); resent = true; } catch(e) {}
-      await auth.signOut();
-      loginError = '📧 Email not verified. ' + (resent ? 'We just sent you a <strong>new verification link</strong> — ' : '') + 'please check your <strong>inbox or spam/junk folder</strong> and click the link before logging in.';
-      render();
-      return;
-    }
-
-    currentUserEmail = email;
-    currentRole = selectedRole;
-    isAuthenticated = true;
-    activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
-    localStorage.setItem('qh_saved_role', selectedRole);
-
-    if (selectedRole === 'guidance') {
-      registerAsCounselor();
-    }
-
-    loadDataFromFirestore();
-    addLog(`Logged in as ${selectedRole}`, email, 'info');
-    render();
-    setTimeout(handleDeepLink, 1000);
-
+async function handleLogin(selectedRole) {
+  if (authBusy) return;
+  // a password manager can fill the boxes without firing an input event
+  const emailEl = document.getElementById('li-email'), passEl = document.getElementById('li-pass');
+  if (emailEl && emailEl.value) loginEmail = emailEl.value;
+  if (passEl && passEl.value) loginPassword = passEl.value;
+  if (!(loginEmail || '').trim() || !loginPassword) { loginError = '❌ Please enter your email and password.'; render(); return; }
+  loginError = ''; authBusy = 'login'; signInFlowActive = true;
+  render();
+  try {
+    const uc = await auth.signInWithEmailAndPassword((loginEmail || '').trim().toLowerCase(), loginPassword);
+    await finishSignIn(uc.user, selectedRole, false);
   } catch (error) {
     loginError = friendlyAuthError(error.code, error.message);
+  } finally {
+    authBusy = ''; signInFlowActive = false;
     render();
   }
+}
+
+// ── QUICK GOOGLE SIGN-IN ──
+// One tap, no password and no verification email. Needs the Google provider switched on in
+// Firebase Console → Authentication → Sign-in method (see README).
+function googleProvider() {
+  const p = new firebase.auth.GoogleAuthProvider();
+  p.setCustomParameters({ prompt: 'select_account' });
+  return p;
+}
+async function handleGoogleSignIn(role) {
+  if (authBusy) return;
+  role = role || selectedRoleForLogin || 'student';
+  selectedRoleForLogin = role; currentAuthFlow = 'login'; showForgotPassword = false;
+  loginError = ''; authBusy = 'google'; signInFlowActive = true;
+  render();
+  try {
+    const uc = await auth.signInWithPopup(googleProvider());
+    await finishSignIn(uc.user, role, true);
+  } catch (e) {
+    const code = e && e.code;
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment' || code === 'auth/web-storage-unsupported') {
+      // Popups are blocked (common inside in-app browsers): fall back to a full-page redirect.
+      try { sessionStorage.setItem('qh_google_role', role); await auth.signInWithRedirect(googleProvider()); return; }
+      catch (e2) { loginError = friendlyAuthError(e2 && e2.code, e2 && e2.message); }
+    } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'auth/user-cancelled') {
+      loginError = '';   // they simply closed the window
+    } else {
+      loginError = friendlyAuthError(code, e && e.message);
+    }
+  } finally {
+    authBusy = ''; signInFlowActive = false;
+    render();
+  }
+}
+// Completes the redirect fallback when the page loads again.
+function resumeGoogleRedirect() {
+  let role = null;
+  try { role = sessionStorage.getItem('qh_google_role'); sessionStorage.removeItem('qh_google_role'); } catch (e) {}
+  if (!role) return;
+  selectedRoleForLogin = role; authBusy = 'google'; signInFlowActive = true; render();
+  auth.getRedirectResult()
+    .then(res => (res && res.user) ? finishSignIn(res.user, role, true) : null)
+    .catch(e => { loginError = friendlyAuthError(e && e.code, e && e.message); })
+    .then(() => { authBusy = ''; signInFlowActive = false; render(); });
 }
 
 function friendlyAuthError(code, fallback) {
   switch (code) {
     case 'auth/invalid-credential':
+    case 'auth/invalid-login-credentials':
       return '❌ Incorrect email or password. If you just signed up, verify your email first before logging in.';
     case 'auth/wrong-password':
       return '❌ Wrong password. Please try again or use "Forgot Password?" to reset it.';
@@ -1423,13 +723,19 @@ function friendlyAuthError(code, fallback) {
     case 'auth/weak-password':
       return '🔒 Password is too weak — use at least 6 characters.';
     case 'auth/operation-not-allowed':
-      return '⛔ Sign-up is currently disabled. Please contact your administrator.';
+      return '⛔ This sign-in method is not switched on yet. Ask your administrator to enable it in Firebase → Authentication → Sign-in method.';
+    case 'auth/unauthorized-domain':
+      return '⛔ This website address is not authorised for sign-in yet. The administrator must add it in Firebase → Authentication → Settings → Authorized domains.';
+    case 'auth/account-exists-with-different-credential':
+      return '⚠️ An account with this email already exists. Log in with your email and password instead.';
+    case 'auth/popup-blocked':
+      return '⚠️ Your browser blocked the Google window. Allow pop-ups for this site and try again.';
     case 'auth/missing-password':
       return '❌ Please enter your password.';
     case 'auth/missing-email':
       return '❌ Please enter your email address.';
     default:
-      return '❌ Something went wrong (' + (code || 'unknown') + '). Please try again. If this keeps happening, contact your administrator.';
+      return '❌ Something went wrong (' + _esc(code || 'unknown') + '). Please try again. If this keeps happening, contact your administrator.';
   }
 }
 
@@ -1444,40 +750,25 @@ function getOrCreateAnonId() {
 }
 
 async function handleSignup() {
+  if (authBusy) return;
   signupError = '';
-  render();
 
   const email = signupEmail.trim().toLowerCase();
   const password = signupPassword.trim();
   const confirm = signupConfirmPassword.trim();
 
   // Validation
-  if (!email || !password || !confirm) {
-    signupError = 'All fields are required.';
-    render(); return;
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    signupError = 'Please enter a valid email address.';
-    render(); return;
-  }
-  if (!email.endsWith('@gmail.com')) {
-    signupError = '🔒 Only Gmail accounts (@gmail.com) are allowed to register.';
-    render(); return;
-  }
-  if (password.length < 6) {
-    signupError = 'Password must be at least 6 characters.';
-    render(); return;
-  }
-  if (password !== confirm) {
-    signupError = 'Passwords do not match.';
-    render(); return;
-  }
+  let problem = '';
+  if (!email || !password || !confirm) problem = 'All fields are required.';
+  else if (!/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(email)) problem = 'Please enter a valid email address.';
+  else if (!isAllowedStudentEmail(email)) problem = '🔒 Only Gmail accounts (@gmail.com) are allowed to register.';
+  else if (password.length < 6) problem = 'Password must be at least 6 characters.';
+  else if (password !== confirm) problem = 'Passwords do not match.';
   // Only students can self-register
-  if (selectedRoleForLogin !== 'student') {
-    signupError = 'Only students can self-register. Guidance and Admin accounts are created by administrators.';
-    render(); return;
-  }
+  else if (selectedRoleForLogin !== 'student') problem = 'Only students can self-register. Guidance and Admin accounts are created by administrators.';
+  if (problem) { signupError = problem; render(); return; }
 
+  authBusy = 'signup'; signInFlowActive = true; render();
   try {
     const uc = await auth.createUserWithEmailAndPassword(email, password);
     // Store user profile in Firestore
@@ -1495,11 +786,13 @@ async function handleSignup() {
 
     signupEmail = ''; signupPassword = ''; signupConfirmPassword = '';
     currentAuthFlow = 'login';
+    loginEmail = email;
     addLog(`New student account created (pending verification): ${email}`, email, 'success');
-    render();
-    showSuccessModal('Almost There! 📧', `A verification email was sent to <strong>${email}</strong>.<br><br>📌 <strong>Can't find it?</strong> Please check your:<ul style="text-align:left;margin:10px 0 0 0;padding-left:20px;line-height:2"><li><strong>Inbox</strong></li><li><strong>Spam / Junk</strong> folder</li><li><strong>Primary</strong> tab (Gmail users)</li></ul><br>The email is sent by Firebase on behalf of QHsafety. Click the verification link, then come back to log in.`);
+    showSuccessModal('Almost there', `A verification email was sent to <strong>${_esc(email)}</strong>.<br><br><strong>Can't find it?</strong> Please check your:<ul style="text-align:left;margin:10px 0 0 0;padding-left:20px;line-height:2;list-style:disc"><li><strong>Inbox</strong></li><li><strong>Spam / Junk</strong> folder</li><li><strong>Primary</strong> tab (Gmail users)</li></ul><br>The email is sent by Firebase on behalf of QHsafety. Click the verification link, then come back to log in.`);
   } catch (error) {
     signupError = friendlyAuthError(error.code, error.message);
+  } finally {
+    authBusy = ''; signInFlowActive = false;
     render();
   }
 }
@@ -1530,32 +823,39 @@ function maskEmail(email) {
 
 // ── MODAL SYSTEM ──
 let _modalResolve = null;
+let _modalReturnFocus = null;
 
 function _getModalColors(type) {
-  if (type === 'error')   return { bg:'#fdecea', color:'#c62828', icon:'⚠️' };
-  if (type === 'warning') return { bg:'#fff3e0', color:'#e65100', icon:'⚡' };
-  if (type === 'success') return { bg:'#e8f5e9', color:'#2e7d32', icon:'✅' };
-  return { bg:'#e3f2fd', color:'#1565c0', icon:'ℹ️' };
+  if (type === 'error')   return { bg:'#fdecea', color:'#c62828', icon:'alert-triangle' };
+  if (type === 'warning') return { bg:'#fff3e0', color:'#e65100', icon:'alert-triangle' };
+  if (type === 'success') return { bg:'#e8f5e9', color:'#2e7d32', icon:'check' };
+  return { bg:'#e3f2fd', color:'#1565c0', icon:'info' };
+}
+
+function _openModal(title, body, type, opts) {
+  opts = opts || {};
+  const overlay = document.getElementById('qh-modal-overlay');
+  const iconWrap = document.getElementById('qh-modal-icon-wrap');
+  const inputEl  = document.getElementById('qh-modal-input');
+  const btnsEl   = document.getElementById('qh-modal-btns');
+  const c = _getModalColors(type);
+  _modalReturnFocus = document.activeElement;
+  iconWrap.style.background = c.bg;
+  iconWrap.style.color = c.color;
+  iconWrap.innerHTML = iconSvg(c.icon, ' style="width:24px;height:24px"');
+  document.getElementById('qh-modal-title').textContent = title;
+  document.getElementById('qh-modal-body').innerHTML = body;
+  inputEl.style.display = opts.input ? 'block' : 'none';
+  inputEl.value = '';
+  if (opts.input) inputEl.placeholder = opts.placeholder || '';
+  btnsEl.innerHTML = opts.buttons;
+  overlay.classList.add('open');
+  setTimeout(() => { const f = opts.input ? inputEl : btnsEl.querySelector('[data-autofocus]') || btnsEl.querySelector('button'); if (f) f.focus(); }, 60);
 }
 
 function showModal(title, body, type) {
-  const overlay = document.getElementById('qh-modal-overlay');
-  const iconWrap = document.getElementById('qh-modal-icon-wrap');
-  const titleEl  = document.getElementById('qh-modal-title');
-  const bodyEl   = document.getElementById('qh-modal-body');
-  const inputEl  = document.getElementById('qh-modal-input');
-  const btnsEl   = document.getElementById('qh-modal-btns');
-  const c = _getModalColors(type || 'info');
-
-  iconWrap.style.background = c.bg;
-  iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
-  titleEl.textContent = title;
-  bodyEl.innerHTML = body;
-  inputEl.style.display = 'none';
-  inputEl.value = '';
-
-  btnsEl.innerHTML = `<button class="qh-modal-btn qh-modal-btn-secondary" onclick="closeModal()">OK</button>`;
-  overlay.classList.add('open');
+  if (_modalResolve) { _modalResolve(false); _modalResolve = null; }
+  _openModal(title, body, type || 'info', { buttons: `<button class="qh-modal-btn qh-modal-btn-secondary" data-autofocus onclick="closeModal()">OK</button>` });
 }
 
 function showSuccessModal(title, body) {
@@ -1563,68 +863,73 @@ function showSuccessModal(title, body) {
 }
 
 function closeModal() {
-  const overlay = document.getElementById('qh-modal-overlay');
-  overlay.classList.remove('open');
-  if (_modalResolve) { _modalResolve(false); _modalResolve = null; }
+  document.getElementById('qh-modal-overlay').classList.remove('open');
+  if (_modalResolve) { const r = _modalResolve; _modalResolve = null; r(false); }
+  try { if (_modalReturnFocus && document.contains(_modalReturnFocus)) _modalReturnFocus.focus(); } catch (e) {}
 }
 
 // Returns a Promise<boolean> — true if user confirmed
-function confirmModal(title, body, type) {
+function confirmModal(title, body, type, confirmLabel) {
   return new Promise(resolve => {
+    if (_modalResolve) _modalResolve(false);
     _modalResolve = resolve;
-    const overlay = document.getElementById('qh-modal-overlay');
-    const iconWrap = document.getElementById('qh-modal-icon-wrap');
-    const titleEl  = document.getElementById('qh-modal-title');
-    const bodyEl   = document.getElementById('qh-modal-body');
-    const inputEl  = document.getElementById('qh-modal-input');
-    const btnsEl   = document.getElementById('qh-modal-btns');
-    const c = _getModalColors(type || 'warning');
-
-    iconWrap.style.background = c.bg;
-    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
-    titleEl.textContent = title;
-    bodyEl.innerHTML = body;
-    inputEl.style.display = 'none';
-    inputEl.value = '';
-
-    btnsEl.innerHTML = `
-      <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(false)">Cancel</button>
-      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(true)">Confirm Delete</button>`;
-    overlay.classList.add('open');
+    _openModal(title, body, type || 'warning', { buttons: `
+      <button class="qh-modal-btn qh-modal-btn-secondary" data-autofocus onclick="_resolveModal(false)">Keep</button>
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(true)">${_esc(confirmLabel || 'Delete')}</button>` });
   });
 }
 
 // Returns a Promise<string|null>
 function promptModal(title, body, type) {
   return new Promise(resolve => {
+    if (_modalResolve) _modalResolve(null);
     _modalResolve = resolve;
-    const overlay = document.getElementById('qh-modal-overlay');
-    const iconWrap = document.getElementById('qh-modal-icon-wrap');
-    const titleEl  = document.getElementById('qh-modal-title');
-    const bodyEl   = document.getElementById('qh-modal-body');
-    const inputEl  = document.getElementById('qh-modal-input');
-    const btnsEl   = document.getElementById('qh-modal-btns');
-    const c = _getModalColors(type || 'warning');
-
-    iconWrap.style.background = c.bg;
-    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
-    titleEl.textContent = title;
-    bodyEl.innerHTML = body;
-    inputEl.style.display = 'block';
-    inputEl.value = '';
-    inputEl.placeholder = 'Type DELETE to confirm';
-
-    btnsEl.innerHTML = `
+    _openModal(title, body, type || 'warning', { input: true, placeholder: 'Type DELETE to confirm', buttons: `
       <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(null)">Cancel</button>
-      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(document.getElementById('qh-modal-input').value)">Confirm</button>`;
-    overlay.classList.add('open');
-    setTimeout(() => inputEl.focus(), 100);
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(document.getElementById('qh-modal-input').value)">Confirm</button>` });
   });
 }
 
 function _resolveModal(value) {
   document.getElementById('qh-modal-overlay').classList.remove('open');
-  if (_modalResolve) { _modalResolve(value); _modalResolve = null; }
+  if (_modalResolve) { const r = _modalResolve; _modalResolve = null; r(value); }
+  try { if (_modalReturnFocus && document.contains(_modalReturnFocus)) _modalReturnFocus.focus(); } catch (e) {}
+}
+
+// Esc or a click on the backdrop closes the dialog (counts as "cancel")
+document.addEventListener('keydown', (e) => {
+  const overlay = document.getElementById('qh-modal-overlay');
+  if (!overlay || !overlay.classList.contains('open')) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeModal(); }
+  else if (e.key === 'Enter' && document.activeElement && document.activeElement.id === 'qh-modal-input') {
+    e.preventDefault(); _resolveModal(document.activeElement.value);
+  }
+});
+document.addEventListener('click', (e) => { if (e.target && e.target.id === 'qh-modal-overlay') closeModal(); });
+
+// ── TOASTS ── small confirmations that do not need an "OK" click
+function toast(message, type) {
+  let host = document.getElementById('qh-toasts');
+  if (!host) { host = document.createElement('div'); host.id = 'qh-toasts'; host.setAttribute('role', 'status'); host.setAttribute('aria-live', 'polite'); document.body.appendChild(host); }
+  const el = document.createElement('div');
+  el.className = 'qh-toast' + (type ? ' qh-toast-' + type : '');
+  el.textContent = message;
+  host.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, type === 'error' ? 4500 : 2400);
+}
+
+// Full-size view of an image attachment
+function openAttachment(el) {
+  const src = el && el.getAttribute('src');
+  if (!src || !/^data:image\//.test(src)) return;
+  const v = document.createElement('div');
+  v.className = 'qh-viewer';
+  v.onclick = () => v.remove();
+  const img = document.createElement('img');
+  img.src = src; img.alt = el.getAttribute('alt') || 'Attachment';
+  v.appendChild(img);
+  document.body.appendChild(v);
 }
 
 // Fixed createAdminAccount
@@ -1658,7 +963,7 @@ async function createAdminAccount() {
 
     showSuccessModal(
       "New Admin Account Created!",
-      `Email: ${_esc(email)}<br>Password: ${_esc(password)}<br><br>Share these credentials carefully.`
+      `<strong>${_esc(email)}</strong> can now log in as Administrator with the password you just set.`
     );
 
     document.getElementById('newAdminEmail').value = '';
@@ -1699,7 +1004,7 @@ async function createGuidanceAccount() {
 
     showSuccessModal(
       "New Guidance Counselor Account Created!",
-      `Email: <strong>${_esc(email)}</strong><br>Password: <strong>${_esc(password)}</strong><br><br>Share these credentials carefully with the counselor.`
+      `<strong>${_esc(email)}</strong> can now log in as Counselor with the password you just set.`
     );
 
     document.getElementById('newGuidanceEmail').value = '';
@@ -1713,16 +1018,20 @@ async function createGuidanceAccount() {
 }
 
 async function handleForgotPassword() {
+  if (authBusy) return;
   forgotPasswordError = '';
   forgotPasswordSuccess = '';
+  const email = (forgotPasswordEmail || '').trim().toLowerCase();
+  if (!email) { forgotPasswordError = '❌ Please enter your email address.'; render(); return; }
+  authBusy = 'reset'; render();
   try {
-    await auth.sendPasswordResetEmail(forgotPasswordEmail);
-    forgotPasswordSuccess = 'Password reset email sent. Please check your inbox or spam folder.';
-    render();
+    await auth.sendPasswordResetEmail(email);
+    forgotPasswordSuccess = 'If that email has an account, a reset link is on its way. Check your inbox and spam folder.';
   } catch (error) {
-    forgotPasswordError = friendlyAuthError(error.code, error.message);
-    render();
-  }
+    // do not reveal whether an address is registered
+    if (error.code === 'auth/user-not-found') forgotPasswordSuccess = 'If that email has an account, a reset link is on its way. Check your inbox and spam folder.';
+    else forgotPasswordError = friendlyAuthError(error.code, error.message);
+  } finally { authBusy = ''; render(); }
 }
 
 function logout() {
@@ -1740,21 +1049,23 @@ function logout() {
   currentRole = null;
   currentUserEmail = '';
   mobileDrawerOpen = false;
-  postLimit = 25; consultLimit = 25;
+  postLimit = 25; consultLimit = 25; postingSearchQuery = '';
+  showPostingForm = false; showConsultationForm = false; showFeedbackForm = false; showMeetScheduler = {};
+  postingChatDraft = {}; consultationChatDraft = {}; guidanceMessageDraft = {};
   postings = [];
   consultationPostings = [];
   feedbackList = [];
   systemLogs = [];
-  if (!wasAnonymous) {
-    auth.signOut().then(() => render());
-  } else {
-    render();
-  }
+  booting = false; loginError = ''; selectedRoleForLogin = null; _threatMemo.clear(); _attStore.clear();
+  render();
+  if (!wasAnonymous) auth.signOut().catch(() => {});
 }
 
     // ── FIRESTORE ──
+    let dataLoaded = { postings:false, consultations:false, feedback:false };
     function loadDataFromFirestore() {
       firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
+      dataLoaded = { postings:false, consultations:false, feedback:false };
 
       // Postings: guidance/admin see all; students see only their own
       const postingsQuery = (currentRole==='guidance'||currentRole==='admin')
@@ -1768,100 +1079,83 @@ function logout() {
 
       const isStaff = (currentRole==='guidance'||currentRole==='admin');
       const byTime = (a,b)=>(b.timestamp||0)-(a.timestamp||0);
-      const onErr = (name)=>(e)=>console.warn('[QHsafety] listener '+name+':',e && e.code);
+      const onErr = (name)=>(e)=>{console.warn('[QHsafety] listener '+name+':',e && e.code);dataLoaded[name]=true;scheduleRender();};
+      const clean = (s,kind)=>{const out=[];s.forEach(d=>{const x=cleanDoc(d.data(),kind);if(x)out.push(x);});return out.sort(byTime);};
       // Staff: newest 150 only (keeps memory + rendering small on weak devices)
       const pq = isStaff ? postingsQuery.orderBy('timestamp','desc').limit(150) : postingsQuery;
       const cq = isStaff ? consultQuery.orderBy('timestamp','desc').limit(150) : consultQuery;
 
       firestoreUnsubscribes.push(
-        pq.onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('postings')),
-        cq.onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('consultations'))
+        pq.onSnapshot(s=>{postings=clean(s,'posting');dataLoaded.postings=true;scheduleRender();},onErr('postings')),
+        cq.onSnapshot(s=>{consultationPostings=clean(s,'consultation');dataLoaded.consultations=true;scheduleRender();},onErr('consultations'))
       );
-      // Feedback: admin sees all, everyone else only their own (was: every user downloaded everything)
+      // Feedback: admin sees all, everyone else only their own
       const fbQuery = currentRole==='admin' ? db.collection('feedback').orderBy('timestamp','desc').limit(200)
                                             : db.collection('feedback').where('author','==',currentUserEmail);
       firestoreUnsubscribes.push(
-        fbQuery.onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('feedback'))
+        fbQuery.onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).filter(Boolean).sort(byTime);dataLoaded.feedback=true;scheduleRender();},onErr('feedback'))
       );
-      // Logs: only the admin Logs page uses them (was: downloaded by every student)
+      // Logs: only the admin Logs page uses them
       if (currentRole==='admin') {
         firestoreUnsubscribes.push(
-          db.collection('logs').orderBy('timestamp','desc').limit(200).onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('logs'))
+          db.collection('logs').orderBy('timestamp','desc').limit(200).onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).filter(Boolean).sort(byTime);scheduleRender();},onErr('logs'))
         );
       }
     }
 
     // ── POSTINGS ──
-    async function addPosting() {
-  if(window._postSubmitting)return;
-  if(!postingTitle.trim()||!postingContent.trim()){postingError='Title and content are required';render();return;}
-  if(shouldBlockForLanguage(postingTitle+' '+postingContent)){postingError='🔴 Post blocked: Inappropriate language detected.';render();return;}
-  window._postSubmitting=true;
-  try {
-    // Censor sensitive words instead of blocking
-    const cleanTitle = censorText(postingTitle);
-    const cleanContent = censorText(postingContent);
-    const hasSensitive = containsSensitiveWords(postingTitle+' '+postingContent);
-    const risk = await detectRiskAI(postingTitle+' '+postingContent);
+    // The post is saved and shown immediately using the local rules; the AI's second opinion
+    // and any alert to the guidance office happen in the background.
+    function addPosting() {
+      const title = postingTitle.trim(), content = postingContent.trim();
+      if (!title || !content) { postingError = 'Title and content are required'; render(); return; }
+      const fullText = title + ' ' + content;
+      const local = analyzeRisk(fullText);
+      const cleanTitle = passLanguageGate(title, local), cleanContent = passLanguageGate(content, local);
+      if (cleanTitle === null || cleanContent === null) { postingError = LANGUAGE_REFUSAL; render(); return; }
 
-    // AI must verify High risk independently — priority alone is not enough
-    let finalPriority = postingPriority || 'Medium';
-    if (finalPriority === 'High' && risk.level !== 'High') {
-      finalPriority = 'Medium'; // AI override: not genuinely high risk
+      const chosen = postingPriority || 'Medium';
+      const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+      const newPosting = {
+        id: newDocId(),
+        title: cleanTitle,
+        content: cleanContent,
+        priority: priorityFor(chosen, local),
+        aiScore: local.score,
+        riskLevel: local.level,
+        flagged: !!local.flagged,
+        reasons: local.reasons,
+        author: authorLabel,
+        authorId: currentUserEmail,
+        isAnonymous: isAnonymous,
+        timestamp: Date.now()
+      };
+      const write = db.collection('postings').doc(String(newPosting.id)).set(newPosting);
+
+      // Clear the form straight away — the live listener already shows the new post
+      postingTitle = ''; postingContent = ''; postingPriority = 'Medium'; showPostingForm = false; postingError = '';
+      render();
+      toast(appLang === 'tl' ? 'Nai-post na' : 'Posted');
+
+      write.then(() => refineRiskInBackground('postings', newPosting, fullText, local, 'Posting', cleanTitle, cleanContent, chosen))
+        .catch(e => {
+          // Saving failed: give the student their words back
+          postingTitle = title; postingContent = content; postingPriority = chosen; showPostingForm = true;
+          postingError = 'Could not post: ' + _esc((e && e.message) || 'check your connection and try again');
+          activeSidebarItem = 'Postings';
+          render();
+        });
     }
-
-    const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-    const newPosting = {
-      id: Date.now(),
-      title: cleanTitle,
-      content: cleanContent,
-      priority: finalPriority,
-      aiScore: risk.score,
-      riskLevel: risk.level,
-      flagged: risk.flagged || hasSensitive,
-      reasons: risk.reasons,
-      author: authorLabel,
-      authorId: currentUserEmail,
-      isAnonymous: isAnonymous,
-      timestamp: Date.now()
-    };
-
-    await db.collection('postings').doc(String(newPosting.id)).set(newPosting);
-    
-    if(risk.flagged || hasSensitive) {
-      addLog('⚠ Flagged post (' + (risk.reasons?.join(', ') || 'Sensitive content') + ')', authorLabel, 'warning');
-    }
-
-    // 📧 Notify guidance if AI confirmed High OR Medium risk
-if (risk.level === 'High' || risk.level === 'Medium') {
-  // fire-and-forget: the student must not wait on email/push round-trips
-  notifyGuidanceOfHighRisk('Posting', authorLabel, cleanTitle, cleanContent, risk.score, risk.level, risk.reasons).catch(()=>{});
-  sendOneSignalPush(
-    `🚨 ${risk.level.toUpperCase()} RISK POST — AI Score: ${risk.score}`,
-    `${authorLabel}: "${cleanTitle}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
-    newPosting.id, 'posting', risk.level, risk.score, risk.reasons
-  ).catch(()=>{});
-  addLog(`🚨 ${risk.level}-risk posting alert sent`, authorLabel, 'warning');
-}
-
-    // Clear form and reset UI
-    postingTitle=''; postingContent=''; showPostingForm=false; postingError=''; render();
-  } catch(e) {
-    postingError = 'Failed to post: ' + e.message;
-    render();
-  } finally {
-    window._postSubmitting = false;
-  }
-}
 
 async function deletePosting(id) {
-  const ok = await confirmModal("Delete Posting", "Are you sure you want to permanently delete this posting?", "warning");
+  const ok = await confirmModal("Delete posting", "Permanently delete this posting? This cannot be undone.", "warning");
   if (!ok) return;
   try {
     await db.collection('postings').doc(String(id)).delete();
     addLog('Post deleted', currentUserEmail, 'warning');
+    toast('Posting deleted');
   } catch(e) {
-    showModal("Error", "Failed to delete posting: " + e.message, "error");
+    showModal("Error", "Failed to delete posting: " + _esc(e.message), "error");
   }
 }
 
@@ -1904,7 +1198,7 @@ function updateNotifUI() {
           label.style.color = '#388e3c';
           if (icon) icon.textContent = '✅';
           if (btn) {
-            btn.textContent = '✅ Notifications Enabled';
+            btn.textContent = 'Notifications enabled';
             btn.style.background = '#66bb6a';
             btn.style.color = '#fff';
           }
@@ -1913,10 +1207,9 @@ function updateNotifUI() {
           label.style.color = '';
           if (icon) icon.textContent = '🔕';
           if (btn) {
-            btn.innerHTML = '<i data-lucide="bell-ring" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"></i>Enable Push Notifications';
+            btn.innerHTML = iconSvg('bell-ring', ' style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"') + 'Enable Push Notifications';
             btn.style.background = '#ffee58';
             btn.style.color = '#2c3e50';
-            lucide.createIcons({nodes: [btn]});
           }
         }
       }
@@ -1987,13 +1280,7 @@ function unregisterAsCounselor() {
   });
 }
 
-// ── ONESIGNAL: Broadcast announcement to all students ──
-// Uses direct OneSignal REST API (same approach as broadcaster reference)
-const ONESIGNAL_CONFIG = {
-  APP_ID: "b6d94be7-713f-4369-8b1f-2df77580872c",
-  REST_KEY: "os_v2_app_w3muxz3rh5bwtcy7fx3xlaehftzv6cylc2eequnxrpk5u34vbksf7p4qespn3wdt755k6wuucwmuxxzcapanfiasvz3gkph5lu2r5iy"
-};
-
+// ── ONESIGNAL: Broadcast announcement to all students (through our own /api/notify) ──
 async function sendAnnouncementPush(title, message) {
   // Route through our own backend — no Cloudflare/corsproxy needed
   const res = await fetch("/api/notify", {
@@ -2001,7 +1288,7 @@ async function sendAnnouncementPush(title, message) {
     headers: await authHeaders(),
     body: JSON.stringify({ title, message, target: "broadcast" })
   });
-  return await res.json();
+  return await res.json().catch(() => ({}));
 }
 
 async function getAnnouncementStats(notifId) {
@@ -2014,66 +1301,34 @@ async function getAnnouncementStats(notifId) {
 let announcementTitle = '', announcementMessage = '';
 
 async function handleSendAnnouncement() {
-  if (!announcementTitle.trim() || !announcementMessage.trim()) {
-    showModal('Missing Fields', 'Please enter both a title and message.', 'error');
-    return;
-  }
+  if (announcementBusy) return;
+  const title = announcementTitle.trim(), message = announcementMessage.trim();
+  if (!title || !message) { showModal('Missing fields', 'Please enter both a title and message.', 'error'); return; }
+  if (containsProfanity(title + ' ' + message)) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
+  const ok = await confirmModal('Send to all students?', 'Every student who enabled notifications will receive:<br><br><strong>' + _esc(title) + '</strong><br>' + _esc(message), 'info', 'Send');
+  if (!ok) return;
 
-  // Disable button and show sending state
-  const btn = document.getElementById('announcement-send-btn');
-  const statusEl = document.getElementById('announcement-status');
-  const progressWrap = document.getElementById('announcement-progress-wrap');
-  const progressFill = document.getElementById('announcement-progress-fill');
-  const timerEl = document.getElementById('announcement-timer');
-  const resultEl = document.getElementById('announcement-result');
-
-  if (btn) { btn.disabled = true; btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...'; lucide.createIcons({nodes:[btn]}); }
-  if (progressWrap) progressWrap.style.display = 'block';
-  if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '🚀 Deploying announcement...'; statusEl.style.color = '#1565c0'; }
-  if (progressFill) { progressFill.style.transition = 'none'; progressFill.style.width = '0%'; }
-  if (resultEl) resultEl.style.display = 'none';
-
+  announcementBusy = true; render();
+  const statusEl = () => document.getElementById('announcement-status');
+  const resultEl = () => document.getElementById('announcement-result');
+  const say = (text, color) => { const el = statusEl(); if (el) { el.style.display = 'block'; el.textContent = text; el.style.color = color; } };
+  const r0 = resultEl(); if (r0) r0.style.display = 'none';
+  say('Sending…', '#1565c0');
   try {
-    const data = await sendAnnouncementPush(announcementTitle.trim(), announcementMessage.trim());
-
-    if (!data.id) throw new Error(JSON.stringify(data.errors || data));
-
-    // Sync countdown (10 seconds, like y.html reference)
-    if (statusEl) statusEl.textContent = '⏳ Syncing delivery data...';
-    if (progressFill) {
-      setTimeout(() => { progressFill.style.transition = 'width 10s linear'; progressFill.style.width = '100%'; }, 50);
-    }
-    for (let i = 10; i > 0; i--) {
-      if (timerEl) timerEl.textContent = i + 's';
-      await new Promise(r => setTimeout(r, 1000));
-    }
-
-    // Get recipient count directly from OneSignal send response
-    if (statusEl) statusEl.textContent = '✅ Verifying recipients...';
-    const delivered = data.recipients || data.successful || data.received || 0;
-
-    if (statusEl) statusEl.textContent = '✅ Announcement delivered!';
-    if (timerEl) timerEl.textContent = 'DONE';
-    if (resultEl) {
-      resultEl.style.display = 'block';
-      resultEl.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Verified Recipients</span>`;
-    }
-
-    addLog(`📢 Announcement sent to ${delivered} student(s): "${announcementTitle.trim()}"`, currentUserEmail, 'info');
+    const data = await sendAnnouncementPush(title, message);
+    if (!data || !data.id) throw new Error(JSON.stringify((data && (data.errors || data.error)) || data || 'No response'));
+    const delivered = Number(data.recipients || data.successful || data.received || 0);
+    say('Announcement sent', '#2e7d32');
+    const r = resultEl();
+    if (r) { r.style.display = 'block'; r.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Recipients</span>`; }
+    addLog(`📢 Announcement sent to ${delivered} student(s): "${title}"`, currentUserEmail, 'info');
     announcementTitle = ''; announcementMessage = '';
-    // Reset input fields directly
-    const titleInp = document.getElementById('announcement-title-input');
-    const msgInp = document.getElementById('announcement-msg-input');
-    if (titleInp) titleInp.value = '';
-    if (msgInp) msgInp.value = '';
-
   } catch(e) {
-    if (statusEl) { statusEl.textContent = '❌ Failed to send announcement.'; statusEl.style.color = '#c62828'; }
-    if (timerEl) timerEl.textContent = '';
-    showModal('Send Failed', 'Could not broadcast announcement. Check your connection and try again.<br><small>' + e.message + '</small>', 'error');
+    say('Failed to send announcement.', '#c62828');
+    showModal('Send failed', 'Could not broadcast the announcement. Check your connection and try again.<br><small>' + _esc(e.message) + '</small>', 'error');
     console.error('[QHsafety] Announcement broadcast error:', e);
   } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students'; lucide.createIcons({nodes:[btn]}); }
+    announcementBusy = false; render();
   }
 }
 
@@ -2093,286 +1348,232 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
       headers: await authHeaders(),
       body: JSON.stringify({ title, message, url: deepUrl, reasons: reasons || [] })
     });
-    return await response.json();
+    return await response.json().catch(() => ({}));
   } catch (e) {
     console.error("OneSignal Error:", e);
   }
 }
   
     // ── CONSULTATIONS ──
-    async function addConsultation() {
-      if(window._consultSubmitting)return;
-      if(!consultationReason.trim()||!consultationDescription.trim()){consultationError='Reason and details are required';render();return;}
-      if(!consultationGradeLevel){consultationError='Please select your grade level';render();return;}
-      if(shouldBlockForLanguage(consultationReason+' '+consultationDescription)){consultationError='🔴 Request blocked: Please use appropriate language.';render();return;}
-      window._consultSubmitting=true;
-      try {
-        const cleanReason = censorText(consultationReason);
-        const cleanDesc = censorText(consultationDescription);
-        const risk=await detectRiskAI(consultationReason+' '+consultationDescription);
+    function addConsultation() {
+      const reason = consultationReason.trim(), details = consultationDescription.trim();
+      if (!reason || !details) { consultationError = 'Reason and details are required'; render(); return; }
+      if (!consultationGradeLevel) { consultationError = 'Please select your grade level'; render(); return; }
+      const fullText = reason + ' ' + details;
+      const local = analyzeRisk(fullText);
+      const cleanReason = passLanguageGate(reason, local), cleanDesc = passLanguageGate(details, local);
+      if (cleanReason === null || cleanDesc === null) { consultationError = LANGUAGE_REFUSAL; render(); return; }
 
-        // AI must verify High risk independently — user-selected High priority alone is not enough
-        let finalPriority = consultationPriority || 'Medium';
-        if (finalPriority === 'High' && risk.level !== 'High') {
-          finalPriority = 'Medium'; // AI override: content doesn't warrant high risk
-        }
+      const chosen = consultationPriority || 'Medium';
+      const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+      const saved = { grade: consultationGradeLevel, pref: consultationContactPref, mood: consultationMoodLevel };
+      const newConsult = {
+        id: newDocId(), reason: cleanReason, description: cleanDesc, priority: priorityFor(chosen, local),
+        gradeLevel: saved.grade, contactPref: saved.pref, studentMood: saved.mood,
+        author: authorLabel, authorId: currentUserEmail, isAnonymous: isAnonymous, status: 'Pending',
+        riskLevel: local.level, aiScore: local.score, flagged: !!local.flagged, reasons: local.reasons,
+        timestamp: Date.now(), messages: []
+      };
+      const write = db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
 
-        const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-        const newConsult={id:Date.now(),reason:cleanReason,description:cleanDesc,priority:finalPriority,gradeLevel:consultationGradeLevel,contactPref:consultationContactPref,studentMood:consultationMoodLevel,author:authorLabel,authorId:currentUserEmail,isAnonymous:isAnonymous,status:'Pending',riskLevel:risk.level,aiScore:risk.score,timestamp:Date.now(),messages:[]};
-        await db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
+      consultationReason = ''; consultationDescription = ''; consultationPriority = 'Medium';
+      consultationGradeLevel = ''; consultationContactPref = 'chat'; consultationMoodLevel = 3; showConsultationForm = false; consultationError = '';
+      render();
+      toast(appLang === 'tl' ? 'Naipadala ang kahilingan' : 'Request sent');
 
-        // 📧 Notify guidance if AI confirmed High OR Medium risk
-if (risk.level === 'High' || risk.level === 'Medium') {
-  notifyGuidanceOfHighRisk('Consultation', authorLabel, cleanReason, cleanDesc, risk.score, risk.level, risk.reasons).catch(()=>{});
-  sendOneSignalPush(
-    `🚨 ${risk.level.toUpperCase()} RISK CONSULTATION — AI Score: ${risk.score}`,
-    `${authorLabel}: "${cleanReason}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
-    newConsult.id, 'consultation', risk.level, risk.score, risk.reasons
-  ).catch(()=>{});
-  addLog(`🚨 ${risk.level}-risk consultation alert sent`, authorLabel, 'warning');
-}
-
-        // Clear form and reset UI
-        consultationReason=''; consultationDescription=''; consultationPriority='Medium';
-        consultationGradeLevel=''; consultationContactPref='chat'; consultationMoodLevel=3; showConsultationForm=false; consultationError='';
+      write.then(() => {
         addLog('Consultation submitted', authorLabel, 'info');
+        return refineRiskInBackground('consultations', newConsult, fullText, local, 'Consultation', cleanReason, cleanDesc, chosen);
+      }).catch(e => {
+        consultationReason = reason; consultationDescription = details; consultationPriority = chosen;
+        consultationGradeLevel = saved.grade; consultationContactPref = saved.pref; consultationMoodLevel = saved.mood;
+        showConsultationForm = true;
+        consultationError = 'Could not submit: ' + _esc((e && e.message) || 'check your connection and try again');
+        activeSidebarItem = 'Consultations';
         render();
-      } catch(e) {
-        consultationError = 'Failed to submit: ' + e.message;
-        render();
-      } finally {
-        window._consultSubmitting = false;
-      }
+      });
     }
 
     async function deleteConsultationPosting(id){
-      const ok = await confirmModal("Cancel Request", "Cancel this consultation request?", "warning");
+      const ok = await confirmModal("Cancel request", "Cancel this consultation request? This cannot be undone.", "warning", "Cancel request");
       if (!ok) return;
-      try{await db.collection('consultations').doc(String(id)).delete();addLog('Consultation cancelled',currentUserEmail,'warning');}
-      catch(e){showModal("Error","Could not cancel request: "+e.message,"error");}
+      try{await db.collection('consultations').doc(String(id)).delete();addLog('Consultation cancelled',currentUserEmail,'warning');toast('Request cancelled');}
+      catch(e){showModal("Error","Could not cancel request: "+_esc(e.message),"error");}
     }
-    async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done',appointmentStatus:'Done',appointmentStatusUpdatedAt:Date.now()});addLog('Consultation marked as Done',currentUserEmail,'success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');}}
+    async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done',appointmentStatus:'Done',appointmentStatusUpdatedAt:Date.now()});addLog('Consultation marked as Done',currentUserEmail,'success');toast('Marked as resolved','success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');toast('Could not update — try again','error');}}
 
   // ── CONSULTATION: SCHEDULE MEET OR PHONE CALL ──
+const arrayUnion = (x) => firebase.firestore.FieldValue.arrayUnion(x);   // adds a chat message atomically, in one round trip
+const nowTime = () => new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+
 async function scheduleConsultMeet(consultId) {
   const d = consultMeetDraft;
-  if (!d.date || !d.time) { showModal('Missing Info', 'Please select both a date and time.', 'error'); return; }
+  if (!d.date || !d.time) { showModal('Missing info', 'Please select both a date and time.', 'error'); return; }
   const isoStr = d.date + 'T' + d.time;
+  if (isNaN(new Date(isoStr).getTime())) { showModal('Invalid date', 'Please pick a valid date and time.', 'error'); return; }
 
-  // Get the consultation to check contactPref
-  const ref = db.collection('consultations').doc(String(consultId));
-  const doc = await ref.get();
-  const consultData = doc.data();
+  const consultData = consultationPostings.find(c => String(c.id) === String(consultId));
+  if (!consultData) { showModal('Not found', 'This consultation no longer exists.', 'error'); return; }
   const isPhone = (consultData.contactPref === 'phone');
+  const rawLink = (d.link || '').trim();
+  const link = isPhone ? rawLink.replace(/[^\d+\-() ]/g, '').slice(0, 24) : safeHttpUrl(rawLink);
+  if (rawLink && !link) { showModal('Check the link', 'That does not look like a valid meeting link.', 'error'); return; }
 
   const meetData = {
     meetDate: d.date,
     meetTime: d.time,
     meetDateTime: isoStr,
-    meetLink: d.link.trim() || '',
-    meetNotes: d.notes.trim() || '',
+    meetLink: link,
+    meetNotes: (d.notes || '').trim().slice(0, 500),
     meetScheduledBy: currentUserEmail,
     meetScheduledAt: Date.now(),
     status: 'Pending'
   };
+  const dateLabel = new Date(isoStr).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+  let msgText = '';
+  if (isPhone) {
+    msgText = '📱 <strong>Phone Call Scheduled!</strong><br>Date & Time: ' + _esc(dateLabel)
+      + (link ? '<br>📞 <a href="tel:' + link.replace(/[^\d+]/g,'') + '">' + _esc(link) + '</a> (tap to call)' : '')
+      + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+  } else {
+    msgText = '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + _esc(dateLabel)
+      + (link ? '<br>🔗 <a href="' + _esc(link) + '">Join Google Meet</a>' : '')
+      + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+  }
+  const sysMsg = { sender: currentUserEmail, role: 'guidance', isSystem: true, text: msgText, time: nowTime(), ts: Date.now() };
   try {
-    await ref.update(meetData);
-    const existing = consultData.chatMessages || [];
-    const dateLabel = new Date(isoStr).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
-
-    let msgText = '';
-    if (isPhone) {
-      // Phone call message — show number as a tappable tel: link
-      const phoneNum = meetData.meetLink;
-      msgText = '📱 <strong>Phone Call Scheduled!</strong><br>Date & Time: ' + dateLabel
-        + (phoneNum ? '<br>📞 <a href="tel:' + phoneNum.replace(/\s/g,'') + '" style="color:#90caf9;text-decoration:underline;font-weight:700">' + _esc(phoneNum) + '</a> (tap to call)' : '')
-        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
-    } else {
-      // Google Meet message
-      msgText = '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel
-        + (meetData.meetLink ? '<br>🔗 <a href="' + (meetData.meetLink.startsWith('http') ? meetData.meetLink : 'https://' + meetData.meetLink) + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '')
-        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
-    }
-
-    const sysMsg = {
-      sender: currentUserEmail,
-      role: 'guidance',
-      isSystem: true,
-      text: msgText,
-      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
-      ts: Date.now()
-    };
-    await ref.update({ chatMessages: [...existing, sysMsg] });
-    showMeetScheduler[consultId] = false;
+    await db.collection('consultations').doc(String(consultId)).update({ ...meetData, chatMessages: arrayUnion(sysMsg) });
+    showMeetScheduler = {};
     consultMeetDraft = {date:'',time:'',link:'',notes:''};
     addLog((isPhone?'Phone call':'Meet')+' scheduled for consultation #'+consultId, currentUserEmail, 'success');
     render();
-    showModal(isPhone ? '✅ Phone Call Scheduled!' : '✅ Meeting Scheduled!', 'The student will see the details in the chat.', 'success');
-  } catch(e) { showModal('Error', 'Failed to schedule: ' + e.message, 'error'); }
+    toast(isPhone ? 'Phone call scheduled — the student can see it in the chat' : 'Meeting scheduled — the student can see it in the chat', 'success');
+  } catch(e) { showModal('Error', 'Failed to schedule: ' + _esc(e.message), 'error'); }
 }
 
 async function cancelConsultMeet(consultId) {
-  const ok = await confirmModal('Cancel Meeting', 'Remove the scheduled meeting from this consultation?', 'warning');
+  const ok = await confirmModal('Cancel meeting', 'Remove the scheduled meeting from this consultation?', 'warning', 'Cancel meeting');
   if (!ok) return;
   try {
+    const del = firebase.firestore.FieldValue.delete();
     await db.collection('consultations').doc(String(consultId)).update({
-      meetDate: firebase.firestore.FieldValue.delete(),
-      meetTime: firebase.firestore.FieldValue.delete(),
-      meetDateTime: firebase.firestore.FieldValue.delete(),
-      meetLink: firebase.firestore.FieldValue.delete(),
-      meetNotes: firebase.firestore.FieldValue.delete(),
-      meetScheduledBy: firebase.firestore.FieldValue.delete(),
-      meetScheduledAt: firebase.firestore.FieldValue.delete()
+      meetDate: del, meetTime: del, meetDateTime: del, meetLink: del, meetNotes: del, meetScheduledBy: del, meetScheduledAt: del
     });
     addLog('Meet cancelled for consultation #'+consultId, currentUserEmail, 'warning');
-    render();
-  } catch(e) { showModal('Error', 'Failed to cancel meeting: ' + e.message, 'error'); }
+    toast('Meeting cancelled');
+  } catch(e) { showModal('Error', 'Failed to cancel meeting: ' + _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: APPOINTMENT STATUS (Pending → Confirmed → Done) ──
 async function updateAppointmentStatus(consultId, newStatus) {
+  if (!['Pending','Confirmed','Done'].includes(newStatus)) return;
   try {
-    await db.collection('consultations').doc(String(consultId)).update({ appointmentStatus: newStatus, appointmentStatusUpdatedAt: Date.now() });
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
-    const statusEmoji = newStatus==='Confirmed'?'✅':newStatus==='Done'?'🎉':'⏳';
     const sysMsg = {
       sender: currentUserEmail, role: currentRole, isSystem: true,
       text: `📋 <strong>Appointment ${newStatus}</strong> — The guidance counselor has ${newStatus==='Confirmed'?'confirmed your appointment.':newStatus==='Done'?'marked this session as completed.':'updated the appointment status.'}`,
-      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
+      time: nowTime(), ts: Date.now()
     };
-    await ref.update({ chatMessages: [...existing, sysMsg] });
+    await db.collection('consultations').doc(String(consultId)).update({ appointmentStatus: newStatus, appointmentStatusUpdatedAt: Date.now(), chatMessages: arrayUnion(sysMsg) });
     addLog(`Appointment status → ${newStatus} for #${consultId}`, currentUserEmail, 'info');
-    render();
-  } catch(e) { showModal('Error', 'Failed to update status: ' + e.message, 'error'); }
+  } catch(e) { showModal('Error', 'Failed to update status: ' + _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: FILE ATTACHMENT IN CHAT ──
+const ATTACH_TYPES = /^data:(image\/(png|jpe?g|gif|webp)|application\/pdf|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document);base64,/;
 async function sendConsultAttachment(consultId) {
   const input = document.getElementById('attachInput_'+consultId);
   if (!input || !input.files || !input.files[0]) return;
   const file = input.files[0];
-
-  // ── STORAGE LEVEL BLOCK ──
-  // If a scan has been done and storage is at warning (50%+) or critical (80%+), block all new attachments
-  if (storageStats && !storageStats.error) {
-    if (storageStats.level === 'critical') {
-      showModal('🚨 Storage Full — Attachments Disabled',
-        `Firebase storage is at <strong>${storageStats.totalPct.toFixed(1)}%</strong> of the free limit.<br><br>Attachments are automatically disabled to prevent data loss. Please ask the admin to delete old consultations, postings, or attachments first.`,
-        'error');
-      input.value = '';
-      return;
-    }
-    if (storageStats.level === 'warning') {
-      showModal('🔶 Storage Warning — Attachments Disabled',
-        `Firebase storage is at <strong>${storageStats.totalPct.toFixed(1)}%</strong> of the free limit (over 50%).<br><br>Attachments have been automatically disabled to protect remaining storage. Ask the admin to free up space before sending files.`,
-        'warning');
-      input.value = '';
-      return;
-    }
-  }
+  const done = () => { input.value = ''; };
 
   // Size check
   if (file.size > ATTACH_MAX_SIZE_BYTES) {
-    showModal('File Too Large', `Maximum file size is 1MB. Your file is ${(file.size/1024).toFixed(1)}KB. Please compress or crop the image first.`, 'error');
-    input.value = '';
-    return;
+    showModal('File too large', `Maximum file size is 1MB. Your file is ${(file.size/1024/1024).toFixed(1)}MB. Please compress or crop the image first.`, 'error');
+    return done();
+  }
+  const consult = consultationPostings.find(c => String(c.id) === String(consultId));
+  const existing = (consult && consult.chatMessages) || [];
+  if (existing.filter(m => m.isAttachment).length >= ATTACH_MAX_PER_CONSULT) {
+    showModal('Attachment limit reached', `Maximum ${ATTACH_MAX_PER_CONSULT} attachments allowed per consultation to keep storage usage low.`, 'warning');
+    return done();
+  }
+  // Total per-user attachment count (across all consultations) — the student's own list is already loaded
+  if (currentRole === 'student') {
+    let totalAttach = 0;
+    consultationPostings.forEach(c => { totalAttach += (c.chatMessages || []).filter(m => m.isAttachment && (m.sender === currentUserEmail || m.sender === 'Anonymous')).length; });
+    if (totalAttach >= ATTACH_MAX_TOTAL_PER_USER) {
+      showModal('Total attachment limit reached', `You have reached the maximum of ${ATTACH_MAX_TOTAL_PER_USER} attachments across all your consultations.`, 'warning');
+      return done();
+    }
   }
 
-  // Per-consultation attachment count check
-  try {
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
-    const attachCount = existing.filter(m => m.isAttachment).length;
-    if (attachCount >= ATTACH_MAX_PER_CONSULT) {
-      showModal('Attachment Limit Reached', `Maximum ${ATTACH_MAX_PER_CONSULT} attachments allowed per consultation to keep storage usage low.`, 'warning');
-      input.value = '';
-      return;
-    }
-
-    // Total per-user attachment count check (across all consultations)
-    if (currentRole === 'student') {
-      const allConsults = await db.collection('consultations').where('authorId','==',currentUserEmail).get();
-      let totalAttach = 0;
-      allConsults.forEach(d => {
-        const msgs = d.data().chatMessages || [];
-        totalAttach += msgs.filter(m => m.isAttachment && (m.sender === currentUserEmail || m.sender === 'Anonymous')).length;
-      });
-      if (totalAttach >= ATTACH_MAX_TOTAL_PER_USER) {
-        showModal('Total Attachment Limit Reached', `You have reached the maximum of ${ATTACH_MAX_TOTAL_PER_USER} total attachments across all your consultations. This limit keeps the app running on the free Firebase plan.`, 'warning');
-        input.value = '';
-        return;
-      }
-    }
-
-    // Convert to base64
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64 = e.target.result;
-      const isImage = file.type.startsWith('image/');
-      const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-      const attachMsg = {
-        sender: authorLabel, role: currentRole, isAttachment: true,
-        fileName: file.name, fileType: file.type, fileSize: file.size,
-        fileData: base64, isImage,
-        time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
-      };
-      await ref.update({ chatMessages: [...existing, attachMsg] });
-      input.value = '';
-      addLog(`Attachment sent in consultation #${consultId}`, authorLabel, 'info');
-      setTimeout(()=>{const box=document.getElementById('consultChatBox_'+consultId);if(box)box.scrollTop=box.scrollHeight;},80);
+  const reader = new FileReader();
+  reader.onerror = () => { showModal('Error', 'Could not read that file.', 'error'); done(); };
+  reader.onload = async (e) => {
+    const base64 = String(e.target.result || '');
+    if (!ATTACH_TYPES.test(base64)) { showModal('File type not supported', 'Please attach an image (PNG, JPG, GIF, WebP), a PDF or a Word document.', 'error'); return done(); }
+    const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+    const attachMsg = {
+      sender: authorLabel, role: currentRole, isAttachment: true,
+      fileName: file.name.slice(0, 120), fileType: file.type, fileSize: file.size,
+      fileData: base64, isImage: file.type.startsWith('image/'),
+      time: nowTime(), ts: Date.now()
     };
-    reader.readAsDataURL(file);
-  } catch(e) { showModal('Error', 'Failed to send attachment: ' + e.message, 'error'); }
+    try {
+      toast('Uploading…');
+      await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(attachMsg) });
+      addLog(`Attachment sent in consultation #${consultId}`, authorLabel, 'info');
+    } catch (err) { showModal('Error', 'Failed to send attachment: ' + _esc(err.message), 'error'); }
+    done();
+  };
+  reader.readAsDataURL(file);
 }
 
 // ── CONSULTATION: SESSION RATING (after Done) ──
 async function submitSessionRating(consultId) {
   const rating = consultSessionRating[consultId];
   const feedback = (consultSessionFeedback[consultId] || '').trim();
-  if (!rating) { showModal('Rate Session', 'Please select a star rating before submitting.', 'warning'); return; }
+  if (!rating) { showModal('Rate session', 'Please select a star rating before submitting.', 'warning'); return; }
+  if (feedback && passLanguageGate(feedback) === null) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
   try {
     await db.collection('consultations').doc(String(consultId)).update({
-      sessionRating: rating, sessionFeedback: feedback, sessionRatedAt: Date.now(), sessionRatedBy: currentUserEmail
+      sessionRating: rating, sessionFeedback: feedback.slice(0, 500), sessionRatedAt: Date.now(), sessionRatedBy: currentUserEmail
     });
     addLog(`Session rated ${rating}/5 for consultation #${consultId}`, currentUserEmail, 'info');
     consultSessionRating[consultId] = 0;
     consultSessionFeedback[consultId] = '';
-    showModal('⭐ Thank You!', 'Your feedback helps the guidance office improve their services.', 'success');
-  } catch(e) { showModal('Error', e.message, 'error'); }
+    toast('Thank you — your rating was sent', 'success');
+  } catch(e) { showModal('Error', _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: MEETING REMINDER (email + in-app) ──
-async function sendMeetReminder(consultId, meetDateTime, studentEmail) {
+async function sendMeetReminder(consultId) {
+  const consult = consultationPostings.find(c => String(c.id) === String(consultId));
+  if (!consult || !consult.meetDateTime) return;
   try {
-    const dateLabel = new Date(meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
-    // In-app system message
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
+    const dateLabel = new Date(consult.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
     const sysMsg = {
       sender: currentUserEmail, role: 'guidance', isSystem: true,
-      text: `🔔 <strong>Reminder:</strong> Your consultation meeting is scheduled for <strong>${dateLabel}</strong>. Please be ready on time.`,
-      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
+      text: `🔔 <strong>Reminder:</strong> Your consultation meeting is scheduled for <strong>${_esc(dateLabel)}</strong>. Please be ready on time.`,
+      time: nowTime(), ts: Date.now()
     };
-    await ref.update({ chatMessages: [...existing, sysMsg], reminderSentAt: Date.now() });
-    // Email reminder
+    await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(sysMsg), reminderSentAt: Date.now() });
+    toast('Reminder sent to the student', 'success');
+    addLog(`Reminder sent for consultation #${consultId}`, currentUserEmail, 'success');
+    // Email reminder (not awaited by the UI)
+    const studentEmail = consult.authorId || '';
     if (studentEmail && !studentEmail.startsWith('anon_') && studentEmail !== 'Anonymous') {
-      await notifyStudentOfConsultationReply(studentEmail, 'Meeting Reminder',
+      notifyStudentOfConsultationReply(studentEmail, 'Meeting Reminder',
         `Reminder: Your consultation meeting is on ${dateLabel}. Please be ready and check the app for the Google Meet link.`);
     }
-    addLog(`Reminder sent for consultation #${consultId}`, currentUserEmail, 'success');
-    showModal('🔔 Reminder Sent', 'The student has been notified about the upcoming meeting.', 'success');
-  } catch(e) { showModal('Error', e.message, 'error'); }
+  } catch(e) { showModal('Error', _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: UPDATE MOOD ──
 async function saveConsultMood(consultId, mood) {
   try {
     await db.collection('consultations').doc(String(consultId)).update({ studentMood: mood, moodUpdatedAt: Date.now() });
-  } catch(e) { console.warn('Mood save failed:', e); }
+  } catch(e) { console.warn('Mood save failed:', e); toast('Could not save — try again', 'error'); }
 }
 
 // ── CONSULTATION: MARK URGENT ──
@@ -2380,7 +1581,7 @@ async function toggleConsultUrgent(consultId, currentVal) {
   try {
     await db.collection('consultations').doc(String(consultId)).update({ urgent: !currentVal });
     addLog('Consultation urgency toggled', currentUserEmail, 'warning');
-  } catch(e) { showModal('Error', e.message, 'error'); }
+  } catch(e) { showModal('Error', _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: ADD PRIVATE GUIDANCE NOTE ──
@@ -2390,8 +1591,8 @@ async function saveGuidanceNote(consultId) {
   const note = noteEl.value.trim();
   try {
     await db.collection('consultations').doc(String(consultId)).update({ guidanceNote: note, noteUpdatedAt: Date.now() });
-    showModal('✅ Saved', 'Your private note has been saved.', 'success');
-  } catch(e) { showModal('Error', e.message, 'error'); }
+    toast('Private note saved', 'success');
+  } catch(e) { showModal('Error', _esc(e.message), 'error'); }
 }
 
 // ── CONSULTATION: REFERRAL ──
@@ -2401,9 +1602,9 @@ async function saveReferral(consultId) {
   const val = el.value.trim();
   try {
     await db.collection('consultations').doc(String(consultId)).update({ referredTo: val, referredAt: Date.now() });
-    showModal('✅ Referral Saved', 'Student has been referred to: ' + val, 'success');
+    toast(val ? 'Referral saved' : 'Referral cleared', 'success');
     addLog('Student referred to '+val, currentUserEmail, 'info');
-  } catch(e) { showModal('Error', e.message, 'error'); }
+  } catch(e) { showModal('Error', _esc(e.message), 'error'); }
 }
 
   // ── GUIDANCE MESSAGES ──
@@ -2411,141 +1612,98 @@ let guidanceMessageDraft = {}; // keyed by postingId
 
 async function sendGuidanceMessage(postingId) {
   const msg = (guidanceMessageDraft[postingId] || '').trim();
-  if (!msg) { showModal('Empty Message', 'Please type a message before sending.', 'warning'); return; }
-  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  if (!msg) { showModal('Empty message', 'Please type a message before sending.', 'warning'); return; }
+  if (containsProfanity(msg)) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
+  const post = postings.find(p => String(p.id) === String(postingId)) || {};
   try {
-    // Get the posting to find the student's email
-    const postDoc = await db.collection('postings').doc(String(postingId)).get();
-    const postData = postDoc.data() || {};
-    const studentEmail = postData.authorId || postData.author || '';
-    const postTitle = postData.title || 'your posting';
-
     await db.collection('postings').doc(String(postingId)).update({
       guidanceMessage: msg,
       guidanceMessageAt: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
     });
     addLog(`Guidance message sent on post #${postingId}`, currentUserEmail, 'info');
     guidanceMessageDraft[postingId] = '';
-
-    // 📧 Email the student
-    await notifyStudentOfGuidanceReply(studentEmail, postTitle, msg);
-
-    showSuccessModal('Message Sent', 'Your message has been attached to this posting. The student will be notified by email if they have an account.');
-  } catch(e) { showModal('Error', 'Failed to send message: ' + e.message, 'error'); }
+    const box = document.getElementById('gmsg_' + postingId); if (box) box.value = '';
+    render();
+    toast('Message sent to the student', 'success');
+    // 📧 Email the student (in the background)
+    notifyStudentOfGuidanceReply(post.authorId || post.author || '', post.title || 'your posting', msg);
+  } catch(e) { showModal('Error', 'Failed to send message: ' + _esc(e.message), 'error'); }
 }
 
 // ── POSTING CHAT (student replies) ──
 async function sendPostingChat(postingId) {
-  const msg = (postingChatDraft[postingId] || '').trim();
-  if (!msg) return;
-  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  const typed = (postingChatDraft[postingId] || '').trim();
+  if (!typed) return;
+  const msg = passLanguageGate(typed);
+  if (msg === null) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
   const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: nowTime(), ts: Date.now() };
+  // clear the box first so it feels instant; the live listener shows the message right away
+  postingChatDraft[postingId] = '';
+  const inp = document.getElementById('postChat_'+postingId);
+  if (inp) inp.value = '';
   try {
-    const ref = db.collection('postings').doc(String(postingId));
-    const doc = await ref.get();
-    const existing = doc.data().chatMessages || [];
-    await ref.update({ chatMessages: [...existing, chatMsg] });
-    postingChatDraft[postingId] = '';
-    // Update UI input
-    const inp = document.getElementById('postChat_'+postingId);
-    if(inp) inp.value = '';
-  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+    await db.collection('postings').doc(String(postingId)).update({ chatMessages: arrayUnion(chatMsg) });
+    escalateFromChat('postings', postingId, typed);
+  } catch(e) {
+    postingChatDraft[postingId] = typed; if (inp && !inp.value) inp.value = typed;
+    showModal('Error','Failed to send: '+_esc(e.message),'error');
+  }
 }
 
 // ── CONSULTATION CHAT (student + guidance) ──
 async function sendConsultationChat(consultId) {
-  const msg = (consultationChatDraft[consultId] || '').trim();
-  if (!msg) return;
-  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  const typed = (consultationChatDraft[consultId] || '').trim();
+  if (!typed) return;
+  const msg = passLanguageGate(typed);
+  if (msg === null) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
   const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
-  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: nowTime(), ts: Date.now() };
+  consultationChatDraft[consultId] = '';
+  const inp = document.getElementById('consultChat_'+consultId);
+  if (inp) inp.value = '';
   try {
-    const ref = db.collection('consultations').doc(String(consultId));
-    const doc = await ref.get();
-    const consultData = doc.data() || {};
-    const existing = consultData.chatMessages || [];
-    await ref.update({ chatMessages: [...existing, chatMsg] });
-    consultationChatDraft[consultId] = '';
-    const inp = document.getElementById('consultChat_'+consultId);
-    if(inp) inp.value = '';
-    setTimeout(()=>{const box=document.getElementById('consultChatBox_'+consultId);if(box)box.scrollTop=box.scrollHeight;},80);
-
-    // 📧 If guidance replied, notify the student
+    await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(chatMsg) });
+    escalateFromChat('consultations', consultId, typed);
+    // 📧 If guidance replied, notify the student (in the background)
     if (currentRole === 'guidance') {
-      const studentEmail = consultData.authorId || consultData.author || '';
-      const consultReason = consultData.reason || 'your consultation';
-      await notifyStudentOfConsultationReply(studentEmail, consultReason, msg);
+      const consultData = consultationPostings.find(c => String(c.id) === String(consultId)) || {};
+      notifyStudentOfConsultationReply(consultData.authorId || consultData.author || '', consultData.reason || 'your consultation', msg);
     }
-  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+  } catch(e) {
+    consultationChatDraft[consultId] = typed; if (inp && !inp.value) inp.value = typed;
+    showModal('Error','Failed to send: '+_esc(e.message),'error');
+  }
 }
 
-// ── FIXED BULK DELETE (Working with beautiful modal) ──
-async function deleteAllPostings() {
+// ── BULK DELETE ──
+async function deleteWholeCollection(name, label) {
   const input = await promptModal(
-    "⚠️ Delete All Postings",
-    "This will <strong>permanently delete ALL postings</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
-    "warning"
+    'Delete all ' + label,
+    'This will <strong>permanently delete ALL ' + label + '</strong>.<br><br>Type <strong>DELETE</strong> to confirm.',
+    'warning'
   );
-  if (input !== "DELETE") {
-    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+  if (input !== 'DELETE') {
+    if (input !== null) showModal('Cancelled', 'Input did not match. Nothing was deleted.', 'info');
     return;
   }
   try {
-    const snapshot = await db.collection('postings').get();
-    if (snapshot.empty) { showModal("Info", "No postings to delete.", "info"); return; }
-    const batch = db.batch();
-    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-    addLog(`All postings deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
-    showModal("Success", `Successfully deleted ${snapshot.size} postings.`, "success");
-    render();
-  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+    const snapshot = await db.collection(name).get();
+    if (snapshot.empty) { showModal('Nothing to delete', 'There are no ' + label + '.', 'info'); return; }
+    // Firestore allows at most 500 writes per batch
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+      const batch = db.batch();
+      docs.slice(i, i + 400).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    }
+    addLog(`All ${label} deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal('Done', `Deleted ${snapshot.size} ${label}.`, 'success');
+  } catch (err) { showModal('Delete failed', _esc(err.message), 'error'); }
 }
-
-async function deleteAllConsultations() {
-  const input = await promptModal(
-    "⚠️ Delete All Consultations",
-    "This will <strong>permanently delete ALL consultations</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
-    "warning"
-  );
-  if (input !== "DELETE") {
-    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
-    return;
-  }
-  try {
-    const snapshot = await db.collection('consultations').get();
-    if (snapshot.empty) { showModal("Info", "No consultations to delete.", "info"); return; }
-    const batch = db.batch();
-    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-    addLog(`All consultations deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
-    showModal("Success", `Successfully deleted ${snapshot.size} consultations.`, "success");
-    render();
-  } catch (err) { showModal("Delete Failed", err.message, "error"); }
-}
-
-async function deleteAllFeedback() {
-  const input = await promptModal(
-    "⚠️ Delete All Feedback",
-    "This will <strong>permanently delete ALL feedback</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
-    "warning"
-  );
-  if (input !== "DELETE") {
-    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
-    return;
-  }
-  try {
-    const snapshot = await db.collection('feedback').get();
-    if (snapshot.empty) { showModal("Info", "No feedback to delete.", "info"); return; }
-    const batch = db.batch();
-    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-    addLog(`All feedback deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
-    showModal("Success", `Successfully deleted ${snapshot.size} feedback entries.`, "success");
-    render();
-  } catch (err) { showModal("Delete Failed", err.message, "error"); }
-}
+function deleteAllPostings()      { return deleteWholeCollection('postings', 'postings'); }
+function deleteAllConsultations() { return deleteWholeCollection('consultations', 'consultations'); }
+function deleteAllFeedback()      { return deleteWholeCollection('feedback', 'feedback'); }
   
 
 // ── FIREBASE STORAGE MONITOR ──
@@ -2626,23 +1784,29 @@ function formatBytes(bytes) {
 
     // ── FEEDBACK ──
     async function addFeedback() {
-      if(!feedbackMessage.trim()){feedbackError='Please enter feedback message';render();return;}
-      if(shouldBlockForLanguage(feedbackMessage)){feedbackError='Inappropriate language detected.';render();return;}
-      const newFeedback={id:Date.now(),author:currentUserEmail,authorRole:currentRole==='guidance'?'Guidance Office':currentRole==='student'?'Student':'Admin',rating:feedbackRating,message:feedbackMessage,date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),timestamp:Date.now()};
-      try{await db.collection('feedback').add(newFeedback);feedbackMessage='';feedbackRating=5;showFeedbackForm=false;feedbackError='';addLog('Feedback submitted',currentUserEmail,'info');render();}
-      catch(e){feedbackError='Failed to submit: '+e.message;render();}
+      const typed = feedbackMessage.trim();
+      if(!typed){feedbackError='Please enter feedback message';render();return;}
+      const message = passLanguageGate(typed);
+      if(message===null){feedbackError=LANGUAGE_REFUSAL;render();return;}
+      const rating = Math.max(1, Math.min(5, Number(feedbackRating) || 5));
+      const newFeedback={id:newDocId(),author:currentUserEmail,authorRole:currentRole==='guidance'?'Guidance Office':currentRole==='student'?'Student':'Admin',rating,message,date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),time:nowTime(),timestamp:Date.now()};
+      const write = db.collection('feedback').add(newFeedback);
+      feedbackMessage='';feedbackRating=5;showFeedbackForm=false;feedbackError='';render();
+      toast(appLang==='tl'?'Salamat sa feedback':'Thanks for the feedback','success');
+      write.then(()=>addLog('Feedback submitted',currentUserEmail,'info'))
+        .catch(e=>{feedbackMessage=typed;feedbackRating=rating;showFeedbackForm=true;feedbackError='Could not submit: '+_esc((e&&e.message)||'try again');render();});
     }
 
   // Delete consultation (for Guidance & Admin)
 async function deleteConsultation(id) {
-  const ok = await confirmModal("Delete Consultation", "Permanently delete this consultation?", "warning");
+  const ok = await confirmModal("Delete consultation", "Permanently delete this consultation and its chat? This cannot be undone.", "warning");
   if (!ok) return;
   try {
     await db.collection('consultations').doc(String(id)).delete();
     addLog(`Consultation deleted by ${currentRole}`, currentUserEmail, 'warning');
-    showModal("Deleted", "Consultation deleted successfully.", "success");
+    toast('Consultation deleted');
   } catch (e) {
-    showModal("Error", "Failed to delete consultation: " + e.message, "error");
+    showModal("Error", "Failed to delete consultation: " + _esc(e.message), "error");
   }
 }
   
@@ -2650,48 +1814,196 @@ async function deleteConsultation(id) {
   
 
 // ── CONSULTATION CHAT MESSAGE RENDERER ──
-function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, textColor) {
-  const isMine = m.sender === currentUserEmail || (m.sender === 'Anonymous' && isAnonymous);
+// System messages (meeting scheduled, reminders) carry a little formatting. Anyone who can write to a
+// consultation could forge one, so only <strong>, <br> and plain https/tel links survive.
+function safeSystemHtml(html) {
+  let s = _esc(html);
+  s = s.replace(/&lt;(\/?)strong&gt;/g, '<$1strong>').replace(/&lt;br\s*\/?&gt;/g, '<br>');
+  s = s.replace(/&lt;a href=&quot;((?:https?:\/\/|tel:)[^&\s<>]*(?:&amp;[^&\s<>]*)*)&quot;(?:(?!&gt;).)*&gt;((?:(?!&lt;).)*)&lt;\/a&gt;/g,
+    (m, url, text) => '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:#1565c0;text-decoration:underline;font-weight:700">' + text + '</a>');
+  return s;
+}
+function renderConsultChatMsg(m, c) {
+  const primaryColor = config.primary_action_color, textColor = config.text_color;
+  const sender = String(m.sender || '');
+  const isMine = sender === currentUserEmail || (sender === 'Anonymous' && isAnonymous);
   if (m.isSystem) {
-    // System messages are composed by guidance counselors (trusted), not students — allow HTML for meet links
     return '<div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">' +
-      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + _esc(m.time||'') + '</div></div>';
+      safeSystemHtml(m.text) + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + _esc(m.time||'') + '</div></div>';
   }
-  const bg = m.role === 'guidance' ? '#1565c0' : isMine ? primaryColor + 'dd' : textColor + '18';
-  const col = m.role === 'guidance' ? '#fff' : textColor;
-  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : _esc(m.sender.split('@')[0]);
+  const fromGuidance = m.role === 'guidance';
+  const bg = fromGuidance ? '#1565c0' : isMine ? primaryColor : textColor + '18';
+  const col = fromGuidance ? '#fff' : isMine ? '#2c3e50' : textColor;
+  const label = fromGuidance ? 'Guidance Counselor' : sender === 'Anonymous' ? 'You (Anonymous)' : _esc(sender.split('@')[0]);
+  let inner;
   if (m.isAttachment) {
-    const sizeKB = m.fileSize ? (m.fileSize/1024).toFixed(1)+'KB' : '';
+    const sizeKB = m.fileSize ? (Number(m.fileSize)/1024).toFixed(1)+'KB' : '';
     const safeFileName = _esc(m.fileName || 'file');
-    const attachContent = m.isImage
-      ? '<img src="' + _esc(m.fileData) + '" alt="' + safeFileName + '" style="max-width:200px;max-height:180px;border-radius:8px;display:block;margin-top:6px;cursor:pointer" onclick="window.open(this.src)" />'
-      : '<a href="' + _esc(m.fileData) + '" download="' + safeFileName + '" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.2);color:inherit;text-decoration:none;font-size:12px">📎 ' + safeFileName + (sizeKB?' ('+sizeKB+')':'') + '</a>';
-    return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
-      '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
-      '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
-      attachContent +
-      '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
-      '</div></div>';
-  }
+    const data = String(m.fileData || '');
+    if (!ATTACH_TYPES.test(data)) inner = '<div style="margin-top:6px;font-size:12px;opacity:.7">Attachment unavailable</div>';
+    else {
+      const key = c.id + '_' + (m.ts || 0);
+      _attStore.set(key, data);
+      inner = (m.isImage && /^data:image\//.test(data))
+        ? '<img data-att="' + _esc(key) + '" alt="' + safeFileName + '" loading="lazy" style="max-width:200px;max-height:180px;border-radius:8px;display:block;margin-top:6px;cursor:zoom-in" onclick="openAttachment(this)" />'
+        : '<a data-att="' + _esc(key) + '" download="' + safeFileName + '" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.25);color:inherit;text-decoration:none;font-size:12px">📎 ' + safeFileName + (sizeKB?' ('+sizeKB+')':'') + '</a>';
+    }
+  } else inner = '<span style="white-space:pre-wrap;overflow-wrap:anywhere">' + _esc(m.text) + '</span>';
   return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
     '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
-    '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
-    _esc(m.text) +
-    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
+    '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.75">' + label + '</div>' +
+    inner +
+    '<div style="font-size:10px;margin-top:3px;opacity:0.6;text-align:right">' + _esc(m.time||'') + '</div>' +
     '</div></div>';
 }
 
     // ── RENDER ──
-    let _renderTimer = null;
-    let _typingIdleTimer = null;
-    let _userIsTyping = false;
+    // The screen is described as one HTML string (as before), but it is no longer thrown away and
+    // rebuilt on every click. morph() compares the new description with what is already on the page
+    // and changes only what differs. That is what removes the lag: no flicker, no lost focus or
+    // scroll position, no re-decoding of attached images, and CSS transitions (the mobile drawer) work.
 
-    // Any focused input/textarea blocks DOM rebuild (covers dynamic IDs like chat inputs)
-    function isUserTyping() {
-      const el = document.activeElement;
-      if (!el) return false;
-      const tag = el.tagName;
-      return tag === 'INPUT' || tag === 'TEXTAREA';
+    // Only the icons this app uses, inlined (replaces the 350 KB icon library and its page-wide scan).
+    // Icon paths: Lucide v0.263 — ISC License, © Lucide Contributors.
+    const ICONS = {"users":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /><circle cx=\"9\" cy=\"7\" r=\"4\" /><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /><path d=\"M16 3.13a4 4 0 0 1 0 7.75\" />","search":"<circle cx=\"11\" cy=\"11\" r=\"8\" /><path d=\"m21 21-4.3-4.3\" />","megaphone":"<path d=\"m3 11 18-5v12L3 14v-3z\" /><path d=\"M11.6 16.8a3 3 0 1 1-5.8-1.6\" />","trash-2":"<path d=\"M3 6h18\" /><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\" /><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\" /><line x1=\"10\" x2=\"10\" y1=\"11\" y2=\"17\" /><line x1=\"14\" x2=\"14\" y1=\"11\" y2=\"17\" />","send":"<path d=\"m22 2-7 20-4-9-9-4Z\" /><path d=\"M22 2 11 13\" />","plus":"<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />","bell":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" />","shield":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" />","paperclip":"<path d=\"m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48\" />","message-circle":"<path d=\"m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z\" />","log-out":"<path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" /><polyline points=\"16 17 21 12 16 7\" /><line x1=\"21\" x2=\"9\" y1=\"12\" y2=\"12\" />","languages":"<path d=\"m5 8 6 6\" /><path d=\"m4 14 6-6 2-3\" /><path d=\"M2 5h12\" /><path d=\"M7 2h1\" /><path d=\"m22 22-5-10-5 10\" /><path d=\"M14 18h6\" />","info":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 16v-4\" /><path d=\"M12 8h.01\" />","bell-ring":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" /><path d=\"M4 2C2.8 3.7 2 5.7 2 8\" /><path d=\"M22 8c0-2.3-.8-4.3-2-6\" />","alert-triangle":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z\" /><path d=\"M12 9v4\" /><path d=\"M12 17h.01\" />","x":"<path d=\"M18 6 6 18\" /><path d=\"m6 6 12 12\" />","wrench":"<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\" />","user":"<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /><circle cx=\"12\" cy=\"7\" r=\"4\" />","settings-2":"<path d=\"M20 7h-9\" /><path d=\"M14 17H5\" /><circle cx=\"17\" cy=\"17\" r=\"3\" /><circle cx=\"7\" cy=\"7\" r=\"3\" />","settings":"<path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","message-square":"<path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\" />","menu":"<line x1=\"4\" x2=\"20\" y1=\"12\" y2=\"12\" /><line x1=\"4\" x2=\"20\" y1=\"6\" y2=\"6\" /><line x1=\"4\" x2=\"20\" y1=\"18\" y2=\"18\" />","lock":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /><path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />","loader":"<line x1=\"12\" x2=\"12\" y1=\"2\" y2=\"6\" /><line x1=\"12\" x2=\"12\" y1=\"18\" y2=\"22\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"4.93\" y2=\"7.76\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"16.24\" y2=\"19.07\" /><line x1=\"2\" x2=\"6\" y1=\"12\" y2=\"12\" /><line x1=\"18\" x2=\"22\" y1=\"12\" y2=\"12\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"19.07\" y2=\"16.24\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"7.76\" y2=\"4.93\" />","history":"<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" /><path d=\"M12 7v5l4 2\" />","eye-off":"<path d=\"M9.88 9.88a3 3 0 1 0 4.24 4.24\" /><path d=\"M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68\" /><path d=\"M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61\" /><line x1=\"2\" x2=\"22\" y1=\"2\" y2=\"22\" />","external-link":"<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\" /><polyline points=\"15 3 21 3 21 9\" /><line x1=\"10\" x2=\"21\" y1=\"14\" y2=\"3\" />","clipboard-check":"<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /><path d=\"m9 14 2 2 4-4\" />","check-circle":"<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\" /><polyline points=\"22 4 12 14.01 9 11.01\" />","calendar":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\" ry=\"2\" /><line x1=\"16\" x2=\"16\" y1=\"2\" y2=\"6\" /><line x1=\"8\" x2=\"8\" y1=\"2\" y2=\"6\" /><line x1=\"3\" x2=\"21\" y1=\"10\" y2=\"10\" />","arrow-left":"<path d=\"m12 19-7-7 7-7\" /><path d=\"M19 12H5\" />","layout-dashboard":"<rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\" />","file-text":"<path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\" /><polyline points=\"14 2 14 8 20 8\" /><line x1=\"16\" x2=\"8\" y1=\"13\" y2=\"13\" /><line x1=\"16\" x2=\"8\" y1=\"17\" y2=\"17\" /><line x1=\"10\" x2=\"8\" y1=\"9\" y2=\"9\" />","heart":"<path d=\"M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z\" />","shield-check":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" /><path d=\"m9 12 2 2 4-4\" />","moon":"<path d=\"M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z\" />","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\" /><path d=\"M12 2v2\" /><path d=\"M12 20v2\" /><path d=\"m4.93 4.93 1.41 1.41\" /><path d=\"m17.66 17.66 1.41 1.41\" /><path d=\"M2 12h2\" /><path d=\"M20 12h2\" /><path d=\"m6.34 17.66-1.41 1.41\" /><path d=\"m19.07 4.93-1.41 1.41\" />","chevron-up":"<path d=\"m18 15-6-6-6 6\" />","chevron-down":"<path d=\"m6 9 6 6 6-6\" />","log-in":"<path d=\"M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4\" /><polyline points=\"10 17 15 12 10 7\" /><line x1=\"15\" x2=\"3\" y1=\"12\" y2=\"12\" />","check":"<polyline points=\"20 6 9 17 4 12\" />","eye":"<path d=\"M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","image":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /><circle cx=\"9\" cy=\"9\" r=\"2\" /><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />","download":"<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" /><polyline points=\"7 10 12 15 17 10\" /><line x1=\"12\" x2=\"12\" y1=\"15\" y2=\"3\" />","clock":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><polyline points=\"12 6 12 12 16 14\" />"};
+    function iconSvg(name, attrs) {
+      return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-lucide="' + name + '"' + (attrs || '') + '>' + (ICONS[name] || '') + '</svg>';
+    }
+    function inlineIcons(html) {
+      return html.replace(/<i data-lucide="([a-z0-9-]+)"([^>]*)><\/i>/g, (m, name, attrs) => ICONS[name] ? iconSvg(name, attrs) : m);
+    }
+    // Kept so older call sites keep working
+    const lucide = { createIcons() { document.querySelectorAll('i[data-lucide]').forEach(el => { el.outerHTML = inlineIcons(el.outerHTML); }); } };
+
+    function _key(node) { return node.nodeType === 1 ? node.getAttribute('data-key') : null; }
+    function _sameKind(a, b) {
+      if (a.nodeType !== b.nodeType) return false;
+      if (a.nodeType !== 1) return true;
+      if (a.nodeName !== b.nodeName) return false;
+      if (a.nodeName === 'INPUT' && a.getAttribute('type') !== b.getAttribute('type')) return false;
+      return true;
+    }
+    function morphNode(o, n) {
+      if (o.nodeType !== 1) { if (o.nodeValue !== n.nodeValue) o.nodeValue = n.nodeValue; return; }
+      if (o.hasAttribute('data-live')) return;                 // updated by hand elsewhere (progress bars, status labels)
+      const tag = o.nodeName, focused = (o === document.activeElement);
+      // attributes
+      const na = n.attributes;
+      for (let i = 0; i < na.length; i++) {
+        const a = na[i];
+        if (o.getAttribute(a.name) !== a.value) {
+          if (a.name === 'value' && tag === 'INPUT' && o.hasAttribute('data-keep') ) { o.setAttribute('value', a.value); if (!focused) o.value = a.value; }
+          else o.setAttribute(a.name, a.value);
+        }
+      }
+      const oa = o.attributes;
+      for (let i = oa.length - 1; i >= 0; i--) {
+        const name = oa[i].name;
+        if (n.hasAttribute(name)) continue;
+        if (tag === 'DETAILS' && name === 'open') continue;                    // the reader opened it — leave it open
+        if ((name === 'src' || name === 'href') && o.hasAttribute('data-att')) continue;   // filled in after render
+        o.removeAttribute(name);
+      }
+      // form fields: never touch what the person is typing in right now
+      if (tag === 'INPUT') {
+        const t = o.type;
+        if (t !== 'file' && !o.hasAttribute('data-keep') && n.hasAttribute('value') && !focused && o.value !== n.getAttribute('value') && !_autofilled(o)) o.value = n.getAttribute('value');
+        return;
+      }
+      if (tag === 'TEXTAREA') {
+        const text = n.textContent;
+        const changed = o.textContent !== text;
+        if (changed) o.textContent = text;
+        if (!focused && (o.hasAttribute('data-keep') ? changed : o.value !== text)) o.value = text;
+        return;
+      }
+      morphChildren(o, n);
+    }
+    function morphChildren(oldParent, newParent) {
+      let o = oldParent.firstChild, n = newParent.firstChild, keyed = null;
+      while (n) {
+        const next = n.nextSibling;
+        const k = _key(n);
+        let target = null;
+        if (k !== null) {
+          if (!keyed) { keyed = new Map(); for (let c = o; c; c = c.nextSibling) { const ck = _key(c); if (ck !== null) keyed.set(ck, c); } }
+          const hit = keyed.get(k);
+          if (hit && hit.parentNode === oldParent && n.hasAttribute('data-same')) {
+            // keep(): this card's HTML is byte-for-byte what is already on screen — leave it exactly as it is
+            keyed.delete(k);
+            if (hit === o) o = o.nextSibling; else oldParent.insertBefore(hit, o);
+            n = next; continue;
+          }
+          if (hit && hit.parentNode === oldParent && _sameKind(hit, n)) { target = hit; keyed.delete(k); }
+        } else {
+          let c = o;
+          while (c && _key(c) !== null) c = c.nextSibling;
+          if (c && _sameKind(c, n)) target = c;
+        }
+        if (target) {
+          if (target === o) o = o.nextSibling; else oldParent.insertBefore(target, o);
+          // identical subtree (the usual case for all but one card): the browser compares it natively and we move on
+          if (!(target.nodeType === 1 && target.isEqualNode(n))) morphNode(target, n);
+        } else {
+          oldParent.insertBefore(n, o);          // brand-new node: move it straight in
+        }
+        n = next;
+      }
+      while (o) { const nx = o.nextSibling; oldParent.removeChild(o); o = nx; }
+    }
+    function _autofilled(el) { try { return el.matches(':autofill'); } catch (e) { return false; } }
+    // Fields someone has typed in. After an update, any of them whose value was reset in code
+    // (a sent message, a cleared form) is brought back in line — but never the one being typed in.
+    const _dirtyFields = new Set();
+    document.addEventListener('input', (e) => { const t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) _dirtyFields.add(t); }, true);
+    function syncDirtyFields() {
+      _dirtyFields.forEach(el => {
+        if (!el.isConnected) { _dirtyFields.delete(el); return; }
+        if (el === document.activeElement || el.hasAttribute('data-keep') || el.type === 'file') return;
+        const want = el.tagName === 'TEXTAREA' ? el.textContent : el.getAttribute('value');
+        if (want == null) return;
+        if (el.value !== want) el.value = want;
+        _dirtyFields.delete(el);
+      });
+    }
+    // keep(key, html): for big repeated blocks (one card per posting / consultation). If the card's HTML is
+    // identical to the last time it was drawn, a tiny placeholder is sent instead, so an update that touches
+    // one card no longer makes the browser re-read all 150 of them.
+    let _cardMemo = new Map(), _cardNext = new Map(), _mountedKeys = new Set();
+    function keep(key, html) {
+      _cardNext.set(key, html);
+      if (_mountedKeys.has(key) && _cardMemo.get(key) === html) return '<div data-key="' + key + '" data-same></div>';
+      return html;
+    }
+    function setHTML(container, html) {
+      const tpl = document.createElement('template');
+      tpl.innerHTML = inlineIcons(html);
+      // remember where each kept card currently lives, in case the layout around it changed shape
+      let live = null;
+      if (html.indexOf('data-same') >= 0) { live = new Map(); container.querySelectorAll('[data-key]').forEach(el => live.set(el.getAttribute('data-key'), el)); }
+      morphChildren(container, tpl.content);
+      if (live) container.querySelectorAll('[data-same]').forEach(ph => {
+        const k = ph.getAttribute('data-key'), el = live.get(k);
+        if (el && el !== ph && !el.hasAttribute('data-same')) { ph.replaceWith(el); return; }
+        const t = document.createElement('template'); t.innerHTML = inlineIcons(_cardNext.get(k) || ''); ph.replaceWith(t.content);
+      });
+      syncDirtyFields();
+      _cardMemo = _cardNext; _cardNext = new Map();
+      _mountedKeys = new Set();
+      if (_cardMemo.size) container.querySelectorAll('[data-key]').forEach(el => _mountedKeys.add(el.getAttribute('data-key')));
+    }
+
+    // Attachments are kept out of the HTML string (a 1 MB image used to be re-parsed on every update)
+    const _attStore = new Map();
+    function hydrateAttachments() {
+      document.querySelectorAll('[data-att]').forEach(el => {
+        const key = el.getAttribute('data-att');
+        if (el._att === key) return;
+        const data = _attStore.get(key);
+        if (!data) return;
+        if (el.tagName === 'IMG') el.src = data; else el.setAttribute('href', data);
+        el._att = key;
+      });
     }
 
     function filterPostsInDOM(query) {
@@ -2704,146 +2016,170 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
         card.style.display = show ? '' : 'none';
         if (show) anyVisible = true;
       });
-      const emptyEl = document.getElementById('postings-empty-state');
+      const emptyEl = document.getElementById('postings-no-match');
       if (emptyEl) emptyEl.style.display = (!anyVisible && cards.length > 0) ? '' : 'none';
     }
 
-    function onFieldInput() {
-      _userIsTyping = true;
-      clearTimeout(_typingIdleTimer);
-      _typingIdleTimer = setTimeout(() => { _userIsTyping = false; }, 2000);
-    }
+    // Typing no longer blocks updates (the field being typed in is simply left alone), so these are no-ops
+    // kept for the inline handlers that still call them.
+    function onFieldInput() {}
+    function isUserTyping() { return false; }
+    function safeRender() { render(); }
 
-    function debouncedRender(delay=400) {
-      clearTimeout(_renderTimer);
-      _renderTimer = setTimeout(() => {
-        if (_userIsTyping) {
-          debouncedRender(600);
-        } else {
-          render();
-        }
-      }, delay);
-    }
-
-    // safeRender: called by Firestore — blocked while user is typing or focused on input
-    function safeRender() {
-      if (_userIsTyping || isUserTyping()) {
-        clearTimeout(_renderTimer);
-        _renderTimer = setTimeout(() => safeRender(), 800);
-        return;
-      }
-      render();
-    }
-    // Coalesces bursts of Firestore snapshots (4 listeners fire at start) into ONE rebuild
-    let _schedTimer = null;
+    // Coalesces bursts of Firestore snapshots (4 listeners fire at start) into ONE update on the next frame
+    let _schedPending = false;
     function scheduleRender() {
-      if (_schedTimer) return;
-      _schedTimer = setTimeout(() => { _schedTimer = null; safeRender(); }, 150);
+      if (_schedPending) return;
+      _schedPending = true;
+      const run = () => { _schedPending = false; render(); };
+      if (document.hidden) setTimeout(run, 200); else requestAnimationFrame(run);
     }
+
+    let booting = !!localStorage.getItem('qh_saved_role');   // returning user: hold the splash instead of flashing the landing page
+    let _lastPage = null, _lastNavItem = null, _notifTimer = null;
 
     function render() {
-      // If any input/textarea is focused, NEVER rebuild the DOM
-      if (isUserTyping()) return;
-
-      // Save scroll position before rebuilding DOM
-      const prevScroll = document.getElementById('main-scroll');
-      const savedScrollTop = prevScroll ? prevScroll.scrollTop : 0;
-
       config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#e6e6e6'}:{...defaultConfig};
       document.body.style.colorScheme = darkMode ? 'dark' : 'light';
-      if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
-      else{renderDashboard();}
-      lucide.createIcons({ nameAttr: 'data-lucide' });
+      document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+      if (booting && !isAuthenticated) return;                // splash stays until the saved session is checked
 
-      // Restore search input value and re-apply filter
-      const si = document.getElementById('postingSearchInput');
-      if (si && postingSearchQuery) { si.value = postingSearchQuery; filterPostsInDOM(postingSearchQuery); }
+      let html;
+      _cardNext = new Map();
+      try {
+        html = !isAuthenticated ? (selectedRoleForLogin ? renderGateway() : renderLanding()) : renderDashboard();
+      } catch (err) {
+        _cardNext = new Map();
+        console.error('[QHsafety] render failed:', err);
+        html = `<div data-key="crash" class="screen grid-bg" style="display:flex;align-items:center;justify-content:center;padding:24px"><div class="p-6 rounded-xl" style="background:#fff;max-width:420px;text-align:center;color:#2c3e50"><h2 class="font-bold mb-2">Something went wrong on this page</h2><p class="text-sm mb-4" style="color:#5a6a7a">Your data is safe. Reload to continue.</p><button onclick="location.reload()" class="px-6 py-3 rounded-lg font-semibold" style="background:#ffee58;color:#2c3e50">Reload</button></div></div>`;
+      }
+      setHTML(app, html);
+      hydrateAttachments();
 
-      // Restore scroll + auto-scroll chat boxes after browser paints new DOM
-      requestAnimationFrame(() => {
-        const newScroll = document.getElementById('main-scroll');
-        if (newScroll && savedScrollTop) newScroll.scrollTop = savedScrollTop;
-        document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
-        // Scroll active bottom nav item into view
-        const activeNavBtn = document.querySelector('.mobile-bottom-nav button.active');
-        if (activeNavBtn) activeNavBtn.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
-      });
-      // Keep notification button/indicator in sync with OneSignal state
-      if(isAuthenticated) setTimeout(updateNotifUI, 200);
+      const page = isAuthenticated ? activeSidebarItem : (selectedRoleForLogin ? 'gateway' : 'landing');
+      const main = document.getElementById('main-scroll');
+      if (page !== _lastPage) { if (main) main.scrollTop = 0; _lastPage = page; }
+
+      // re-apply the search filter to any newly added cards
+      if (postingSearchQuery) filterPostsInDOM(postingSearchQuery);
+
+      if (isAuthenticated) {
+        if (_lastNavItem !== activeSidebarItem) {
+          _lastNavItem = activeSidebarItem;
+          const activeNavBtn = document.querySelector('.mobile-bottom-nav button.active');
+          if (activeNavBtn && activeNavBtn.scrollIntoView) activeNavBtn.scrollIntoView({inline:'center',block:'nearest'});
+        }
+        // Keep notification button/indicator in sync with OneSignal state (at most once per burst)
+        clearTimeout(_notifTimer);
+        _notifTimer = setTimeout(updateNotifUI, 250);
+      }
     }
+
+    function goTo(item) {
+      activeSidebarItem = item;
+      localStorage.setItem('qh_last_page', item);
+      mobileDrawerOpen = false;
+      render();
+    }
+    function toggleMeetScheduler(id) {
+      const wasOpen = !!showMeetScheduler[id];
+      showMeetScheduler = {};                      // one scheduler at a time: they share a single draft
+      consultMeetDraft = {date:'',time:'',link:'',notes:''};
+      if (!wasOpen) showMeetScheduler[id] = true;
+      render();
+    }
+    function riskLabel(level) { return tr(String(level || 'Low').toLowerCase()) + ' ' + (appLang === 'tl' ? 'Panganib' : 'Risk'); }
+
+    // Google "G" mark for the sign-in button
+    const GOOGLE_G = '<svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>';
+    function googleButton(role, label) {
+      const busy = authBusy === 'google';
+      return `<button onclick="handleGoogleSignIn('${role}')" ${authBusy?'disabled':''} class="google-btn w-full">${busy?'<span class="qh-spin"></span>':GOOGLE_G}<span>${busy?'Opening Google…':label}</span></button>`;
+    }
+    const spinner = '<span class="qh-spin"></span>';
 
     function renderLanding() {
       const fs=config.font_size||16;
-      app.innerHTML=`
-<div class="grid-bg" style="height:100vh;width:100%;overflow-y:auto;background-color:${config.background_color}">
+      const c=config, on=darkMode;
+      return `
+<div data-key="landing" class="grid-bg screen" style="width:100%;overflow-y:auto;background-color:${c.background_color}">
   <nav class="flex items-center justify-between px-6 py-4" style="background:#2c3e50">
-    <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${config.primary_action_color}">QH</span>safety</span>
-    <button onclick="showLandingSettings=!showLandingSettings;render()" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
+    <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${c.primary_action_color}">QH</span>safety</span>
+    <button onclick="showLandingSettings=!showLandingSettings;render()" aria-label="Settings" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
   </nav>
-  ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)" onclick="if(event.target===this){showLandingSettings=false;render()}"><div style="background:${darkMode?'rgba(30,34,44,0.92)':'rgba(255,255,255,0.92)'};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid ${darkMode?'rgba(255,255,255,0.10)':'rgba(0,0,0,0.08)'};border-radius:20px;padding:28px;width:360px;max-width:90vw;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px"><div style="display:flex;align-items:center;gap:10px"><div style="width:34px;height:34px;border-radius:10px;background:${config.primary_action_color}22;display:flex;align-items:center;justify-content:center"><i data-lucide="settings-2" style="width:17px;height:17px;color:${config.primary_action_color}"></i></div><h2 style="font-weight:700;font-size:18px;color:${config.text_color};margin:0">Settings</h2></div><button onclick="showLandingSettings=false;render()" style="width:32px;height:32px;border-radius:50%;border:none;background:${config.text_color}12;cursor:pointer;display:flex;align-items:center;justify-content:center;color:${config.text_color};font-size:18px;line-height:1">&times;</button></div><div style="height:1px;background:${config.text_color}10;margin-bottom:20px"></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${config.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><div style="width:30px;height:30px;border-radius:8px;background:${darkMode?'#5c6bc022':'#fdd83522'};display:flex;align-items:center;justify-content:center"><i data-lucide="${darkMode?'moon':'sun'}" style="width:15px;height:15px;color:${darkMode?'#7986cb':'#f9a825'}"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">${darkMode?'Currently on':'Currently off'}</div></div></div><button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" style="position:relative;width:48px;height:26px;border-radius:13px;border:none;cursor:pointer;background:${darkMode?config.primary_action_color:'#ccc'};flex-shrink:0"><div style="position:absolute;top:3px;${darkMode?'right:3px':'left:3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.25)"></div></button></div><div style="padding:14px 16px;border-radius:14px;background:${config.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="width:30px;height:30px;border-radius:8px;background:#42a5f522;display:flex;align-items:center;justify-content:center"><i data-lucide="languages" style="width:15px;height:15px;color:#42a5f5"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('langSetting')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">Choose display language</div></div></div><div style="display:flex;gap:8px"><button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇺🇸 English</button><button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇵🇭 Filipino</button></div></div></div></div>`:''}
-  <section class="flex flex-col items-center justify-center text-center px-6 py-20 fade-in">
-    <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${config.secondary_action_color}33;color:${config.text_color}">🛡️ School Safety Platform</div>
-    <h1 class="font-bold leading-tight mb-4" style="font-size:${fs*3}px;color:${config.text_color}">${config.hero_title}</h1>
-    <p class="max-w-lg mb-12" style="font-size:${fs}px;color:${config.text_color}aa">${config.hero_subtitle}</p>
-    <p class="text-sm font-semibold mb-6" style="color:${config.text_color}">${tr('selectRole')}</p>
-    <div class="flex flex-col sm:flex-row gap-4">
-      <button onclick="selectedRoleForLogin='student';currentAuthFlow='login';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
-      <button onclick="selectedRoleForLogin='guidance';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.secondary_action_color};color:${config.text_color}"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
-      <button onclick="selectedRoleForLogin='admin';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:${config.text_color}"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
+  ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);padding:16px" onclick="if(event.target===this){showLandingSettings=false;render()}"><div class="fade-in" style="background:${c.surface_color};border:1px solid ${c.text_color}14;border-radius:20px;padding:24px;width:360px;max-width:100%;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px"><h2 style="font-weight:700;font-size:18px;color:${c.text_color};margin:0">${tr('settings')}</h2><button onclick="showLandingSettings=false;render()" aria-label="Close" style="width:32px;height:32px;border-radius:50%;background:${c.text_color}12;display:flex;align-items:center;justify-content:center;color:${c.text_color}"><i data-lucide="x" style="width:16px;height:16px"></i></button></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${c.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><i data-lucide="${on?'moon':'sun'}" style="width:18px;height:18px;color:${c.text_color}"></i><div><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${c.text_color}88;margin-top:1px">${on?'On':'Off'}</div></div></div><button role="switch" aria-checked="${on}" aria-label="${tr('darkMode')}" onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="qh-switch ${on?'on':''}"><span></span></button></div><div style="padding:14px 16px;border-radius:14px;background:${c.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><i data-lucide="languages" style="width:18px;height:18px;color:${c.text_color}"></i><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('langSetting')}</div></div><div style="display:flex;gap:8px">${[['en','English'],['tl','Filipino']].map(l=>`<button onclick="appLang='${l[0]}';localStorage.setItem('qh_lang','${l[0]}');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;text-align:center;border:2px solid ${appLang===l[0]?c.primary_action_color:'transparent'};background:${appLang===l[0]?c.primary_action_color+'22':'transparent'};color:${c.text_color}">${l[1]}</button>`).join('')}</div></div></div></div>`:''}
+  <section class="flex flex-col items-center justify-center text-center px-6 hero fade-in">
+    <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${c.secondary_action_color}33;color:${c.text_color}">School Safety Platform</div>
+    <h1 class="font-bold leading-tight mb-4 hero-title" style="color:${c.text_color}">${c.hero_title}</h1>
+    <p class="max-w-lg mb-8" style="font-size:${fs}px;color:${c.text_color}aa">${c.hero_subtitle}</p>
+    ${loginError?`<div class="p-3 rounded-lg mb-6 text-sm max-w-sm w-full" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a">${loginError}</div>`:''}
+    <p class="text-sm font-semibold mb-4" style="color:${c.text_color}">${tr('selectRole')}</p>
+    <div class="flex flex-col sm:flex-row gap-3 role-row">
+      <button onclick="selectedRoleForLogin='student';currentAuthFlow='login';loginError='';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${c.primary_action_color};color:#2c3e50"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
+      <button onclick="selectedRoleForLogin='guidance';loginError='';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${c.secondary_action_color};color:#2c3e50"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
+      <button onclick="selectedRoleForLogin='admin';loginError='';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:#2c3e50"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
     </div>
-
+    <div class="quick-google">
+      <div class="or-line" style="color:${c.text_color}77"><span>${appLang==='tl'?'o mabilisang pasok para sa estudyante':'or quick student sign-in'}</span></div>
+      ${googleButton('student', appLang==='tl'?'Magpatuloy gamit ang Google':'Continue with Google')}
+    </div>
   </section>
   <section class="max-w-4xl mx-auto px-6 pb-16">
-    <h2 class="font-bold text-center mb-8" style="font-size:${fs*1.5}px;color:${config.text_color}">${tr('aboutMission')}</h2>
-    <p class="text-center max-w-2xl mx-auto mb-12" style="color:${config.text_color}aa;font-size:${fs}px">${tr('aboutDesc')}</p>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-      ${[{icon:'shield-check',title:tr('howToUse'),desc:tr('howToUseDesc')},{icon:'file-text',title:tr('termsPrivacy'),desc:tr('termsDesc')},{icon:'heart',title:tr('weCare'),desc:tr('weCareDesc')}].map(c=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color};border:2px solid ${config.text_color}0d"><div class="w-10 h-10 rounded-lg flex items-center justify-center mb-4" style="background:${config.primary_action_color}33"><i data-lucide="${c.icon}" style="width:20px;height:20px;color:${config.text_color}"></i></div><h3 class="font-bold mb-2" style="font-size:${fs*1.1}px;color:${config.text_color}">${c.title}</h3><p style="font-size:${fs*0.85}px;color:${config.text_color}88">${c.desc}</p></div>`).join('')}
+    <h2 class="font-bold text-center mb-4" style="font-size:${fs*1.5}px;color:${c.text_color}">${tr('aboutMission')}</h2>
+    <p class="text-center max-w-2xl mx-auto mb-8" style="color:${c.text_color}aa;font-size:${fs}px">${tr('aboutDesc')}</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      ${[{icon:'shield-check',title:tr('howToUse'),desc:tr('howToUseDesc')},{icon:'file-text',title:tr('termsPrivacy'),desc:tr('termsDesc')},{icon:'heart',title:tr('weCare'),desc:tr('weCareDesc')}].map(x=>`<div class="p-6 rounded-xl card-hover" style="background:${c.surface_color};border:1px solid ${c.text_color}14"><div class="w-10 h-10 rounded-lg flex items-center justify-center mb-4" style="background:${c.primary_action_color}33"><i data-lucide="${x.icon}" style="width:20px;height:20px;color:${c.text_color}"></i></div><h3 class="font-bold mb-2" style="font-size:${fs*1.1}px;color:${c.text_color}">${x.title}</h3><p style="font-size:${fs*0.875}px;color:${c.text_color}99">${x.desc}</p></div>`).join('')}
     </div>
   </section>
 </div>`;
     }
 
     function renderGateway() {
-      const fs=config.font_size||16;
-      app.innerHTML=`
-<div class="grid-bg fade-in" style="height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 24px;background-color:${config.background_color};overflow-y:auto">
-  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';bootstrapStatus='';bootstrapMsg='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${config.text_color}88;background:none;border:none;cursor:pointer"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
-  <div class="w-full max-w-sm">
-    <div class="text-center mb-8">
-      <span class="mono font-bold mb-2" style="font-size:${fs*2}px;color:${config.text_color}"><span style="color:${config.primary_action_color}">QH</span>safety</span>
-      <p style="color:${config.text_color}88;font-size:${fs}px;margin-top:12px">${showForgotPassword?'Reset Password':currentAuthFlow==='signup'?'Create Account':'Login'} as ${selectedRoleForLogin==='student'?'Student':selectedRoleForLogin==='guidance'?'Counselor':'Administrator'}</p>
+      const fs=config.font_size||16, c=config, role=selectedRoleForLogin;
+      const roleName = role==='student'?'Student':role==='guidance'?'Counselor':'Administrator';
+      const field = `width:100%;padding:12px;border:1px solid ${c.text_color}22;border-radius:8px;background:${c.background_color};color:${c.text_color};font-size:${fs}px`;
+      const label = `display:block;font-size:${fs*0.875}px;font-weight:600;color:${c.text_color};margin-bottom:6px`;
+      const primary = `background:${c.primary_action_color};color:#2c3e50;font-size:${fs}px`;
+      const ghost = `background:transparent;color:${c.text_color}aa;border:1px solid ${c.text_color}22`;
+      const err = (m) => m ? `<div class="p-3 rounded-lg mb-4 text-sm" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a;text-align:center">${m}</div>` : '';
+      const mode = showForgotPassword ? 'reset' : (currentAuthFlow==='signup' && role==='student') ? 'signup' : 'login';
+      return `
+<div data-key="gateway" class="grid-bg screen" style="width:100%;display:flex;flex-direction:column;align-items:center;padding:72px 20px 32px;background-color:${c.background_color};overflow-y:auto;position:relative">
+  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${c.text_color}aa"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
+  <div class="w-full max-w-sm fade-in" style="margin:auto 0">
+    <div class="text-center mb-6">
+      <span class="mono font-bold" style="font-size:${fs*2}px;color:${c.text_color}"><span style="color:${darkMode?c.primary_action_color:'#fbc02d'}">QH</span>safety</span>
+      <p style="color:${c.text_color}99;font-size:${fs}px;margin-top:8px">${mode==='reset'?'Reset password':mode==='signup'?'Create account':'Log in'} as ${roleName}</p>
     </div>
-    <div class="p-6 rounded-xl" style="background:${config.surface_color}">
-      ${showForgotPassword?`
-        ${forgotPasswordError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${forgotPasswordError}</div>`:''}
-        ${forgotPasswordSuccess?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#66bb6a;color:#fff;text-align:center">${forgotPasswordSuccess}</div>`:''}
-        <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${_esc(forgotPasswordEmail)}" oninput="forgotPasswordEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter your email" /></div>
-        <button onclick="handleForgotPassword()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Send Reset Email</button>
-        <button onclick="showForgotPassword=false;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Back to Login</button>
+    <div class="p-6 rounded-xl" style="background:${c.surface_color};border:1px solid ${c.text_color}14">
+      ${mode==='reset'?`
+        ${err(forgotPasswordError)}
+        ${forgotPasswordSuccess?`<div class="p-3 rounded-lg mb-4 text-sm" role="status" style="background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;text-align:center">${forgotPasswordSuccess}</div>`:''}
+        <div class="mb-4"><label for="fp-email" style="${label}">Email</label><input id="fp-email" type="email" autocomplete="email" value="${_esc(forgotPasswordEmail)}" oninput="forgotPasswordEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleForgotPassword();}" style="${field}" placeholder="Enter your email" /></div>
+        <button onclick="handleForgotPassword()" ${authBusy?'disabled':''} class="w-full px-6 py-3 rounded-lg font-semibold btn-row" style="${primary}">${authBusy==='reset'?spinner+'Sending…':'Send reset email'}</button>
+        <button onclick="showForgotPassword=false;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm btn-row" style="${ghost}">Back to login</button>
       `:`
-        ${selectedRoleForLogin==='student'?`
-        <div class="flex gap-2 mb-6">
-          <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='signup'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Sign Up</button>
-          <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='login'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Login</button>
-        </div>
-        `:``}
-        ${(currentAuthFlow==='signup' && selectedRoleForLogin==='student')?`
-          ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
-          ${selectedRoleForLogin==='student'?`<div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:#e3f2fd;border:1px solid #90caf955"><i data-lucide="info" style="width:15px;height:15px;color:#1565c0;margin-top:1px;flex-shrink:0"></i><p style="font-size:12px;color:#1565c0;line-height:1.5;margin:0">📧 A <strong>Gmail account (@gmail.com)</strong> is required. A verification link will be sent to your email — you must verify it before you can log in.</p></div>`:''}
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="su-email" type="email" value="${_esc(signupEmail)}" oninput="signupEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="su-pass" type="password" value="${_esc(signupPassword)}" oninput="signupPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Min. 6 characters" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input id="su-confirm" type="password" value="${_esc(signupConfirmPassword)}" oninput="signupConfirmPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Re-enter password" /></div>
-          <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
+        ${googleButton(role, mode==='signup'?'Sign up with Google':'Continue with Google')}
+        <div class="or-line" style="color:${c.text_color}77"><span>or use email</span></div>
+        ${role==='student'?`
+        <div class="flex gap-2 mb-5 p-1 rounded-lg" style="background:${c.text_color}0d">
+          <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-md text-sm font-semibold btn-row" style="background:${mode==='login'?c.surface_color:'transparent'};color:${c.text_color};${mode==='login'?'box-shadow:0 1px 3px rgba(0,0,0,.12)':''}">Log in</button>
+          <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-md text-sm font-semibold btn-row" style="background:${mode==='signup'?c.surface_color:'transparent'};color:${c.text_color};${mode==='signup'?'box-shadow:0 1px 3px rgba(0,0,0,.12)':''}">Sign up</button>
+        </div>`:''}
+        ${mode==='signup'?`
+          ${err(signupError)}
+          <p class="mb-4" style="font-size:12px;color:${c.text_color}99;line-height:1.5">Use your <strong>Gmail</strong> address. We'll email a link you must click before your first login.</p>
+          <div class="mb-4"><label for="su-email" style="${label}">Email</label><input id="su-email" type="email" autocomplete="email" value="${_esc(signupEmail)}" oninput="signupEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="${field}" placeholder="yourname@gmail.com" /></div>
+          <div class="mb-4"><label for="su-pass" style="${label}">Password</label><input id="su-pass" type="password" autocomplete="new-password" value="${_esc(signupPassword)}" oninput="signupPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="${field}" placeholder="At least 6 characters" /></div>
+          <div class="mb-5"><label for="su-confirm" style="${label}">Confirm password</label><input id="su-confirm" type="password" autocomplete="new-password" value="${_esc(signupConfirmPassword)}" oninput="signupConfirmPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="${field}" placeholder="Re-enter password" /></div>
+          <button onclick="handleSignup()" ${authBusy?'disabled':''} class="w-full px-6 py-3 rounded-lg font-semibold btn-row" style="${primary}">${authBusy==='signup'?spinner+'Creating account…':'Create account'}</button>
         `:`
-          ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
-          <div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}55">
-            <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
-            <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">${selectedRoleForLogin==='student'?'Sign up first with your <strong>Gmail (@gmail.com)</strong> and verify your email before logging in.':'Use the email and password provided by your administrator.'}</p>
-          </div>
-          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="li-email" type="email" value="${_esc(loginEmail)}" oninput="loginEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
-          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="li-pass" type="password" value="${_esc(loginPassword)}" oninput="loginPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
-          <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
-          <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
+          ${err(loginError)}
+          ${role!=='student'?`<p class="mb-4" style="font-size:12px;color:${c.text_color}99;line-height:1.5">Use the account your administrator created for you.</p>`:''}
+          <div class="mb-4"><label for="li-email" style="${label}">Email</label><input id="li-email" type="email" autocomplete="username" value="${_esc(loginEmail)}" oninput="loginEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleLogin('${role}');}" style="${field}" placeholder="Enter email" /></div>
+          <div class="mb-5"><label for="li-pass" style="${label}">Password</label><input id="li-pass" type="password" autocomplete="current-password" value="${_esc(loginPassword)}" oninput="loginPassword=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();handleLogin('${role}');}" style="${field}" placeholder="Enter password" /></div>
+          <button onclick="handleLogin('${role}')" ${authBusy?'disabled':''} class="w-full px-6 py-3 rounded-lg font-semibold btn-row" style="${primary}">${authBusy==='login'?spinner+'Logging in…':'Log in'}</button>
+          <button onclick="showForgotPassword=true;forgotPasswordEmail=loginEmail;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-2.5 rounded-lg font-semibold text-sm btn-row" style="${ghost}">Forgot password?</button>
         `}
       `}
     </div>
@@ -2858,19 +2194,19 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
       else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
       else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
       const bottomItems=items,bottomIcons=icons,bottomKeys=itemKeys;
-      app.innerHTML=`
-<div style="position:relative;height:100vh;width:100%;overflow:hidden;display:flex;flex-direction:column">
+      return `
+<div data-key="dash" class="screen" style="position:relative;width:100%;overflow:hidden;display:flex;flex-direction:column">
   <div class="drawer-overlay ${mobileDrawerOpen?'open':''}" onclick="mobileDrawerOpen=false;render()"></div>
   <div class="drawer-panel ${mobileDrawerOpen?'open':''}">
     <div class="p-5 pb-2 flex items-center justify-between" style="border-bottom:1px solid #ffffff11">
-      <div><span class="font-bold" style="font-size:${fs*1.2}px;color:#ffee58">QHsafety</span><div class="mt-1 text-xs" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
-      <button onclick="mobileDrawerOpen=false;render()" style="background:none;border:none;color:#ffffff88;cursor:pointer;padding:4px"><i data-lucide="x" style="width:20px;height:20px"></i></button>
+      <div><span class="font-bold" style="font-size:${fs*1.2}px;color:#ffee58">QHsafety</span><div class="mt-1 text-xs" style="color:#ffffff99">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
+      <button onclick="mobileDrawerOpen=false;render()" aria-label="Close menu" style="background:none;border:none;color:#ffffffaa;cursor:pointer;padding:8px"><i data-lucide="x" style="width:20px;height:20px"></i></button>
     </div>
     <div class="p-3 mx-3 mt-4 rounded-xl flex items-center gap-3" style="background:#ffffff11">
-      <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
-      <div><div class="text-xs font-semibold" style="color:#fff">${isAnonymous?'Anonymous User':currentUserEmail}</div><div class="text-xs" style="color:#ffffff66">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div></div>
+      <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':_esc((currentUserEmail||'?')[0].toUpperCase())}</div>
+      <div><div class="text-xs font-semibold" style="color:#fff;overflow-wrap:anywhere">${isAnonymous?'Anonymous User':_esc(currentUserEmail)}</div><div class="text-xs" style="color:#ffffff66">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div></div>
     </div>
-    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');mobileDrawerOpen=false;render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
+    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
     <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm w-full" style="background:none;border:none;cursor:pointer;color:#ffffff66;border-top:1px solid #ffffff11"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
   </div>
   <div class="flex" style="flex:1;overflow:hidden;background-color:${config.background_color}">
@@ -2878,32 +2214,32 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
       <div class="desktop-sidebar-logo">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <span class="mono font-bold" style="font-size:${fs*1.25}px;color:${config.primary_action_color}">QH<span style="color:#fff">safety</span></span>
-          ${currentRole==='guidance'?`<button onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative;opacity:0.7;transition:opacity 0.2s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i data-lucide="bell" style="width:18px;height:18px;color:#fff"></i><span id="desk-notif-dot" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span></button>`:''}
+          ${currentRole==='guidance'?`<button onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative;opacity:0.7;transition:opacity 0.2s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i data-lucide="bell" style="width:18px;height:18px;color:#fff"></i><span id="desk-notif-dot" data-live style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span></button>`:''}
         </div>
         <div class="mt-1 text-xs font-medium" style="color:#ffffff55">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div>
       </div>
       <div class="desktop-sidebar-user">
-        <div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;background:${isAnonymous?'#90a4ae':config.primary_action_color};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+        <div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;background:${isAnonymous?'#90a4ae':config.primary_action_color};color:#2c3e50">${isAnonymous?'?':_esc((currentUserEmail||'?')[0].toUpperCase())}</div>
         <div style="overflow:hidden;min-width:0">
-          <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isAnonymous?'Anonymous User':currentUserEmail}</div>
+          <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${_esc(currentUserEmail)}">${isAnonymous?'Anonymous User':_esc(currentUserEmail)}</div>
           <div style="font-size:11px;color:#ffffff55">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div>
         </div>
       </div>
-      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
+      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
       <div class="desktop-sidebar-footer">
         <button onclick="logout()" class="sidebar-item w-full flex items-center gap-3 px-5 py-3 text-sm" style="background:none;border:none;cursor:pointer;color:#ffffff55"><i data-lucide="log-out" style="width:16px;height:16px;flex-shrink:0"></i><span>${tr('logout')}</span></button>
       </div>
     </aside>
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
       <div class="mobile-topbar">
-        <button onclick="mobileDrawerOpen=true;render()" style="background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
+        <button onclick="mobileDrawerOpen=true;render()" aria-label="Open menu" style="background:none;border:none;color:#fff;cursor:pointer;padding:8px;margin:-4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
         <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
         <div style="display:flex;align-items:center;gap:8px">
-          <button id="mob-notif-btn" onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative">
+          <button id="mob-notif-btn" onclick="enablePushNotifications()" title="Enable push notifications" aria-label="Notifications" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;position:relative">
             <i data-lucide="bell" style="width:22px;height:22px;color:#fff"></i>
-            <span id="mob-notif-dot" style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span>
+            <span id="mob-notif-dot" data-live style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span>
           </button>
-          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':_esc((currentUserEmail||'?')[0].toUpperCase())}</div>
         </div>
       </div>
       <main id="main-scroll" class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
@@ -2915,11 +2251,11 @@ function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, te
           <h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">${tr(itemKeys[items.indexOf(activeSidebarItem)] || 'dashboard')}</h2>
           <p style="font-size:${fs*0.8}px;color:${config.text_color}66">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</p>
         </div>
-        ${getDashboardContent(fs)}
+        <div data-key="page-${activeSidebarItem}" class="fade-in">${getDashboardContent(fs)}</div>
       </main>
     </div>
   </div>
-  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
+  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" ${activeSidebarItem===item?'aria-current="page"':''} onclick="goTo('${item}')"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
 </div>`;
     }
 
@@ -2953,21 +2289,16 @@ if(activeSidebarItem==='Postings') {
   const filtered = visiblePostings;
 
   return `
-  ${(currentRole === 'guidance' || currentRole === 'admin') ? `
-  <div class="mb-4">
-    <button onclick="deleteAllPostings()" 
-        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
-        style="background:#ef5350;color:#fff">
-  <i data-lucide="trash-2" style="width:18px;height:18px"></i>
-  ${tr('deleteAllPostings')}
-</button>
+  <div class="max-w-3xl">
+  ${(currentRole === 'guidance' || currentRole === 'admin') && postings.length ? `
+  <div class="mb-4 flex" style="justify-content:flex-end">
+    <button onclick="deleteAllPostings()" class="btn-danger-ghost"><i data-lucide="trash-2" style="width:14px;height:14px"></i>${tr('deleteAllPostings')}</button>
   </div>` : ''}
-<div class="max-w-3xl">
   ${currentRole==='student' ? `
     <div class="mb-8">
       <button onclick="showPostingForm=!showPostingForm;render()" 
               class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" 
-              style="background:${config.primary_action_color};color:${config.text_color}">
+              style="background:${config.primary_action_color};color:#2c3e50">
         <i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('newPosting')}
       </button>
     </div>` : ''}
@@ -2977,45 +2308,46 @@ if(activeSidebarItem==='Postings') {
          style="background:${config.surface_color};border:1px solid ${config.text_color}22">
       <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
       <input type="text" placeholder="${tr('search')}" 
-             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value);onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();filterPostsInDOM(this.value);this.blur();}" autocomplete="off" onfocus="onFieldInput()" 
+             id="postingSearchInput" aria-label="${tr('search')}" value="${_esc(postingSearchQuery)}" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" autocomplete="off" 
              style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
     </div>
   </div>
 
   ${showPostingForm ? `
-  <div class="p-6 rounded-xl card-hover mb-6" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
-    ${postingError ? `<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${postingError}</div>` : ''}
+  <div data-key="post-form" class="p-6 rounded-xl mb-6 fade-in" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+    ${postingError ? `<div class="p-3 rounded-lg mb-4 text-sm" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a;text-align:center">${postingError}</div>` : ''}
     <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e3f2fd;border-left:4px solid #1565c0;color:#1a237e">
       ${tr('postGuide')}
     </div>
     <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
-    <input type="text" id="postingTitleInput" placeholder="${tr('title')}" value="${postingTitle}" 
+    <input type="text" id="postingTitleInput" placeholder="${tr('title')}" aria-label="${tr('title')}" maxlength="140" value="${_esc(postingTitle)}" 
            onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="postingTitle=this.value;onFieldInput()" 
            style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
-    <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
-    <textarea id="postingContentTA" placeholder="${tr('content')}" oninput="postingContent=this.value;onFieldInput()" 
-              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical"></textarea>
+    <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" aria-pressed="${postingPriority===lv}" class="px-2 py-2 rounded-lg flex-1 text-sm font-bold" style="text-align:center;white-space:nowrap;background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
+    <textarea id="postingContentTA" placeholder="${tr('content')}" aria-label="${tr('content')}" maxlength="1800" oninput="postingContent=this.value;onFieldInput()" 
+              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${_esc(postingContent)}</textarea>
     <div class="flex gap-3">
       <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
-              style="background:${config.primary_action_color};color:${config.text_color}">${tr('publish')}</button>
+              style="background:${config.primary_action_color};color:#2c3e50">${tr('publish')}</button>
       <button onclick="showPostingForm=false;postingTitle='';postingContent='';postingError='';render()" 
               class="px-4 py-2 rounded-lg font-semibold" 
               style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
     </div>
   </div>` : ''}
 
-  <div class="space-y-4">
-    ${filtered.length === 0 
-      ? `<div id="postings-empty-state" class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
-           <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}44"></i>
-           <p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noPostings')}</p>
+  <div data-key="post-list" class="space-y-4">
+    <div id="postings-no-match"  class="p-6 rounded-xl text-sm text-center" style="display:none;background:${config.surface_color};border:1px dashed ${config.text_color}22;color:${config.text_color}99">${tr('noMatch')}</div>
+    ${filtered.length === 0
+      ? `<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:1px dashed ${config.text_color}33">
+           <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}55"></i>
+           <p class="mt-3 text-sm" style="color:${config.text_color}99">${dataLoaded.postings ? tr('noPostings') : tr('loading')}</p>
          </div>`
       : filtered.slice(0, postLimit).map(p => {
           const isPending = true; // Postings are always "active"
           const gc = getGlowClass(p, isPending);
 
-          return `
-      <div data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl card-hover ${gc}" 
+          return keep('p'+p.id, `
+      <div data-key="p${p.id}" data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl ${gc}"
            style="background:${config.surface_color};border:1px solid ${config.text_color}11">
         <div class="flex items-start justify-between mb-3">
           <div class="flex-1">
@@ -3024,8 +2356,8 @@ if(activeSidebarItem==='Postings') {
             ${currentRole==='guidance' ? `
             <div class="flex items-center gap-2 mt-2 flex-wrap">
               ${p.riskLevel ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
-                style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">
-                ${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${tr(p.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${_esc(String(p.aiScore||0))}
+                style="background:${p.riskLevel==='High'?'#d32f2f':p.riskLevel==='Medium'?'#e65100':p.riskLevel==='Low-Medium'?'#8d6e00':'#2e7d32'};color:#fff">
+                ${riskLabel(p.riskLevel)} · AI ${_esc(String(p.aiScore||0))}
               </span>` : ''}
               
               ${p.priority ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
@@ -3033,7 +2365,7 @@ if(activeSidebarItem==='Postings') {
                 ${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${tr(p.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}
               </span>` : ''}
               
-              ${p.reasons && p.reasons.length ? `<span class="text-xs text-red-500">⚠ ${_esc(p.reasons.join(', '))}</span>` : ''}
+              ${p.reasons && p.reasons.length ? `<span class="text-xs" style="color:${darkMode?'#ef9a9a':'#b71c1c'};flex-basis:100%">${_esc(p.reasons.join(' · '))}</span>` : ''}
             </div>` : ''}
 
             <div class="text-xs mt-2" style="color:${config.text_color}66">
@@ -3048,21 +2380,21 @@ if(activeSidebarItem==='Postings') {
     ${tr('delete')}
   </button>` : ''}
                   </div>
-        <p style="color:${config.text_color}88; line-height:1.5;max-height:120px;overflow-y:auto;padding-right:4px">${_esc(p.content)}</p>
+        <p style="color:${config.text_color}cc; line-height:1.55;max-height:160px;overflow-y:auto;padding-right:4px;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(p.content)}</p>
 
         ${p.guidanceMessage ? `
         <div class="mt-3 p-3 rounded-lg" style="background:#e3f2fd;border-left:4px solid #1565c0">
-          <div class="text-xs font-bold mb-1" style="color:#1565c0">${tr('msgFromGuidance')}${p.guidanceMessageAt ? ' · ' + p.guidanceMessageAt : ''}</div>
-          <p class="text-sm" style="color:#1a237e">${p.guidanceMessage}</p>
+          <div class="text-xs font-bold mb-1" style="color:#1565c0">${tr('msgFromGuidance')}${p.guidanceMessageAt ? ' · ' + _esc(p.guidanceMessageAt) : ''}</div>
+          <p class="text-sm" style="color:#1a237e;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(p.guidanceMessage)}</p>
         </div>` : ''}
 
         ${currentRole === 'guidance' ? `
         <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
           <div class="text-xs font-bold mb-2" style="color:${config.text_color}88">${tr('guidanceReply')}</div>
           <div class="flex gap-2">
-            <textarea rows="2" placeholder="Type a message for the student..." 
+            <textarea id="gmsg_${p.id}" rows="2" placeholder="Type a message for the student..." aria-label="Message for the student" 
               oninput="guidanceMessageDraft['${p.id}']=this.value;onFieldInput()"
-              style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;resize:none">${guidanceMessageDraft[p.id]||''}</textarea>
+              style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;resize:none">${_esc(guidanceMessageDraft[p.id]||'')}</textarea>
             <button onclick="sendGuidanceMessage(${p.id})" 
               style="padding:8px 14px;background:#1565c0;color:#fff;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap;align-self:flex-end">
               ${tr('send')}
@@ -3072,28 +2404,28 @@ if(activeSidebarItem==='Postings') {
 
         <!-- Student/anyone chat thread on postings -->
         <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
-          <div class="text-xs font-bold mb-2" style="color:${config.text_color}66">💬 Comments</div>
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}99">Comments</div>
           ${(p.chatMessages && p.chatMessages.length) ? `
-          <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding-right:4px">
+          <div id="postChatBox_${p.id}" class="chat-scroll" style="max-height:180px;margin-bottom:10px;padding-right:4px"><div class="chat-list">
             ${p.chatMessages.map(m=>`
             <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?'row-reverse':'row'};gap:8px;align-items:flex-end">
-              <div style="max-width:75%;padding:8px 12px;border-radius:14px;font-size:13px;background:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?config.primary_action_color+'cc':config.text_color+'18'};color:${config.text_color}">
-                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.65">${m.role==='guidance'?'🎓 Guidance':m.sender==='Anonymous'?'👤 Anonymous':_esc(m.sender.split('@')[0])}</div>
-                ${_esc(m.text)}
+              <div style="max-width:75%;padding:8px 12px;border-radius:14px;font-size:13px;background:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?config.primary_action_color:config.text_color+'18'};color:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?'#2c3e50':config.text_color}">
+                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.75">${m.role==='guidance'?'Guidance':m.sender==='Anonymous'?'Anonymous':_esc(String(m.sender||'').split('@')[0])}</div>
+                <span style="white-space:pre-wrap;overflow-wrap:anywhere">${_esc(m.text)}</span>
                 <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${_esc(m.time||'')}</div>
               </div>
             </div>`).join('')}
-          </div>` : `<p style="font-size:12px;color:${config.text_color}44;margin-bottom:8px">No comments yet.</p>`}
+          </div></div>` : `<p style="font-size:12px;color:${config.text_color}88;margin-bottom:8px">No comments yet.</p>`}
           <div style="display:flex;gap:8px">
-            <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." 
+            <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." aria-label="Add a comment" maxlength="1000" value="${_esc(postingChatDraft[p.id]||'')}" 
               oninput="postingChatDraft['${p.id}']=this.value"
               onkeydown="if(event.key==='Enter'){event.preventDefault();sendPostingChat(${p.id})}"
               style="flex:1;padding:8px 12px;border:1px solid ${config.text_color}22;border-radius:20px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
             <button onclick="sendPostingChat(${p.id})" 
-              style="padding:8px 14px;background:${config.primary_action_color};color:${config.text_color};border-radius:20px;font-weight:700;font-size:13px">Send</button>
+              style="padding:8px 14px;background:${config.primary_action_color};color:#2c3e50;border-radius:20px;font-weight:700;font-size:13px">${tr('send')}</button>
           </div>
         </div>
-      </div>`;
+      </div>`);
         }).join('')}
     ${filtered.length > postLimit ? `<button onclick="postLimit+=25;render()" class="w-full py-3 rounded-lg text-sm font-semibold" style="background:${config.text_color}11;color:${config.text_color}">Show more (${filtered.length - postLimit} remaining)</button>` : ''}
   </div>
@@ -3116,31 +2448,23 @@ if(activeSidebarItem==='Postings') {
           :consultationPostings.filter(c=>c.authorId===myEmail||c.author===myEmail||c.studentEmail===myEmail);
 
         return `
-        ${(currentRole === 'guidance' || currentRole === 'admin') ? `
-  <div class="mb-4">
-    <button onclick="deleteAllConsultations()" 
-          class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
-          style="background:#ef5350;color:#fff">
-    <i data-lucide="trash-2" style="width:18px;height:18px"></i>
-    ${tr('deleteAllConsult')}
-  </button>
-  </div>` : ''}
-<div class="max-w-3xl">
-  <div class="flex justify-between items-center mb-6">
-    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
-    ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
+        <div class="max-w-3xl">
+  <div class="flex justify-between items-center mb-6 flex-wrap gap-3">
+    <h2 class="font-bold text-2xl hidden md:block" style="color:${config.text_color}">${tr('consultations')}</h2>
+    ${(currentRole === 'guidance' || currentRole === 'admin') && consultationPostings.length ? `<button onclick="deleteAllConsultations()" class="btn-danger-ghost" style="margin-left:auto"><i data-lucide="trash-2" style="width:14px;height:14px"></i>${tr('deleteAllConsult')}</button>` : ''}
+    ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:#2c3e50"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
   </div>
   ${showConsultationForm?`
-  <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
-    ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
+  <div data-key="consult-form" class="p-6 rounded-xl mb-8 fade-in" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
+    ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a;text-align:center">${consultationError}</div>`:''}
     <div class="p-3 rounded-lg mb-5 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
-      🤝 <strong>Consultation Guide:</strong> Describe your concern clearly. The guidance counselor will review and reply. Your request is confidential.
+      <strong>Consultation guide:</strong> Describe your concern clearly. The guidance counselor will review and reply. Your request is confidential.
     </div>
-    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">📋 New Consultation Request</h3>
+    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">New consultation request</h3>
 
     <!-- Grade Level -->
     <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📚 Grade Level</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Grade level</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
           <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">Junior High School</div>
@@ -3151,31 +2475,31 @@ if(activeSidebarItem==='Postings') {
           ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
         </div>
       </div>
-      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ ${consultationGradeLevel} selected</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
+      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:${darkMode?'#a5d6a7':'#2e7d32'}">${_esc(consultationGradeLevel)} selected</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
     </div>
 
     <!-- Reason + Priority -->
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📝 Reason / Topic</label>
-      <input type="text" id="consultReasonInput" placeholder="e.g. Academic stress, Family issue, Personal problem..." value="${consultationReason||''}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Reason / topic</label>
+      <input type="text" id="consultReasonInput" placeholder="e.g. Academic stress, Family issue, Personal problem..." aria-label="Reason or topic" maxlength="140" value="${_esc(consultationReason||'')}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
     </div>
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">⚡ Priority Level</label>
-      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-semibold" style="background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${p}</button>`).join('')}</div>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Priority level</label>
+      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" aria-pressed="${consultationPriority===p}" class="px-2 py-2 rounded-lg flex-1 text-sm font-semibold" style="text-align:center;white-space:nowrap;background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${p}</button>`).join('')}</div>
     </div>
 
     <!-- How are you feeling (mood slider) -->
     <div class="mb-4 p-4 rounded-xl" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">💭 How are you feeling right now?</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">How are you feeling right now?</label>
       <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="consultationMoodLevel=${i+1};render()" style="font-size:${consultationMoodLevel===i+1?'28px':'20px'};transition:all 0.15s;opacity:${consultationMoodLevel===i+1?'1':'0.45'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
+        ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="consultationMoodLevel=${i+1};render()" aria-label="${['Very sad','Sad','Neutral','Good','Great'][i]}" aria-pressed="${consultationMoodLevel===i+1}" style="font-size:24px;line-height:1;padding:6px;transform:scale(${consultationMoodLevel===i+1?'1.2':'1'});opacity:${consultationMoodLevel===i+1?'1':'0.45'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
       </div>
       <div style="text-align:center;font-size:12px;font-weight:600;color:${config.text_color}88">${['Very Sad','Sad','Neutral','Good','Great'][consultationMoodLevel-1]}</div>
     </div>
 
     <!-- Contact Preference -->
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📞 Preferred Contact Method</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Preferred contact method</label>
       <div class="flex gap-2 flex-wrap">
         ${[{v:'chat',l:'💬 Chat',d:'In-app chat'},{v:'meet',l:'📹 Google Meet',d:'Video call'},{v:'facetoface',l:'🏫 Face to Face',d:'In person'},{v:'phone',l:'📱 Phone Call',d:'Call me'}].map(o=>`<button onclick="consultationContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${consultationContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${consultationContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
       </div>
@@ -3183,61 +2507,61 @@ if(activeSidebarItem==='Postings') {
 
     <!-- Details textarea -->
     <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">🗒️ Describe Your Concern</label>
-      <textarea id="consultDescTA" placeholder="Share as much or as little as you feel comfortable with. Everything is confidential." oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${consultationDescription||''}</textarea>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Describe your concern</label>
+      <textarea id="consultDescTA" aria-label="Describe your concern" maxlength="1800" placeholder="Share as much or as little as you feel comfortable with. Everything is confidential." oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${_esc(consultationDescription||'')}</textarea>
     </div>
 
     <div class="flex gap-3">
-      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-bold flex-1" style="background:${config.primary_action_color};color:${config.text_color}">📤 ${tr('submitRequest')}</button>
+      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-bold flex-1 btn-row" style="background:${config.primary_action_color};color:#2c3e50">${tr('submitRequest')}</button>
       <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationContactPref='chat';consultationMoodLevel=3;consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
     </div>
   </div>`:''}
-  <div class="space-y-4">
+  <div data-key="consult-list" class="space-y-4">
     ${visibleConsultations.length===0
-      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noConsultations')}</p></div>`
+      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:1px dashed ${config.text_color}33"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}55"></i><p class="mt-3 text-sm" style="color:${config.text_color}99">${dataLoaded.consultations ? tr('noConsultations') : tr('loading')}</p></div>`
       :visibleConsultations.slice(0, consultLimit).map(c=>{
         const isPending=c.status==='Pending';
         const gc=getGlowClass(c,isPending);
-        return `
-        <div class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
+        return keep('c'+c.id, `
+        <div data-key="c${c.id}" data-consult-id="${c.id}" class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
 
           <!-- TOP: badges row -->
           <div class="flex flex-wrap gap-2 mb-3">
             <span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${isPending?(c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'):'#66bb6a'};color:#fff">
               ${isPending?(c.priority==='High'?'⚡ ':c.priority==='Medium'?'▲ ':'▽ ')+c.priority+' Priority':tr('resolved')}
             </span>
-            ${c.urgent?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#b71c1c;color:#fff;animation:pulseRed 1s infinite">🚨 URGENT</span>`:''}
+            ${c.urgent?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#b71c1c;color:#fff">URGENT</span>`:''}
             ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} AI Risk: ${c.riskLevel} · ${c.aiScore}</span>`:''}
-            ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'🎓 SHS':'📚 JHS'} · ${c.gradeLevel}</span>`:''}
+            ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'SHS':'JHS'} · ${_esc(c.gradeLevel)}</span>`:''}
             ${c.contactPref?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone Call':'💬 Chat'}</span>`:''}
-            ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very Sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
-            ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">📅 Meet: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
-            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#e65100">↗️ Referred: ${_esc(c.referredTo)}</span>`:''}
+            ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
+            ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">${c.contactPref==='phone'?'Call':'Meet'}: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
+            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#bf360c">Referred: ${_esc(c.referredTo)}</span>`:''}
           </div>
 
           <!-- Title + action buttons -->
           <div class="flex flex-col md:flex-row justify-between items-start gap-3 mb-3">
             <div class="flex-1">
               <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${_esc(c.reason)}</h3>
-              ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}55">
-                <span>👤 ${_esc(c.studentEmail||c.author)}</span>
-                <span>📋 <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
-                <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
+              ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}99">
+                <span>${_esc(c.studentEmail||c.author)}</span>
+                <span><strong style="color:${isPending?'#e65100':'#2e7d32'}">${_esc(c.status||'Pending')}</strong></span>
+                <span>${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
               </div>`:''}
             </div>
             <div class="flex gap-2 flex-wrap shrink-0">
-              ${(c.author===myEmail||c.authorId===myEmail)&&c.status==='Pending'?`<button onclick="deleteConsultationPosting('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350;border:1px solid #ef535044">${tr('cancel')}</button>`:''}
-              ${canDelete(c,'consultation')?`<button onclick="deleteConsultation(${c.id})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef5350;color:#fff">${tr('delete')}</button>`:''}
+              ${currentRole==='student'&&c.status==='Pending'&&canDelete(c,'consultation')?`<button onclick="deleteConsultationPosting('${c.id}')" class="btn-danger-ghost">${appLang==='tl'?'Kanselahin ang kahilingan':'Cancel request'}</button>`
+                :canDelete(c,'consultation')?`<button onclick="deleteConsultation('${c.id}')" class="btn-danger-ghost">${tr('delete')}</button>`:''}
               ${currentRole==='guidance'&&c.status==='Pending'?`
                 <button onclick="toggleConsultUrgent('${c.id}',${!!c.urgent})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${c.urgent?'#b71c1c22':'#ff980022'};color:${c.urgent?'#b71c1c':'#e65100'};border:1px solid ${c.urgent?'#b71c1c44':'#ff980044'}">${c.urgent?'🔕 Unmark Urgent':'🚨 Mark Urgent'}</button>
-                <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markResolved')}</button>
+                <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${config.secondary_action_color};color:#2c3e50">${tr('markResolved')}</button>
               `:''}
             </div>
           </div>
 
           <!-- Description -->
-          <div style="max-height:80px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
-            <p style="color:${config.text_color}88;line-height:1.6;font-size:13px">${_esc(c.description)}</p>
+          <div style="max-height:140px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
+            <p style="color:${config.text_color}cc;line-height:1.6;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(c.description)}</p>
           </div>
 
           <!-- Meet Banner (if scheduled) -->
@@ -3245,12 +2569,13 @@ if(activeSidebarItem==='Postings') {
           <div class="mb-3 p-3 rounded-xl" style="background:#e8f5e9;border:1px solid #66bb6a44">
             <div class="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <div class="font-bold text-sm" style="color:#2e7d32">📅 Scheduled Meeting</div>
-                <div class="text-xs mt-1" style="color:#388e3c">${new Date(c.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}</div>
-                ${c.meetNotes?`<div class="text-xs mt-1" style="color:#388e3c">📝 ${c.meetNotes}</div>`:''}
+                <div class="font-bold text-sm" style="color:#2e7d32">${c.contactPref==='phone'?'Scheduled phone call':'Scheduled meeting'}</div>
+                <div class="text-xs mt-1" style="color:#2e7d32">${new Date(c.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+                ${c.meetNotes?`<div class="text-xs mt-1" style="color:#2e7d32;overflow-wrap:anywhere">${_esc(c.meetNotes)}</div>`:''}
               </div>
               <div class="flex gap-2">
-                ${c.meetLink?`<a href="${c.meetLink.startsWith('http')?c.meetLink:'https://'+c.meetLink}" target="_blank" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#34a853;color:#fff;text-decoration:none">🔗 Join Meet</a>`:''}
+                ${c.meetLink&&c.contactPref==='phone'?`<a href="tel:${_esc(String(c.meetLink).replace(/[^\d+]/g,''))}" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#2e7d32;color:#fff;text-decoration:none">Call ${_esc(c.meetLink)}</a>`
+                  :c.meetLink&&safeHttpUrl(c.meetLink)?`<a href="${_esc(safeHttpUrl(c.meetLink))}" target="_blank" rel="noopener noreferrer" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#2e7d32;color:#fff;text-decoration:none">Join Meet</a>`:''}
                 ${currentRole==='guidance'?`<button onclick="cancelConsultMeet('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350">Cancel</button>`:''}
               </div>
             </div>
@@ -3261,8 +2586,8 @@ if(activeSidebarItem==='Postings') {
           <div class="mb-3" style="border:1px solid ${config.text_color}11;border-radius:12px;overflow:hidden">
 
             <!-- Schedule Meet / Phone Call Accordion -->
-            <button onclick="showMeetScheduler['${c.id}']=!showMeetScheduler['${c.id}'];render()" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold" style="background:${showMeetScheduler[c.id]?'#e8f5e9':config.text_color+'08'};color:${showMeetScheduler[c.id]?'#2e7d32':config.text_color};border:none;cursor:pointer">
-              <span>${c.contactPref==='phone'?'📱':'📹'} ${c.meetDateTime?(c.contactPref==='phone'?'Reschedule Call':'Reschedule Meeting'):(c.contactPref==='phone'?'Schedule Phone Call':'Schedule Google Meet')}</span>
+            <button onclick="toggleMeetScheduler('${c.id}')" aria-expanded="${!!showMeetScheduler[c.id]}" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold" style="background:${showMeetScheduler[c.id]?'#e8f5e9':config.text_color+'08'};color:${showMeetScheduler[c.id]?'#2e7d32':config.text_color};border:none;cursor:pointer">
+              <span>${c.meetDateTime?(c.contactPref==='phone'?'Reschedule Call':'Reschedule Meeting'):(c.contactPref==='phone'?'Schedule Phone Call':'Schedule Google Meet')}</span>
               <i data-lucide="${showMeetScheduler[c.id]?'chevron-up':'chevron-down'}" style="width:16px;height:16px"></i>
             </button>
             ${showMeetScheduler[c.id]?`
@@ -3270,29 +2595,29 @@ if(activeSidebarItem==='Postings') {
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
                 <div>
                   <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📅 DATE</label>
-                  <input type="date" id="meet-date-${c.id}" value="${consultMeetDraft.date||''}" oninput="consultMeetDraft.date=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                  <input type="date" id="meet-date-${c.id}" value="${_esc(consultMeetDraft.date||'')}" oninput="consultMeetDraft.date=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 </div>
                 <div>
                   <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">⏰ TIME</label>
-                  <input type="time" id="meet-time-${c.id}" value="${consultMeetDraft.time||''}" oninput="consultMeetDraft.time=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                  <input type="time" id="meet-time-${c.id}" value="${_esc(consultMeetDraft.time||'')}" oninput="consultMeetDraft.time=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 </div>
               </div>
               ${c.contactPref==='phone'?`
               <div style="margin-bottom:10px">
                 <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📱 PHONE NUMBER TO CALL</label>
-                <input type="tel" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="+63 9XX XXX XXXX" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <input type="tel" id="meet-link-${c.id}" value="${_esc(consultMeetDraft.link||'')}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="+63 9XX XXX XXXX" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 The student will see this number and know to expect your call.</p>
               </div>`:`
               <div style="margin-bottom:10px">
                 <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">🔗 GOOGLE MEET LINK (optional)</label>
-                <input type="url" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <input type="url" id="meet-link-${c.id}" value="${_esc(consultMeetDraft.link||'')}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
                 <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 Create a meet at <a href="https://meet.google.com" target="_blank" style="color:#1565c0">meet.google.com</a> and paste the link above.</p>
               </div>`}
               <div style="margin-bottom:12px">
                 <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📝 NOTES FOR STUDENT (optional)</label>
-                <input type="text" id="meet-notes-${c.id}" value="${consultMeetDraft.notes||''}" oninput="consultMeetDraft.notes=this.value;onFieldInput()" placeholder="e.g. Please bring your report card..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <input type="text" id="meet-notes-${c.id}" value="${_esc(consultMeetDraft.notes||'')}" oninput="consultMeetDraft.notes=this.value;onFieldInput()" placeholder="e.g. Please bring your report card..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
               </div>
-              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2 rounded-lg font-bold text-sm" style="background:#34a853;color:#fff">${c.contactPref==='phone'?'📱 Confirm & Notify Student':'📅 Confirm & Notify Student'}</button>
+              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2.5 rounded-lg font-bold text-sm btn-row" style="background:#2e7d32;color:#fff">Confirm and notify student</button>
             </div>`:''}
 
             <!-- Private Guidance Note -->
@@ -3302,9 +2627,9 @@ if(activeSidebarItem==='Postings') {
                 <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Private Guidance Note</span>
               </div>
               <div class="px-4 pb-3">
-                <textarea id="guidance-note-${c.id}" placeholder="Internal notes — not visible to student..." oninput="onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;min-height:60px;resize:vertical">${c.guidanceNote||''}</textarea>
-                <button onclick="saveGuidanceNote('${c.id}')" class="mt-2 px-4 py-1.5 rounded-lg text-xs font-bold" style="background:${config.text_color}18;color:${config.text_color}">💾 Save Note</button>
-                ${c.noteUpdatedAt?`<span class="text-xs ml-2" style="color:${config.text_color}44">Last saved: ${new Date(c.noteUpdatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
+                <textarea data-keep id="guidance-note-${c.id}" aria-label="Private guidance note" placeholder="Internal notes — not visible to student..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;min-height:60px;resize:vertical">${_esc(c.guidanceNote||'')}</textarea>
+                <button onclick="saveGuidanceNote('${c.id}')" class="mt-2 px-4 py-1.5 rounded-lg text-xs font-bold" style="background:${config.text_color}18;color:${config.text_color}">Save note</button>
+                ${c.noteUpdatedAt?`<span class="text-xs ml-2" style="color:${config.text_color}88">Last saved: ${new Date(c.noteUpdatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
               </div>
             </div>
 
@@ -3315,8 +2640,8 @@ if(activeSidebarItem==='Postings') {
                 <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Refer Student</span>
               </div>
               <div class="px-4 pb-3 flex gap-2">
-                <input id="referral-${c.id}" type="text" value="${c.referredTo||''}" placeholder="e.g. School Psychologist, DSWD, Admin..." oninput="onFieldInput()" style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
-                <button onclick="saveReferral('${c.id}')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#90caf9;color:#1a237e">↗️ Save</button>
+                <input data-keep id="referral-${c.id}" type="text" aria-label="Refer student to" value="${_esc(c.referredTo||'')}" placeholder="e.g. School Psychologist, DSWD, Admin..." style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <button onclick="saveReferral('${c.id}')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#90caf9;color:#1a237e">Save</button>
               </div>
             </div>
 
@@ -3327,7 +2652,7 @@ if(activeSidebarItem==='Postings') {
           ${currentRole==='student'&&isPending?`
           <div class="mb-3 p-3 rounded-xl flex items-center gap-3 flex-wrap" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
             <span class="text-xs font-bold" style="color:${config.text_color}88">Update your mood:</span>
-            ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="saveConsultMood('${c.id}',${i+1})" style="font-size:${(c.studentMood||3)===i+1?'22px':'16px'};opacity:${(c.studentMood||3)===i+1?'1':'0.4'};background:none;border:none;cursor:pointer;transition:all 0.15s">${e}</button>`).join('')}
+            ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="saveConsultMood('${c.id}',${i+1})" aria-label="${['Very sad','Sad','Neutral','Good','Great'][i]}" aria-pressed="${(c.studentMood||3)===i+1}" style="font-size:20px;line-height:1;padding:6px;transform:scale(${(c.studentMood||3)===i+1?'1.2':'1'});opacity:${(c.studentMood||3)===i+1?'1':'0.4'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
           </div>`:''}
 
           <!-- ── APPOINTMENT STATUS TRACKER ── -->
@@ -3356,16 +2681,16 @@ if(activeSidebarItem==='Postings') {
             <summary style="padding:10px 14px;font-size:12px;font-weight:700;color:${config.text_color}77;cursor:pointer;background:${config.text_color}04;list-style:none;display:flex;align-items:center;gap:6px">
               <i data-lucide="history" style="width:13px;height:13px"></i>
               Session History ${c.chatMessages?'('+c.chatMessages.length+' messages)':''}
-              ${c.sessionRating?`<span style="margin-left:auto;color:#ffb300">${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)}</span>`:''}
+              ${c.sessionRating?`<span style="margin-left:auto;color:#ffb300">${stars(c.sessionRating)}</span>`:''}
             </summary>
             <div style="padding:10px 14px;font-size:12px;color:${config.text_color}77;line-height:1.7">
               <div><strong>Submitted:</strong> ${c.timestamp?new Date(c.timestamp).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'-'}</div>
-              ${c.gradeLevel?`<div><strong>Grade:</strong> ${c.gradeLevel}</div>`:''}
+              ${c.gradeLevel?`<div><strong>Grade:</strong> ${_esc(c.gradeLevel)}</div>`:''}
               ${c.contactPref?`<div><strong>Preferred Contact:</strong> ${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone':' 💬 Chat'}</div>`:''}
               ${c.referredTo?`<div><strong>Referred to:</strong> ${_esc(c.referredTo)}</div>`:''}
-              ${c.meetScheduledAt?`<div><strong>Meet scheduled by:</strong> ${c.meetScheduledBy||'Guidance'} on ${new Date(c.meetScheduledAt).toLocaleDateString()}</div>`:''}
+              ${c.meetScheduledAt?`<div><strong>Meet scheduled by:</strong> ${_esc(c.meetScheduledBy||'Guidance')} on ${new Date(c.meetScheduledAt).toLocaleDateString()}</div>`:''}
               ${c.reminderSentAt?`<div><strong>Reminder sent:</strong> ${new Date(c.reminderSentAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>`:''}
-              ${c.sessionRating?`<div><strong>Session rating:</strong> ${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)} ${c.sessionFeedback?'— "'+c.sessionFeedback+'"':''}</div>`:''}
+              ${c.sessionRating?`<div><strong>Session rating:</strong> ${stars(c.sessionRating)} ${c.sessionFeedback?'— "'+_esc(c.sessionFeedback)+'"':''}</div>`:''}
             </div>
           </details>`:''}
 
@@ -3374,22 +2699,23 @@ if(activeSidebarItem==='Postings') {
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
               <i data-lucide="message-square" style="width:14px;height:14px;color:${config.text_color}55"></i>
               <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
-              ${c.chatMessages?`<span style="margin-left:auto;font-size:11px;color:${config.text_color}44">${c.chatMessages.filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} attachments</span>`:''}
+              
             </div>
-            <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
-              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,currentUserEmail,isAnonymous,config.primary_action_color,config.text_color)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'44">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
-            </div>
+            <div id="consultChatBox_${c.id}" class="chat-scroll" style="min-height:60px;max-height:260px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}"><div class="chat-list">
+              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,c)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'88">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
+            </div></div>
             ${isPending||currentRole==='guidance'?`
             <div style="display:flex;flex-direction:column;gap:8px">
               <div style="display:flex;gap:8px">
-                <input id="consultChat_${c.id}" type="text"
+                <input id="consultChat_${c.id}" type="text" maxlength="1000" value="${_esc(consultationChatDraft[c.id]||'')}"
+                  aria-label="${currentRole==='guidance'?'Reply to student':'Message the counselor'}"
                   placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
                   oninput="consultationChatDraft['${c.id}']=this.value"
                   onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                   style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
                 <button onclick="sendConsultationChat('${c.id}')"
-                  style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
-                  <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
+                  style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':'#2c3e50'};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap;display:flex;align-items:center;gap:6px">
+                  <i data-lucide="send" style="width:14px;height:14px"></i> ${tr('send')}
                 </button>
               </div>
               <!-- File Attachment Row -->
@@ -3411,29 +2737,29 @@ if(activeSidebarItem==='Postings') {
                 <span style="font-size:11px;color:${storageBlocked?blockColor:config.text_color+'44'}">${(c.chatMessages||[]).filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} files used</span>`;
               })()}
                 ${currentRole==='guidance'&&c.meetDateTime?`
-                <button onclick="sendMeetReminder('${c.id}','${c.meetDateTime}','${c.authorId||''}')"
+                <button onclick="sendMeetReminder('${c.id}')"
                   style="margin-left:auto;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a55;cursor:pointer">
-                  🔔 Send Reminder
+                  Send reminder
                 </button>`:''}
               </div>
             </div>`:`
             <div>
-              <p style="font-size:12px;color:${config.text_color}44;text-align:center;margin-bottom:10px">Chat closed — consultation resolved.</p>
+              <p style="font-size:12px;color:${config.text_color}88;text-align:center;margin-bottom:10px">Chat closed — consultation resolved.</p>
               <!-- Post-session rating (student only, if not yet rated) -->
               ${currentRole==='student'&&!c.sessionRating?`
               <div class="p-3 rounded-xl" style="background:#fff8e1;border:1px solid #ffecb355">
-                <div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px">⭐ Rate Your Session</div>
+                <div style="font-size:13px;font-weight:700;color:#bf360c;margin-bottom:8px">Rate your session</div>
                 <div style="display:flex;gap:6px;margin-bottom:8px">
-                  ${[1,2,3,4,5].map(n=>`<button onclick="consultSessionRating['${c.id}']=${n};render()" style="font-size:${(consultSessionRating['${c.id}']||0)>=n?'26px':'20px'};background:none;border:none;cursor:pointer;transition:all 0.15s;opacity:${(consultSessionRating['${c.id}']||0)>=n?'1':'0.4'}">${(consultSessionRating['${c.id}']||0)>=n?'★':'☆'}</button>`).join('')}
+                  ${[1,2,3,4,5].map(n=>`<button onclick="consultSessionRating['${c.id}']=${n};render()" aria-label="${n} star${n>1?'s':''}" aria-pressed="${(consultSessionRating[c.id]||0)>=n}" style="font-size:26px;line-height:1;padding:2px;color:#ff8f00;background:none;border:none;cursor:pointer;opacity:${(consultSessionRating[c.id]||0)>=n?'1':'0.45'}">${(consultSessionRating[c.id]||0)>=n?'★':'☆'}</button>`).join('')}
                 </div>
-                <input type="text" placeholder="Optional: share your thoughts..." oninput="consultSessionFeedback['${c.id}']=this.value;onFieldInput()" value="${consultSessionFeedback['${c.id}']||''}"
+                <input type="text" placeholder="Optional: share your thoughts..." aria-label="Optional comment" maxlength="500" oninput="consultSessionFeedback['${c.id}']=this.value" value="${_esc(consultSessionFeedback[c.id]||'')}"
                   style="width:100%;padding:8px 12px;border:1px solid #ffcc0244;border-radius:8px;background:#fff;color:#333;font-size:13px;margin-bottom:8px" />
                 <button onclick="submitSessionRating('${c.id}')" style="padding:7px 16px;border-radius:20px;font-size:12px;font-weight:700;background:#ff8f00;color:#fff;border:none;cursor:pointer">Submit Rating</button>
               </div>`:''}
-              ${c.sessionRating?`<div style="text-align:center;font-size:13px;color:#2e7d32">⭐ You rated this session: ${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)}</div>`:''}
+              ${c.sessionRating?`<div style="text-align:center;font-size:13px;color:${darkMode?'#a5d6a7':'#2e7d32'}">${currentRole==='student'?'You rated this session':'Student rating'}: ${stars(c.sessionRating)}</div>`:''}
             </div>`}
           </div>
-        </div>`
+        </div>`)
       }).join('')}
     ${visibleConsultations.length > consultLimit ? `<button onclick="consultLimit+=25;render()" class="w-full py-3 rounded-lg text-sm font-semibold" style="background:${config.text_color}11;color:${config.text_color}">Show more (${visibleConsultations.length - consultLimit} remaining)</button>` : ''}
   </div>
@@ -3443,10 +2769,10 @@ if(activeSidebarItem==='Postings') {
       // ── USERS (admin) ──
       if(activeSidebarItem==='Users'&&currentRole==='admin') return `
 <div class="max-w-4xl">
-  <div class="flex justify-between items-center mb-8"><div><h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">User Management</h1><p class="text-sm mt-1" style="color:${config.text_color}66">Create Admin or Guidance accounts • Only Admins can access this page</p></div></div>
+  <div class="flex justify-between items-center mb-8"><div><h1 class="font-bold" style="font-size:${fs*1.4}px;color:${config.text_color}">User Management</h1><p class="text-sm mt-1" style="color:${config.text_color}66">Create Admin or Guidance accounts • Only Admins can access this page</p></div></div>
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="shield" style="width:28px;height:28px;color:#90caf9"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Admin</h3></div><input type="email" id="newAdminEmail" placeholder="admin@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newAdminPassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createAdminAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:#90caf9;color:${config.text_color}">Create Admin Account</button></div>
-    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="users" style="width:28px;height:28px;color:#ffee58"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Guidance Counselor</h3></div><input type="email" id="newGuidanceEmail" placeholder="counselor@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newGuidancePassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createGuidanceAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">Create Guidance Account</button></div>
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="shield" style="width:28px;height:28px;color:#90caf9"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Admin</h3></div><input type="email" id="newAdminEmail" placeholder="admin@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newAdminPassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createAdminAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:#90caf9;color:#2c3e50">Create Admin Account</button></div>
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="users" style="width:28px;height:28px;color:#ffee58"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Guidance Counselor</h3></div><input type="email" id="newGuidanceEmail" placeholder="counselor@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newGuidancePassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createGuidanceAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:#2c3e50">Create Guidance Account</button></div>
   </div>
 
   <!-- ── ACCOUNT CHECKER ── -->
@@ -3480,15 +2806,15 @@ if(activeSidebarItem==='Postings') {
     </div>
     <div class="flex gap-3 mb-4">
       <button onclick="adminCheckAccount()" id="acCheckBtn"
-        style="padding:10px 22px;border-radius:8px;background:${config.primary_action_color};color:${config.text_color};border:none;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
+        style="padding:10px 22px;border-radius:8px;background:${config.primary_action_color};color:#2c3e50;border:none;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
         <i data-lucide="search" style="width:15px;height:15px"></i> Check Account
       </button>
-      <button onclick="adminFixAccount()" id="acFixBtn"
+      <button onclick="adminFixAccount()" id="acFixBtn" data-live
         style="padding:10px 22px;border-radius:8px;background:#f57f17;color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer;display:none;align-items:center;gap:6px">
         <i data-lucide="wrench" style="width:15px;height:15px"></i> Fix Role
       </button>
     </div>
-    <div id="acResult" style="display:none;padding:14px;border-radius:10px;font-size:13px;line-height:1.7"></div>
+    <div id="acResult" data-live style="display:none;padding:14px;border-radius:10px;font-size:13px;line-height:1.7"></div>
   </div>
 
   <div class="p-6 rounded-xl" style="background:${config.surface_color}"><p style="color:${config.text_color}88">• New accounts are created immediately.<br>• Only these credentials will allow login with the correct role.</p></div>
@@ -3499,20 +2825,15 @@ if(activeSidebarItem==='Postings') {
       if(activeSidebarItem==='Feedback') {
         const visibleFeedback=currentRole==='admin'?feedbackList:feedbackList.filter(f=>f.author===myEmail);
         return `
-        ${currentRole === 'admin' ? `
-  <div class="mb-4">
-    <button onclick="deleteAllFeedback()" 
-        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
-        style="background:#ef5350;color:#fff">
-      <i data-lucide="trash-2" style="width:18px;height:18px"></i>
-      ${tr('deleteAllFeedback')}
-    </button>
+        <div class="max-w-3xl">
+  ${currentRole === 'admin' && feedbackList.length ? `
+  <div class="mb-4 flex" style="justify-content:flex-end">
+    <button onclick="deleteAllFeedback()" class="btn-danger-ghost"><i data-lucide="trash-2" style="width:14px;height:14px"></i>${tr('deleteAllFeedback')}</button>
   </div>` : ''}
-<div class="max-w-3xl">
-  ${currentRole!=='admin'?`<div class="mb-8"><button onclick="showFeedbackForm=!showFeedbackForm;render()" class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('leaveFeedback')}</button></div>`:''}
-  ${showFeedbackForm?`<div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">${feedbackError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${feedbackError}</div>`:''}<h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('leaveFeedback')}</h3><div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('rating')}</label><div class="flex gap-2">${[1,2,3,4,5].map(n=>`<button onclick="feedbackRating=${n};render()" class="w-10 h-10 rounded-lg font-bold text-lg" style="background:${feedbackRating>=n?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${n}</button>`).join('')}</div></div><textarea placeholder="${tr('writeFeedback')}" oninput="feedbackMessage=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${feedbackMessage}</textarea><div class="flex gap-3"><button onclick="addFeedback()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submit')}</button><button onclick="showFeedbackForm=false;feedbackMessage='';feedbackRating=5;feedbackError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button></div></div>`:''}
+  ${currentRole!=='admin'?`<div class="mb-8"><button onclick="showFeedbackForm=!showFeedbackForm;render()" class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" style="background:${config.primary_action_color};color:#2c3e50"><i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('leaveFeedback')}</button></div>`:''}
+  ${showFeedbackForm?`<div data-key="fb-form" class="p-6 rounded-xl mb-8 fade-in" style="background:${config.surface_color};border:1px solid ${config.text_color}11">${feedbackError?`<div class="p-3 rounded-lg mb-4 text-sm" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a;text-align:center">${feedbackError}</div>`:''}<h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('leaveFeedback')}</h3><div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('rating')}</label><div class="flex gap-2">${[1,2,3,4,5].map(n=>`<button onclick="feedbackRating=${n};render()" aria-label="${n} star${n>1?'s':''}" aria-pressed="${feedbackRating>=n}" class="w-10 h-10 rounded-lg text-lg" style="text-align:center;background:${feedbackRating>=n?config.primary_action_color:config.text_color+'14'};color:${feedbackRating>=n?'#2c3e50':config.text_color+'88'}">★</button>`).join('')}</div></div><textarea placeholder="${tr('writeFeedback')}" aria-label="${tr('writeFeedback')}" maxlength="1500" oninput="feedbackMessage=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${_esc(feedbackMessage)}</textarea><div class="flex gap-3"><button onclick="addFeedback()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:#2c3e50">${tr('submit')}</button><button onclick="showFeedbackForm=false;feedbackMessage='';feedbackRating=5;feedbackError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button></div></div>`:''}
   <div class="space-y-4">
-    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noFeedback')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}88">${f.authorRole||'Student'}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#ffee58':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}55">${f.date||''}</span></div><p style="color:${config.text_color}88;margin-top:8px">${_esc(f.message)}</p></div>`).join('')}
+    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}99">${dataLoaded.feedback ? tr('noFeedback') : tr('loading')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl" style="background:${config.surface_color};border:1px solid ${config.text_color}11"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}99">${_esc(f.authorRole||'Student')}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#f9a825':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}88">${_esc(f.date||'')}</span></div><p style="color:${config.text_color}cc;margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(f.message)}</p></div>`).join('')}
   </div>
 </div>`;
       }
@@ -3522,11 +2843,11 @@ if(activeSidebarItem==='Postings') {
         const filtered=logFilter==='all'?systemLogs:systemLogs.filter(l=>l.type===logFilter);
         return `
 <div class="max-w-4xl">
-  <div class="flex justify-between items-center mb-6">
-    <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">System Logs</h1>
-    <div class="flex gap-2">${['all','info','warning','error','success'].map(t=>`<button onclick="logFilter='${t}';render()" class="px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:${logFilter===t?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
+  <div class="flex justify-between items-center mb-6 flex-wrap gap-3">
+    <h1 class="font-bold" style="font-size:${fs*1.4}px;color:${config.text_color}">System Logs</h1>
+    <div class="flex gap-2 flex-wrap">${['all','info','warning','error','success'].map(t=>`<button onclick="logFilter='${t}';render()" class="px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:${logFilter===t?config.primary_action_color:config.text_color+'14'};color:${logFilter===t?'#2c3e50':config.text_color}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
   </div>
-  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${maskEmail(l.user)} · ${l.time}</p></div></div>`).join('')}</div>
+  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color};overflow-wrap:anywhere">${_esc(l.action)}</p><p class="text-xs mt-1" style="color:${config.text_color}88">${_esc(maskEmail(String(l.user||'')))} · ${_esc(l.time||'')}</p></div></div>`).join('')}</div>
 </div>`;
       }
 
@@ -3542,9 +2863,7 @@ if(activeSidebarItem==='Postings') {
         <i data-lucide="${darkMode?'moon':'sun'}" style="width:20px;height:20px;color:${config.text_color}"></i>
         <span style="font-weight:600;color:${config.text_color}">${tr('darkMode')}</span>
       </div>
-      <button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="relative w-14 h-7 rounded-full" style="background:${darkMode?config.primary_action_color+'cc':config.text_color}33">
-        <div class="absolute w-6 h-6 rounded-full" style="top:0.5px;${darkMode?'right:0.5px':'left:0.5px'};background:${config.text_color}"></div>
-      </button>
+      <button role="switch" aria-checked="${darkMode}" aria-label="${tr('darkMode')}" onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="qh-switch ${darkMode?'on':''}"><span></span></button>
     </div>
     <div class="p-4 rounded-lg" style="background:${config.text_color}08">
       <div class="flex items-center gap-3 mb-3">
@@ -3554,11 +2873,11 @@ if(activeSidebarItem==='Postings') {
       <div class="flex gap-2">
         <button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()"
           style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
-          🇺🇸 English
+          English
         </button>
         <button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()"
           style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
-          🇵🇭 Filipino
+          Filipino
         </button>
       </div>
     </div>
@@ -3569,10 +2888,10 @@ if(activeSidebarItem==='Postings') {
       <h3 class="font-bold" style="color:${config.text_color}">Push Notifications</h3>
     </div>
     <div id="settings-notif-status" class="p-3 rounded-lg mb-4 flex items-center gap-2" style="background:${config.text_color}08;border:1px solid ${config.text_color}11">
-      <span id="settings-notif-icon" style="font-size:16px">🔔</span>
-      <span id="settings-notif-label" class="text-sm" style="color:${config.text_color}88">Checking notification status…</span>
+      <span id="settings-notif-icon" data-live style="font-size:16px">🔔</span>
+      <span id="settings-notif-label" data-live class="text-sm" style="color:${config.text_color}aa">Checking notification status…</span>
     </div>
-    <button id="settings-notif-btn" onclick="enablePushNotifications()" class="px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer">
+    <button id="settings-notif-btn" data-live onclick="enablePushNotifications()" class="px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2" style="background:#ffee58;color:#2c3e50;border:none;cursor:pointer">
       <i data-lucide="bell-ring" style="width:16px;height:16px"></i>
       Enable Push Notifications
     </button>
@@ -3587,7 +2906,7 @@ if(activeSidebarItem==='Postings') {
     </div>
     <p class="text-sm mb-4" style="color:${config.text_color}66">${tr('anonNote')}</p>
     <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#90a4ae;color:#fff">${tr('leaveAnon')}</button>`:`
-    <p class="text-sm mb-4" style="color:${config.text_color}88">${tr('loggedInAs')} <strong>${currentUserEmail}</strong> (${currentRole})</p>
+    <p class="text-sm mb-4" style="color:${config.text_color}aa;overflow-wrap:anywhere">${tr('loggedInAs')} <strong>${_esc(currentUserEmail)}</strong> (${_esc(currentRole)})</p>
     <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#ef5350;color:#fff">${tr('logout')}</button>`}
   </div>
 </div>`;
@@ -3617,7 +2936,7 @@ if(activeSidebarItem==='Postings') {
   <div class="mb-3 flex items-center gap-2"><i data-lucide="users" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Nakabinbing Konsultasyon':'Pending Consultations'}</span></div>
   <div class="space-y-4 mb-8">
     ${problemConsultations.map(c=>{const gc=getGlowClass(c,true);return `
-    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+    <div class="p-6 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
       <div class="flex justify-between items-start mb-2">
         <div>
           <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#90caf922;color:#5c9be0;border:1px solid #90caf944">${appLang==='tl'?'Konsultasyon':'Consultation'}</span></div>
@@ -3627,9 +2946,9 @@ if(activeSidebarItem==='Postings') {
             <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${c.riskLevel} Risk · AI:${c.aiScore}</span>
           </div>
         </div>
-        <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg shrink-0 font-semibold" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markDone')}</button>
+        <div class="flex gap-2 shrink-0"><button onclick="goTo('Consultations')" class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:${config.text_color}14;color:${config.text_color}">Open</button><button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:${config.secondary_action_color};color:#2c3e50">${tr('markDone')}</button></div>
       </div>
-      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(c.description)}</p>
+      <p class="text-sm mb-2" style="color:${config.text_color}cc;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(c.description)}</p>
       <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Estudyante:':'Student:'} ${_esc(c.studentEmail||c.author)} · ${_esc(c.date||'')}</p>
     </div>`;}).join('')}
   </div>`:''}
@@ -3637,18 +2956,18 @@ if(activeSidebarItem==='Postings') {
   <div class="mb-3 flex items-center gap-2"><i data-lucide="megaphone" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Naka-flag na Post':'Flagged Postings'}</span></div>
   <div class="space-y-4">
     ${problemPostings.map(p=>{const gc=getGlowClass(p,true);return `
-    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+    <div class="p-6 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
       <div class="mb-2">
         <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#ffee5822;color:#9a8000;border:1px solid #ffee5855">${appLang==='tl'?'Post':'Posting'}</span></div>
-        <h3 class="font-bold" style="color:${config.text_color}">${p.title}</h3>
+        <h3 class="font-bold" style="color:${config.text_color}">${_esc(p.title)}</h3>
         <div class="flex gap-2 mt-1 flex-wrap">
           <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.priority==='High'?'#ef5350':p.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${p.priority} Priority</span>
           <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${p.riskLevel} Risk · AI:${p.aiScore}</span>
-          ${p.reasons&&p.reasons.length?`<span class="text-xs px-2 py-0.5 rounded-full font-semibold" style="background:#ef535018;color:#ef5350">⚠ ${p.reasons[0]}${p.reasons.length>1?' +'+(p.reasons.length-1)+' more':''}</span>`:''}
+          ${p.reasons&&p.reasons.length?`<span class="text-xs px-2 py-0.5 rounded-full font-semibold" style="background:#ef535018;color:#ef5350">${_esc(p.reasons[0])}${p.reasons.length>1?' +'+(p.reasons.length-1)+' more':''}</span>`:''}
         </div>
       </div>
-      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(p.content)}</p>
-      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Ni':'By'}: ${p.author} · ${p.timestamp?new Date(p.timestamp).toLocaleDateString():''}</p>
+      <p class="text-sm mb-2" style="color:${config.text_color}cc;white-space:pre-wrap;overflow-wrap:anywhere">${_esc(p.content)}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Ni':'By'}: ${_esc(p.author)} · ${p.timestamp?new Date(p.timestamp).toLocaleDateString():''}</p>
     </div>`;}).join('')}
   </div>`:''}
 </div>`;
@@ -3660,7 +2979,7 @@ if(activeSidebarItem==='Postings') {
   ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="megaphone" style="width:20px;height:20px;color:${config.primary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('postings')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?postings.length:postings.filter(p=>p.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalPosted'):tr('yourPosts')}</p></div>`:''}
   ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="users" style="width:20px;height:20px;color:${config.secondary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('consultations')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?consultationPostings.length:consultationPostings.filter(c=>c.author===currentUserEmail||c.studentEmail===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalRequests'):tr('yourRequests')}</p></div>`:''}
   <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="message-circle" style="width:20px;height:20px;color:#90caf9"></i><span class="font-semibold" style="color:${config.text_color}">${tr('feedback')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${currentRole==='admin'?feedbackList.length:feedbackList.filter(f=>f.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${currentRole==='admin'?tr('totalFeedback'):tr('yourFeedback')}</p></div>
-  ${isGuidance?`<div class="p-6 rounded-xl card-hover" style="background:#ef535011;border:1px solid #ef535033"><div class="flex items-center gap-3 mb-2"><i data-lucide="alert-triangle" style="width:20px;height:20px;color:#ef5350"></i><span class="font-semibold" style="color:${config.text_color}">${tr('problems')}</span></div><p class="text-3xl font-bold" style="color:#ef5350">${consultationPostings.filter(c=>c.status==='Pending').length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${tr('needAttention')}</p></div>`:''}
+  ${isGuidance?`<div class="p-6 rounded-xl card-hover" role="button" tabindex="0" onclick="goTo('Problems')" onkeydown="if(event.key==='Enter')goTo('Problems')" style="cursor:pointer;background:#ef535011;border:1px solid #ef535033"><div class="flex items-center gap-3 mb-2"><i data-lucide="alert-triangle" style="width:20px;height:20px;color:#ef5350"></i><span class="font-semibold" style="color:${config.text_color}">${tr('problems')}</span></div><p class="text-3xl font-bold" style="color:#ef5350">${consultationPostings.filter(c=>c.status==='Pending'&&(c.riskLevel==='High'||c.riskLevel==='Medium')).length+postings.filter(p=>p.riskLevel==='High'||p.riskLevel==='Medium').length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${tr('needAttention')}</p></div>`:''}
 </div>
 <div class="p-6 rounded-xl" style="background:${config.surface_color}">
   <h3 class="font-bold mb-1" style="color:${config.text_color}">${tr('welcomeMsg')}</h3>
@@ -3673,29 +2992,22 @@ ${isGuidance?`
       <i data-lucide="megaphone" style="width:18px;height:18px;color:#90caf9"></i>
     </div>
     <div>
-      <h3 class="font-bold" style="color:${config.text_color}">📢 Send Announcement to Students</h3>
+      <h3 class="font-bold" style="color:${config.text_color}">Send announcement to students</h3>
       <p class="text-xs" style="color:${config.text_color}66">Push notification delivered to all subscribed students</p>
     </div>
   </div>
-  <input id="announcement-title-input" type="text" placeholder="Announcement title..." value="${announcementTitle}"
+  <input id="announcement-title-input" type="text" placeholder="Announcement title..." aria-label="Announcement title" maxlength="120" value="${_esc(announcementTitle)}"
     onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="announcementTitle=this.value;onFieldInput()"
     style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
-  <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value;onFieldInput()"
-    style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
-  <button id="announcement-send-btn" onclick="handleSendAnnouncement()"
-    style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
-    <i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students
+  <textarea id="announcement-msg-input" aria-label="Announcement message" maxlength="500" placeholder="Write your message to all students..." oninput="announcementMessage=this.value;onFieldInput()"
+    style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${_esc(announcementMessage)}</textarea>
+  <button id="announcement-send-btn" onclick="handleSendAnnouncement()" ${announcementBusy?'disabled':''}
+    style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:8px">
+    ${announcementBusy?spinner+'Sending…':'<i data-lucide="send" style="width:16px;height:16px"></i> Send to all students'}
   </button>
-  <!-- Progress & status area (shown during/after send) -->
-  <div style="margin-top:14px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <span id="announcement-status" style="display:none;font-size:12px;font-weight:700;color:#1565c0"></span>
-      <span id="announcement-timer" style="font-size:12px;font-family:monospace;color:#888"></span>
-    </div>
-    <div id="announcement-progress-wrap" style="display:none;width:100%;height:6px;background:#e0e0e0;border-radius:4px;overflow:hidden">
-      <div id="announcement-progress-fill" style="height:100%;background:#90caf9;width:0%;transition:none;border-radius:4px"></div>
-    </div>
-    <div id="announcement-result" style="display:none;text-align:center;margin-top:10px"></div>
+  <div style="margin-top:12px">
+    <span id="announcement-status" data-live role="status" style="display:none;font-size:12px;font-weight:700;color:#1565c0"></span>
+    <div id="announcement-result" data-live style="display:none;text-align:center;margin-top:10px"></div>
   </div>
 </div>`:''}`;
     }
@@ -3734,13 +3046,9 @@ ${isGuidance?`
         clearInterval(check);
 
         // Navigate to the correct section
-        if (type === 'posting') {
-          activeSidebarItem = 'Postings';
-          expandedPost = Number(id);
-        } else if (type === 'consultation') {
-          activeSidebarItem = 'Consultations';
-          expandedConsult = Number(id);
-        }
+        activeSidebarItem = type === 'posting' ? 'Postings' : 'Consultations';
+        postLimit = Math.max(postLimit, 150); consultLimit = Math.max(consultLimit, 150);   // make sure the linked item is on the page
+        postingSearchQuery = '';
         render();
 
         // Scroll to the specific post — poll until element appears in DOM
@@ -3748,7 +3056,7 @@ ${isGuidance?`
         const scrollCheck = setInterval(() => {
           scrollAttempts++;
           if (scrollAttempts > 20) { clearInterval(scrollCheck); return; }
-          const el = document.querySelector(`[data-post-id="${id}"]`);
+          const el = document.querySelector(type === 'posting' ? `[data-post-id="${id}"]` : `[data-consult-id="${id}"]`);
           if (el) {
             clearInterval(scrollCheck);
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3776,29 +3084,31 @@ ${isGuidance?`
 
     // ── AUTO-LOGIN via Firebase session ──
     auth.onAuthStateChanged(async (user) => {
-      if (user && !isAuthenticated) {
-        const savedRole = localStorage.getItem('qh_saved_role');
-        if (!savedRole) { render(); return; }
-
-        const email = user.email.toLowerCase();
-        // ── Authoritative role from Firestore (not email string heuristics) ──
-        const actualRole = await resolveRoleFromFirestore(user.uid, email);
-
-        if (savedRole !== actualRole) { render(); return; }
-
-        currentUserEmail = email;
-        currentRole = actualRole; // trust Firestore, not localStorage
-        isAuthenticated = true;
-        activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
-        localStorage.setItem('qh_saved_role', actualRole); // keep localStorage in sync
-
-        if (savedRole === 'guidance') registerAsCounselor();
-        loadDataFromFirestore();
-        setTimeout(handleDeepLink, 1000);
-        render();
-      } else if (!user) {
+      if (signInFlowActive) return;                       // an explicit sign-in is already handling this
+      try {
+        if (user && !isAuthenticated) {
+          const savedRole = localStorage.getItem('qh_saved_role');
+          if (savedRole) {
+            const email = (user.email || '').toLowerCase();
+            // ── Authoritative role from Firestore (not email string heuristics) ──
+            const actualRole = await resolveRoleFromFirestore(user.uid, email);
+            if (savedRole === actualRole && !isAuthenticated && !signInFlowActive) {
+              currentUserEmail = email;
+              currentRole = actualRole; // trust Firestore, not localStorage
+              isAuthenticated = true;
+              activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+              if (actualRole === 'guidance') registerAsCounselor();
+              loadDataFromFirestore();
+              setTimeout(handleDeepLink, 1000);
+            }
+          }
+        }
+      } finally {
+        booting = false;
         render();
       }
     });
+    setTimeout(() => { if (booting) { booting = false; render(); } }, 6000);   // never sit on the splash forever
+    resumeGoogleRedirect();
 
     render();

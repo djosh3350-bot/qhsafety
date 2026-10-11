@@ -1,0 +1,62 @@
+// QHsafety — Firestore security rules.
+// Paste into Firebase Console → Firestore Database → Rules → Publish.
+//
+// What these close compared with the rules sketched in the old app.js comment:
+//   • a signed-in user could write ANY role into their own /users document (make themselves admin);
+//   • any signed-in user could read every student's postings;
+//   • staff were recognised by the word "guidance" appearing in an email address.
+//
+// ORDER MATTERS: create your guidance/admin accounts first (in-app Users page, or /setup),
+// THEN publish these rules, THEN delete setup.html and api/setup-account.js.
+// /setup stops working once these rules are live — that is intended.
+//
+// These rules were written to match the queries the app makes; they have not been run
+// against the Firebase emulator. Test with a student, a counselor and an admin account after publishing.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function myEmail()  { return request.auth.token.email; }
+    function myDoc()    { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function myRole()   { return exists(myDoc()) ? get(myDoc()).data.role : 'student'; }
+    function isStaff()  { return signedIn() && myRole() in ['guidance', 'admin']; }
+    function isAdmin()  { return signedIn() && myRole() == 'admin'; }
+
+    match /users/{uid} {
+      allow read:   if signedIn() && (request.auth.uid == uid || isStaff());
+      // students may create their own profile, but only as a student
+      allow create: if signedIn() && ((request.auth.uid == uid && request.resource.data.role == 'student') || isAdmin());
+      // nobody can change their own role; admins manage roles
+      allow update: if signedIn() && ((request.auth.uid == uid && request.resource.data.role == resource.data.role) || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /postings/{id} {
+      allow read:           if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+      allow create:         if signedIn() && request.resource.data.authorId == myEmail();
+      allow update, delete: if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+    }
+
+    match /consultations/{id} {
+      allow read:           if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+      allow create:         if signedIn() && request.resource.data.authorId == myEmail();
+      allow update, delete: if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+    }
+
+    match /feedback/{id} {
+      allow read:   if signedIn() && (resource.data.author == myEmail() || isAdmin());
+      allow create: if signedIn() && request.resource.data.author == myEmail();
+      allow delete: if isAdmin();
+    }
+
+    match /logs/{id} {
+      allow create: if signedIn();
+      allow read, delete: if isAdmin();
+    }
+
+    match /counselors/{id} {
+      allow read, write: if isStaff();
+    }
+  }
+}
