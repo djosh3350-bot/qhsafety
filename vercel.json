@@ -1,7 +1,20 @@
 {
   "cleanUrls": true,
-  "rewrites": [
-    { "source": "/OneSignalSDKWorker.js", "destination": "/public/OneSignalSDKWorker.js" },
-    { "source": "/OneSignalSDKUpdaterWorker.js", "destination": "/public/OneSignalSDKUpdaterWorker.js" }
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+      ]
+    },
+    {
+      "source": "/OneSignalSDKWorker.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+        { "key": "Service-Worker-Allowed", "value": "/" }
+      ]
+    }
   ]
 }

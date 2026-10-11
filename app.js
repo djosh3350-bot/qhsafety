@@ -1,0 +1,3774 @@
+// ── LOW-END DEVICE MODE: disable decorative animation when the device is weak ──
+(function(){
+  try {
+    var weak = (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
+               (navigator.deviceMemory && navigator.deviceMemory <= 2) ||
+               (navigator.connection && (navigator.connection.saveData || /2g/.test(navigator.connection.effectiveType||'')));
+    if (weak) document.documentElement.classList.add('lite');
+  } catch(e) {}
+})();
+
+    
+    // ── SECURITY NOTE ──────────────────────────────────────────────────────────
+    // Firebase client-side config keys (apiKey, appId, etc.) are NOT secret —
+    // they are identifiers, not passwords. Real security is enforced via
+    // Firestore Security Rules on the Firebase console. This app requires:
+    //
+    // rules_version = '2';
+    // service cloud.firestore {
+    //   match /databases/{database}/documents {
+    //     // Only authenticated users can read/write their own data
+    //     match /users/{uid} {
+    //       allow read, write: if request.auth != null && request.auth.uid == uid;
+    //     }
+    //     match /postings/{id} {
+    //       allow read: if request.auth != null;
+    //       allow create: if request.auth != null;
+    //       allow update, delete: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //     }
+    //     match /consultations/{id} {
+    //       allow read: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //       allow create: if request.auth != null;
+    //       allow update, delete: if request.auth != null &&
+    //         (resource.data.authorId == request.auth.token.email ||
+    //          request.auth.token.email.matches('.*guidance.*') ||
+    //          request.auth.token.email.matches('.*counselor.*') ||
+    //          request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com']);
+    //     }
+    //     match /feedback/{id} {
+    //       allow read: if request.auth != null;
+    //       allow create: if request.auth != null;
+    //       allow delete: if request.auth != null &&
+    //         request.auth.token.email in ['admin@qhsafety.demo','youradminemail@gmail.com'];
+    //     }
+    //     match /logs/{id} {
+    //       allow read, write: if request.auth != null;
+    //     }
+    //     match /counselors/{id} {
+    //       allow read, write: if request.auth != null;
+    //     }
+    //   }
+    // }
+    // ──────────────────────────────────────────────────────────────────────────
+
+    const firebaseConfig = {
+      apiKey:"AIzaSyD4N8D_FT_Oy8umm_79tQJiy24uWxbJ_KA",
+      authDomain:"qhsafety-57c55.firebaseapp.com",
+      databaseURL:"https://qhsafety-57c55-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:"qhsafety-57c55",
+      storageBucket:"qhsafety-57c55.firebasestorage.app",
+      messagingSenderId:"666664597822",
+      appId:"1:666664597822:web:92f3f430aff2e20e49946f",
+      measurementId:"G-C11871B9MR"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db   = firebase.firestore();
+
+    // ── EMAIL NOTIFICATIONS (server-side via /api/email) ──
+    // All keys (EmailJS, guidance email) are stored in Vercel environment variables.
+    // The browser never sees them.
+
+    async function authHeaders() {
+      const h = { 'Content-Type': 'application/json' };
+      try { if (auth.currentUser) h['Authorization'] = 'Bearer ' + await auth.currentUser.getIdToken(); } catch(e) {}
+      return h;
+    }
+
+    async function callEmailAPI(payload) {
+      try {
+        const res = await fetch('/api/email', {
+          method: 'POST',
+          headers: await authHeaders(),
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) console.warn('[QHsafety] Email API returned', res.status);
+      } catch(e) {
+        console.warn('[QHsafety] Email notification failed (non-critical):', e);
+      }
+    }
+
+    // Notify student when guidance replies to their posting
+    async function notifyStudentOfGuidanceReply(studentEmail, postTitle, message) {
+      if (!studentEmail || studentEmail === 'Anonymous' || studentEmail.startsWith('anon_')) return;
+      await callEmailAPI({
+        type: 'student_reply',
+        to_email: studentEmail,
+        to_name: studentEmail.split('@')[0],
+        post_title: postTitle,
+        guidance_message: message,
+        app_url: window.location.href,
+        sent_at: new Date().toLocaleString(),
+      });
+    }
+
+    // Notify student when guidance replies in their consultation chat
+    async function notifyStudentOfConsultationReply(studentEmail, consultReason, message) {
+      if (!studentEmail || studentEmail === 'Anonymous' || studentEmail.startsWith('anon_')) return;
+      await callEmailAPI({
+        type: 'consultation_reply',
+        to_email: studentEmail,
+        to_name: studentEmail.split('@')[0],
+        post_title: `Consultation: ${consultReason}`,
+        guidance_message: message,
+        app_url: window.location.href,
+        sent_at: new Date().toLocaleString(),
+      });
+    }
+
+    // Alert guidance when a high-risk submission is detected
+    async function notifyGuidanceOfHighRisk(type, authorEmail, reason, description, aiScore, riskLevel, reasons) {
+      await callEmailAPI({
+        type: 'high_risk',
+        alert_type: type,
+        author: authorEmail,
+        reason: reason,
+        description: description,
+        ai_score: aiScore,
+        risk_level: riskLevel,
+        risk_reasons: (reasons || []).join(', '),
+        app_url: window.location.href,
+        sent_at: new Date().toLocaleString(),
+      });
+    }
+
+    const defaultConfig = {
+      hero_title:'QHsafety', hero_subtitle:'Protecting Quirino High School Students',
+      welcome_text:'Welcome Back', background_color:'#f8f6f1', surface_color:'#ffffff',
+      text_color:'#2c3e50', primary_action_color:'#ffee58', secondary_action_color:'#80deea',
+      font_family:'DM Sans', font_size:16
+    };
+    let config = {...defaultConfig};
+    let currentRole=null, currentUserEmail='', activeSidebarItem='Dashboard', darkMode=localStorage.getItem('qh_dark_mode')==='true', showCreateGuidanceForm=false;
+    let postLimit=25, consultLimit=25;
+    let postings=[], showPostingForm=false, postingTitle='', postingContent='', postingError='', postingPriority='Medium';
+    let consultationPostings=[], showConsultationForm=false, consultationReason='', consultationDescription='', consultationPriority='Medium', consultationError='', consultationGradeLevel='';
+    let consultationContactPref='chat', consultationMoodLevel=3;
+    let showMeetScheduler={}, consultMeetDraft={date:'',time:'',link:'',notes:''};
+    // Attachment limits (Firebase free tier safe)
+    const ATTACH_MAX_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
+    const ATTACH_MAX_PER_CONSULT = 3;
+    const ATTACH_MAX_TOTAL_PER_USER = 5;
+    let consultSessionRating={}, consultSessionFeedback={};
+    let postingChatDraft={}, consultationChatDraft={}, expandedPost=null, expandedConsult=null;
+    let feedbackList=[], showFeedbackForm=false, feedbackRating=5, feedbackMessage='', feedbackError='';
+    let systemLogs=[], logFilter='all', postingSearchQuery='', mobileDrawerOpen=false;
+    let loginEmail='', loginPassword='', loginError='', isAuthenticated=false, selectedRoleForLogin=null;
+    let currentAuthFlow='login', signupEmail='', signupPassword='', signupConfirmPassword='', signupError='';
+    let showLandingSettings=false, showForgotPassword=false, forgotPasswordEmail='', forgotPasswordError='', forgotPasswordSuccess='';
+    let firestoreUnsubscribes=[];
+    let isAnonymous=false;
+    let appLang = localStorage.getItem('qh_lang') || 'en';
+    const app=document.getElementById('app');
+
+    const T = {
+      en: {
+        postings:'Postings', consultations:'Consultations', feedback:'Feedback',
+        settings:'Settings', dashboard:'Dashboard', problems:'Problems', logs:'Logs', users:'Users',
+        newPosting:'New Posting', newConsultation:'Request Consultation', leaveFeedback:'Leave Feedback',
+        publish:'Publish', cancel:'Cancel', submit:'Submit', delete:'Delete',
+        title:'Title', content:'Content', priority:'Priority Level', search:'Search postings...',
+        low:'Low', medium:'Medium', high:'High',
+        postGuide:'📋 <strong>Posting Guide:</strong> Share what you\'re going through honestly. You can post anonymously. The guidance office may reply with support directly on your post.',
+        noPostings:'No postings yet', noConsultations:'No consultations yet', noFeedback:'No feedback yet',
+        by:'By', markResolved:'Mark Resolved', markDone:'Mark Done',
+        appearance:'Appearance', darkMode:'Dark Mode', language:'Language', account:'Account',
+        logout:'Logout', leaveAnon:'Leave Anonymous Session',
+        welcomeBack:'Welcome Back', student:'Student', counselor:'Counselor', admin:'Administrator',
+        yourPosts:'Your posts', totalPosted:'Total posted', yourRequests:'Your requests',
+        totalRequests:'Total requests', yourFeedback:'Your feedback', totalFeedback:'Total submitted',
+        needAttention:'Need attention', welcomeMsg:'Welcome to QHsafety',
+        dashHint_student:'Submit postings, request consultations, and leave feedback.',
+        dashHint_guidance:'Monitor student postings, manage consultations, and review feedback.',
+        dashHint_admin:'View feedback, logs, and manage settings.',
+        guidanceReply:'Reply to this posting:', send:'Send',
+        msgFromGuidance:'💬 Message from Guidance Office',
+        reason:'Reason / Topic', descConcern:'Describe your concern in detail...',
+        submitRequest:'Submit Request', resolved:'✅ Resolved',
+        rating:'Rating', writeFeedback:'Write your feedback...',
+        deleteAllPostings:'Delete All Postings', deleteAllConsult:'Delete All Consultations', deleteAllFeedback:'Delete All Feedback',
+        signedInAs:'Signed in as Anonymous',
+        anonNote:'You are browsing anonymously. Your identity is not saved. Return on the same device to see your posts.',
+        loggedInAs:'Logged in as',
+        selectRole:'Select your role to get started:',
+        continueAnon:'Continue Anonymously',
+        anonSubtext:'Anonymous users can post and consult without an account. Your identity stays hidden.',
+        howToUse:'How to Use', howToUseDesc:'Submit reports, book consultations, and track your sessions securely.',
+        termsPrivacy:'Terms & Privacy', termsDesc:'Your data stays confidential and is only accessible to authorized guidance staff.',
+        weCare:'We Care', weCareDesc:'Every report is reviewed. Every student matters. Help is always one click away.',
+        aboutMission:'About Our Mission',
+        aboutDesc:'Supporting Quirino High School students through accessible guidance consultations, safety reporting, and proactive mental health awareness.',
+        langSetting:'Language / Wika',
+        logs:'Logs', users:'Users', by:'By', markDone:'Mark Done', storage:'Storage',
+      },
+      tl: {
+        postings:'Mga Post', consultations:'Mga Konsultasyon', feedback:'Feedback',
+        settings:'Mga Setting', dashboard:'Dashboard', problems:'Mga Problema', logs:'Logs', users:'Mga User',
+        newPosting:'Bagong Post', newConsultation:'Humiling ng Konsultasyon', leaveFeedback:'Mag-iwan ng Feedback',
+        publish:'I-publish', cancel:'Kanselahin', submit:'Isumite', delete:'Burahin',
+        title:'Pamagat', content:'Nilalaman', priority:'Antas ng Prioridad', search:'Hanapin ang post...',
+        low:'Mababa', medium:'Katamtaman', high:'Mataas',
+        postGuide:'📋 <strong>Gabay sa Pag-post:</strong> Ibahagi ang iyong nararamdaman nang tapat. Maaari kang mag-post nang hindi nagpapakilala. Maaaring sumagot ang gabay ng paaralan dito.',
+        noPostings:'Wala pang mga post', noConsultations:'Wala pang konsultasyon', noFeedback:'Wala pang feedback',
+        by:'Ni', markResolved:'Markahan bilang Nalutas', markDone:'Tapos Na',
+        appearance:'Hitsura', darkMode:'Madilim na Mode', language:'Wika', account:'Account',
+        logout:'Mag-logout', leaveAnon:'Umalis sa Anonymous na Session',
+        welcomeBack:'Maligayang Pagbabalik', student:'Estudyante', counselor:'Counselor', admin:'Administrator',
+        yourPosts:'Iyong mga post', totalPosted:'Kabuuang nai-post', yourRequests:'Iyong mga kahilingan',
+        totalRequests:'Kabuuang kahilingan', yourFeedback:'Iyong feedback', totalFeedback:'Kabuuang isinumite',
+        needAttention:'Nangangailangan ng pansin', welcomeMsg:'Maligayang pagdating sa QHsafety',
+        dashHint_student:'Mag-post, humiling ng konsultasyon, at mag-iwan ng feedback.',
+        dashHint_guidance:'Subaybayan ang mga post ng estudyante, pamahalaan ang mga konsultasyon.',
+        dashHint_admin:'Tingnan ang feedback, logs, at pamahalaan ang mga setting.',
+        guidanceReply:'Sumagot sa post na ito:', send:'Ipadala',
+        msgFromGuidance:'💬 Mensahe mula sa Gabay ng Paaralan',
+        reason:'Dahilan / Paksa', descConcern:'Ilarawan ang iyong alalahanin nang detalyado...',
+        submitRequest:'Isumite ang Kahilingan', resolved:'✅ Nalutas',
+        rating:'Rating', writeFeedback:'Isulat ang iyong feedback...',
+        deleteAllPostings:'Burahin Lahat ng Post', deleteAllConsult:'Burahin Lahat ng Konsultasyon', deleteAllFeedback:'Burahin Lahat ng Feedback',
+        signedInAs:'Naka-sign in bilang Anonymous',
+        anonNote:'Nagba-browse ka nang hindi nagpapakilala. Hindi nase-save ang iyong pagkakakilanlan. Bumalik sa parehong device para makita ang iyong mga post.',
+        loggedInAs:'Naka-login bilang',
+        selectRole:'Piliin ang iyong papel para magsimula:',
+        continueAnon:'Magpatuloy nang Anonymous',
+        anonSubtext:'Maaaring mag-post at kumonsulta ang mga anonymous user nang walang account. Nananatiling nakatago ang iyong pagkakakilanlan.',
+        howToUse:'Paano Gamitin', howToUseDesc:'Mag-submit ng ulat, mag-book ng konsultasyon, at subaybayan ang iyong mga session.',
+        termsPrivacy:'Mga Tuntunin at Privacy', termsDesc:'Ang iyong data ay kumpidensyal at accessible lamang ng mga awtorisadong tauhan ng gabay.',
+        weCare:'Nagmamalasakit Kami', weCareDesc:'Ang bawat ulat ay sinusuri. Mahalaga ang bawat estudyante. Laging isang click lang ang tulong.',
+        aboutMission:'Tungkol sa Aming Misyon',
+        aboutDesc:'Sinusuportahan ang mga estudyante ng Quirino High School sa pamamagitan ng accessible na gabay, pag-uulat ng kaligtasan, at kamalayan sa mental health.',
+        langSetting:'Language / Wika',
+        logs:'Mga Log', users:'Mga User', storage:'Storage',
+      }
+    };
+    function tr(key) { return (T[appLang]||T.en)[key] || T.en[key] || key; }
+
+
+    // ── ADVANCED AI RISK DETECTION (Claude API + Regex fallback) ──
+
+// Claude API-powered risk analysis — returns same shape as detectRisk
+async function detectRiskAI(text) {
+  const regexRisk = detectRiskRegex(text);
+  let ctrl = null, timer = null;
+  try {
+    ctrl = ('AbortController' in window) ? new AbortController() : null;
+    if (ctrl) timer = setTimeout(() => ctrl.abort(), 15000); // never hang on slow networks
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ text: String(text || '').slice(0, 1800) }),
+      signal: ctrl ? ctrl.signal : undefined
+    });
+    if (!response.ok) {
+      console.warn('[QHsafety] AI analyze error:', response.status);
+      return regexRisk;
+    }
+    const parsed = await response.json();
+    if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
+      parsed.flagged = (typeof parsed.flagged === 'boolean') ? parsed.flagged : (parsed.score >= 3 || parsed.level !== 'Low');
+      // Safety net: if the local rules see a High risk but the AI says Low, never let it pass silently
+      if (regexRisk.level === 'High' && (parsed.level === 'Low' || parsed.level === 'Low-Medium')) {
+        parsed.level = 'Medium';
+        parsed.score = Math.max(parsed.score, 7);
+        parsed.flagged = true;
+        parsed.reasons = [...new Set([...(parsed.reasons || []), ...regexRisk.reasons])];
+      }
+      return parsed;
+    }
+    console.warn('[QHsafety] Unexpected AI response shape:', parsed);
+  } catch(e) {
+    console.warn('[QHsafety] AI risk detection fallback to regex:', e && e.name);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return regexRisk;
+}
+
+// The original regex engine — used as fallback when API is unavailable
+function detectRisk(text) {
+  return detectRiskRegex(text);
+}
+
+function detectRiskRegex(text) {
+  if (!text) return { score: 0, level: "Low", flagged: false, reasons: [] };
+
+  const t = text.toLowerCase().trim();
+  let score = 0;
+  let reasons = [];
+
+  // === HIGH RISK: Direct suicidal / homicidal intent ===
+  const highRiskPatterns = [
+    // English — suicidal
+    /i want to (hurt|kill|die|end it|hurt myself|kill myself|commit suicide)/i,
+    /i (will|gonna|going to) (kill myself|hurt myself|die|end it all|take my life)/i,
+    /i feel like (hurting|killing) myself/i,
+    /\b(kill|killing|hurt|hurting|harm|harming) (myself|my self)\b/i,
+    /\bi'?m (gonna|going to) (kill|hurt|end) (myself|it all)\b/i,
+    /i (might|should|could) (hurt|kill) myself/i,
+    /i can't (take|handle|do) this (anymore|no more)/i,
+    /i want to (disappear|not exist|be gone|cease to exist)/i,
+    /better off (dead|without me|gone)/i,
+    /no (point|reason|purpose) in (living|life|continuing)/i,
+    /i('m| am) done (with life|living|with everything)/i,
+    /please (just let me die|kill me|end my life)/i,
+    /i wish i (was|were|am) dead/i,
+    /i don't want to (be here|exist|live|wake up) anymore/i,
+    /end (it all|my life|my suffering|my pain|everything)/i,
+    /just (kill me|let me die|end it|make it stop)/i,
+    /i('ve| have) been (thinking about|considering|planning) (suicide|killing myself|ending my life)/i,
+    /what('s| is) the point (of|in) (living|going on|continuing)/i,
+    /i (can't|cannot) keep (going|living|doing this)/i,
+    /tired of (being alive|living|everything|waking up)/i,
+    /no (one|reason) to (live|go on|stay)/i,
+    /maybe (i should|it would be better if i) (just die|not wake up|disappear)/i,
+    /i don't (deserve|want) to (be alive|live|exist)/i,
+    /cutting (myself|my wrists|my arms|my skin)/i,
+    /i (have been|been) (cutting|burning|hurting|harming) (myself|my body)/i,
+    /marks (on|all over) (my arms|my wrists|my body|my legs)/i,
+    /self(-)?(harm|harming|injury|injuring)/i,
+
+    // Tagalog — direct suicidal / wanting to die
+    /magp(a)?pakamatay (na)? ako/i,
+    /magpapatiwakal (na)? ako/i,
+    /papatayin ko (na)? (ang)? sarili ko/i,
+    /patayin (nyo|mo|na lang|ninyo|kayo) (na)? ako/i,
+    /gusto ko(ng)? (na)? (mamatay|magpakamatay|patayin ang sarili)/i,
+    /mamatay (na)? ako (sana|na lang|na)/i,
+    /sana (mamatay|patay|wala) na (ako|lang ako)/i,
+    /patay (na)? (sana)? ako/i,
+    /ayaw ko na(ng)? (mabuhay|ng buhay|umiral)/i,
+    /mas (mabuti|mainam|maganda|mabuti pa) (kung)? (patay|wala na|hindi na umiral) (na)? ako/i,
+    /wala nang (saysay|kwenta|dahilan) (para)? (mabuhay|sa buhay ko)/i,
+    /tapos na ako (sa buhay|sa lahat|na)/i,
+    /gusto ko(ng)? (maglaho|mawala na|hindi na umiral|mawala)/i,
+    /sawa na ako sa (buhay|lahat|mundo)/i,
+    /hindi ko na (kaya|kayang tiisin|kayang harapin) (ang)? (buhay|lahat|ito)/i,
+    /tulungan (nyo|mo|ninyo) (na)? akong (mamatay|magpakamatay)/i,
+    /gusto ko(ng)? (masaktan|patayin) (ang)? sarili ko/i,
+    /(sasaktan|papatayin|susugatan) ko (ang)? sarili ko/i,
+    /pakiramdam ko(ng)? gusto ko(ng)? (mamatay|masaktan ang sarili|mawala)/i,
+    /wala na(ng)? dahilan para (mabuhay|magpatuloy)/i,
+    /hindi na (ako)? (babalik|magpapatuloy|magigising)/i,
+    /ito na (ang)? (huli|katapusan|wakas) (ko|ng buhay ko)/i,
+
+    // Tagalog — asking others to harm them
+    /patayin (na)? (nyo|mo|ninyo) (na)? ako/i,
+    /saktan (na)? (nyo|mo|ninyo) (na)? ako/i,
+    /tulungan (nyo|mo) akong (mamatay|mawala)/i,
+  ];
+
+  highRiskPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 8;
+      reasons.push("Direct self-harm / suicidal intent");
+    }
+  });
+
+  // === MEDIUM-HIGH: Planning, methods, or specific means ===
+  const planPatterns = [
+    // English
+    /how to (kill myself|hurt myself|commit suicide|overdose)/i,
+    /(pill|knife|rope|jump|cut|bleed|overdose|poison|gun|hang).*(myself|suicide|die)/i,
+    /i have (a plan|the means|everything ready|a way)/i,
+    /i('ve| have) been (cutting|hurting|harming) myself/i,
+    /taking (too many|a lot of|all my) (pills|tablets|meds)/i,
+
+    // Tagalog — method or means
+    /paano (magpakamatay|masaktan ang sarili|magpatiwakal|mamatay)/i,
+    /(tableta|kutsilyo|lubid|hagdan|tumalon|magpugo|dumugo|lason|baril|bibitay).*(sarili|pagpapakamatay|mamatay)/i,
+    /may (plano|paraan|gamit|handa) na ako (para mamatay|para magpakamatay)/i,
+    /bibigyan ko (ng wakas|ng katapusan) (ang)? (sarili|buhay) ko/i,
+    /iinom (ng maraming|lahat ng) (gamot|tableta|pills)/i,
+    /handa na (ako)? (para|na) (mamatay|magpakamatay)/i,
+    /gagawin ko (na)? (ito|ang plano ko)/i,
+    /(nagpuputol|nagsusugatsunog|nagsasaktan) (ako)? ng sarili (ko)?/i,
+  ];
+  planPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Possible plan or method");
+    }
+  });
+
+  // === EMOTIONAL DISTRESS ===
+  const distressPatterns = [
+    // English
+    /i (am|feel) (depressed|hopeless|worthless|empty|broken|numb|suicidal|devastated)/i,
+    /i hate (everything|my life|myself|being alive|this world)/i,
+    /i feel (lost|alone|trapped|overwhelmed|tired of everything|like a burden)/i,
+    /nobody (cares|understands|would miss me|loves me)/i,
+    /i('m| am) (falling apart|at my limit|on the edge|so tired|exhausted)/i,
+    /life is (pointless|meaningless|not worth it|too hard|unfair)/i,
+    /i (can't|cannot) (go on|continue|keep going|do this)/i,
+    /i feel like (a burden|nothing|nobody|invisible)/i,
+    /everything is (falling apart|too much|hopeless|pointless)/i,
+
+    // Tagalog — emotional distress / hopelessness
+    /pakiramdam ko(ng)? (depresado|walang pag-asa|walang kwenta|walang laman|sira|manhid|basura|pabigat)/i,
+    /kinasusuklaman ko (ang lahat|ang buhay ko|ang sarili ko|ang mabuhay|ang mundo)/i,
+    /pakiramdam ko(ng)? (nawawala|nag-iisa|nakulong|napalibutan|pagod na sa lahat|wala nang pag-asa)/i,
+    /walang (nagmamalasakit|nakakaunawa|makakapalad kung mawala ako|nagmamahal sa akin)/i,
+    /nasa (gilid|dulo|hangganan|labi) na ako/i,
+    /ang buhay (ko)? (ay)? (walang saysay|walang kabuluhan|hindi sulit|masyadong mahirap)/i,
+    /hindi ko na (makayanan|kakayanin) (ito|ang lahat|ang buhay)/i,
+    /pakiramdam ko(ng)? (pabigat|problema|sakit) (lang)? ako (sa lahat|sa mundo)/i,
+    /sobrang (lungkot|sakit|hirap|pagod) ko (na)? (sa buhay|sa lahat|na)/i,
+    /walang (mahal sa akin|nagpapahalaga sa akin|nagmamalasakit sa akin)/i,
+    /wala (akong)? (halaga|silbi|kwenta) (sa mundo|sa buhay|sa lahat)/i,
+    /pagod (na)? (na)? ako (sa buhay|sa lahat|sa mundo|sa pag-iral)/i,
+    /hindi ko na (kayang ituloy|kayang magpatuloy) (ang buhay|ito)/i,
+  ];
+  distressPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 3;
+      reasons.push("Emotional distress / hopelessness");
+    }
+  });
+
+  // === ADDICTION / SUBSTANCE ABUSE ===
+  const addictionPatterns = [
+    // English
+    /i (am|'m) (addicted|hooked|dependent) (on|to) (drugs|alcohol|substances|shabu|meth)/i,
+    /i (can't|cannot) stop (using|taking|drinking|smoking)/i,
+    /i (use|take|do) (drugs|shabu|meth|weed|alcohol) (every day|all the time|regularly)/i,
+    /i (need|crave) (drugs|alcohol|shabu|a fix|my fix)/i,
+    /been (using|on) (drugs|shabu|meth|substances) (for|since)/i,
+
+    // Tagalog — addiction
+    /adik (na)? (ako|na ako)/i,
+    /naka(-)?(adik|depende) (na)? ako (sa|kay)/i,
+    /gumagamit (na)? ako ng (droga|shabu|rugby|solvent|inhalant|alak|sigarilyo)/i,
+    /hindi ko na (mapigilan|mapigil|pigilan) (ang)? (paggamit|pag-inom|pagdadrug)/i,
+    /kailangan ko (ng|ang) (droga|shabu|fix|dose|gamot ko)/i,
+    /(nag-iinject|nag-iinom|nag-iinhale|gumagamit) (ako)? ng (droga|shabu|rugby)/i,
+    /(tulak|dealer|pushers?) (ako|siya|sila)/i,
+    /(nagbebenta|nagbibili) (ako)? ng (droga|shabu)/i,
+    /lagi (na)? (akong|ako) (high|lasing|drugged|naka-shabu)/i,
+    /ang (sarap|ganda|galing) ng (shabu|droga|rugby) (para sa akin)?/i,
+    /adik adik (na)? ako/i,
+  ];
+  addictionPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Substance use / addiction");
+    }
+  });
+
+  // === ABUSE / VIOLENCE / DANGER ===
+  const abusePatterns = [
+    // English
+    /i (am|'m) being (abused|beaten|hurt|harassed|molested|raped)/i,
+    /someone (is|has been) (hurting|abusing|threatening|hitting) me/i,
+    /(my parent|my father|my mother|my stepfather|my stepmother|someone) (hits|beats|hurts|abuses) me/i,
+    /i (was|got) (raped|molested|abused|assaulted|touched)/i,
+    /i (am|'m) (scared|afraid) (for my life|to go home|of him|of her|of them)/i,
+    /they (threatened|will hurt|are going to hurt) me/i,
+    /i (am|'m) in (danger|trouble|an abusive)/i,
+
+    // Tagalog — abuse / violence / danger
+    /(ginagabatan|niyayabang|binubugbog|sinasapak|sinisipa|tinatampal) (ako|niya|nila)/i,
+    /(sinasalakay|ginagahasa|nangha-harass|nang-aabuso) (ako|niya|nila)/i,
+    /natatakot (ako|na ako) (sa|kay) (tatay|nanay|stepfather|stepmother|kapitbahay|classmate|guro)/i,
+    /tinatakot (ako|niya|nila) (na|ng)/i,
+    /(binubugbog|sinasapak|sinisipa) (ako)? (ng|ni|nina) (tatay|nanay|kuya|ate|stepfather|stepmother)/i,
+    /naranasan ko (ang)? (pang-aabuso|panggagahasa|pananakit)/i,
+    /may (nangdadamot|nang-aabuso|nananakit|nangha-harass) sa akin/i,
+    /nangangamba (ako) (para sa buhay ko|na manakit sila sa akin)/i,
+    /ligtas (ba)? (ako|ba ako)/i,
+    /tulong (po|no)? may (nanakit|nangharang|nang-abuso) sa akin/i,
+  ];
+  abusePatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Possible abuse or danger");
+    }
+  });
+
+  // === BULLYING ===
+  const bullyingPatterns = [
+    // English
+    /i (am|'m) being (bullied|harassed|threatened|cyberbullied|targeted|humiliated)/i,
+    /they (keep|always|won't stop) (bullying|making fun of|threatening|humiliating|embarrassing|excluding) me/i,
+    /people (at school|online|in class|in my grade) (bully|harass|threaten|hurt|mock) me/i,
+    /(classmates?|schoolmates?|batchmates?|friends?) (are|keep) (bullying|threatening|hurting|excluding|mocking) me/i,
+    /someone (spread|is spreading) (rumors|lies|photos) (about me|of me)/i,
+    /(group chat|gc|group message) (is|was) (used to|bullying|humiliating|spreading) (me|against me)/i,
+    /they (post|posted|share|shared) (embarrassing|humiliating) (things|photos|videos) (of|about) me (online|on social media)/i,
+    /i (am|feel) (excluded|left out|ignored|isolated) (by|from) (my class|my classmates|my friends|my group)/i,
+
+    // Tagalog — bullying
+    /(ina-away|inaasar|binubully|tinutukso|niloloko|inaabuso|pinagtatawanan) (ako)? (ng|ni|nina|nila)/i,
+    /(classmate|kaklase|batchmate|grupo) (ko)? (ay)? (nambubully|nananakit|nagbabanta|umaaway) sa akin/i,
+    /palagi (akong|nilang) (inaabuso|inasar|inaaway|pinagtatawanan)/i,
+    /hindi ako (mapayapang|matahimik na) (pumunta sa school|pumasok|mag-aral)/i,
+    /ayaw ko (nang)? (pumasok|pumunta sa school) (dahil|kasi) (sa|natatakot)/i,
+    /nambubully (sa akin|sila sa akin)/i,
+  ];
+  bullyingPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 4;
+      reasons.push("Bullying or harassment");
+    }
+  });
+
+  // === EATING DISORDERS / DANGEROUS DIET BEHAVIORS ===
+  const eatingDisorderPatterns = [
+    // English
+    /i (haven't|have not|don't|did not) (eat|eaten|had food) (in days|for days|today|all day|all week)/i,
+    /i (purge|make myself|force myself) (throw up|vomit|puke)/i,
+    /i (starve|am starving) (myself|on purpose)/i,
+    /i (skip|skipping|avoid|avoiding) (all my meals|eating|food)/i,
+    /i (hate|am disgusted by) (my body|my weight|how i look)/i,
+    /i need to (lose weight|be thinner|be skinnier) (or else|because|so that)/i,
+    /(laxatives|diet pills|purging|binging and purging|binge eating)/i,
+    /i feel (fat|disgusting|gross) (after eating|when i eat|about myself)/i,
+    /i (count|track) every (calorie|bite|piece of food) (obsessively|every day|all the time)/i,
+
+    // Tagalog — eating disorder
+    /hindi (ako|na ako) (kumakain|nakakakain) (ng maayos|nang maayos|sa loob ng|ng ilang araw)/i,
+    /sinisadya ko(ng)? (hindi kumain|mag-starve|ayunan)/i,
+    /nagtatago (ako)? ng (pagkain|food) (para|dahil)/i,
+    /kinasusuklaman ko (ang)? (katawan ko|timbang ko|hitsura ko)/i,
+    /(nagsusuka|pinipilit kong sumuka) (ako)? (pagkatapos kumain|para|dahil)/i,
+  ];
+  eatingDisorderPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Eating disorder / dangerous diet behavior");
+    }
+  });
+
+  // === SEXUAL HARASSMENT / ASSAULT / EXPLOITATION ===
+  const sexualHarmPatterns = [
+    // English
+    /i (was|got|have been) (sexually|inappropriately) (touched|assaulted|harassed|abused|exploited)/i,
+    /someone (touched|grabbed|forced|pressured) me (sexually|inappropriately|without consent)/i,
+    /(my teacher|my coach|my classmate|my relative|someone) (touched|groped|forced|pressured) me/i,
+    /(sent|receiving|sharing) (nude|naked|sexual|explicit) (photos|pictures|videos) (of me|without consent)/i,
+    /i (was|got) (raped|molested|sexually abused)/i,
+    /(sexting|sextortion|nude photos|leaked photos) (of me|involving me|my photos)/i,
+    /someone (is blackmailing|blackmailed) me (with|using) (photos|videos|pictures)/i,
+    /online (predator|grooming|exploitation)/i,
+    /someone (older|adult) (wants|wanted|asked|pressured) me to (have sex|do sexual things|send photos)/i,
+
+    // Tagalog — sexual harm
+    /(hinalikan|hinawakan|ginagahasa|nilalasog|pinagsamantalahan) (ako)? (ng|ni|nina)/i,
+    /may (humawak|humipo|nangdestabo|nang-abuso|nanghalay) sa akin (nang walang pahintulot|ng hindi ko gusto)/i,
+    /(nagpapadala|pinapadalhan|pinipilit) (ng|ako ng) (hubad na larawan|bold na litrato|sexual na content)/i,
+    /(nire-record|nila-livestream|kinukuha ng video) (ako)? (nang hindi ko alam|ng walang pahintulot)/i,
+    /may (nagbabanta|nagba-blackmail) sa akin (gamit|ng|ng litrato|ng video)/i,
+  ];
+  sexualHarmPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Sexual harassment, assault, or exploitation");
+    }
+  });
+
+  // === GANG INVOLVEMENT / THREATS / VIOLENCE ===
+  const gangViolencePatterns = [
+    // English
+    /i (am|'m) (in|involved in|part of) a (gang|group that fights|barkada that hurts people)/i,
+    /(they|someone) (threatened|is threatening) (to hurt|to kill|to jump) me/i,
+    /i (have|carry|brought) a (weapon|knife|gun|balisong) (to school|with me)/i,
+    /(fight|brawl|rumble) (is happening|will happen|being planned) (at school|near school|after class)/i,
+    /i (was|got) (jumped|stabbed|shot at|threatened at gunpoint)/i,
+    /someone (has a gun|brought a knife|has a weapon) (at school|nearby)/i,
+    /(gang|group) (is after|targeting|following) me/i,
+
+    // Tagalog — gang / violence
+    /(miyembro|kasali|nakapasok) (ako)? (sa|ng) (gang|barkada na nag-aaway|grupo na mapanganib)/i,
+    /may (banta|nagbabanta|naghahanap sa akin) (sa|ng) (gang|grupo)/i,
+    /(may dala|nagdala) (ako|siya|sila) ng (patalim|kutsilyo|baril|armas) (sa eskuwela)?/i,
+    /(away|gulo|rumble) (na|gagawin|mangyayari) (sa|malapit sa) (eskuwela|paaralan)/i,
+    /(sinaksak|tinaboy|pinagbabaril|binalatan) (ako|niya|nila)/i,
+  ];
+  gangViolencePatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 6;
+      reasons.push("Gang involvement or violent threat");
+    }
+  });
+
+  // === FAMILY CRISIS / HOME DANGER ===
+  const familyCrisisPatterns = [
+    // English
+    /(my parents|my mom|my dad|my family) (fight|hit each other|hurt each other) (all the time|every night|constantly)/i,
+    /i (am|'m) (scared|afraid) to go home/i,
+    /(domestic violence|abuse at home) (is happening|in my house|in my family)/i,
+    /my (parent|father|mother|stepparent) (is|has been) (drinking|drunk|on drugs) (and|then) (hurts|hits|abuses)/i,
+    /i (was|got) (kicked out|thrown out|locked out) (of my house|of my home)/i,
+    /i (have|haven't had) (no|a) place to (sleep|stay|go home)/i,
+    /running away (from home|from my family)/i,
+    /(neglected|starved|locked up|isolated) (by my family|at home)/i,
+
+    // Tagalog — family crisis
+    /(nagaaway|nagsasagupaan|nagsasaksakan|nagsasuntukan) (ang|si|sina) (tatay|nanay|magulang|pamilya) (ko)? (palagi|lagi|araw-araw)/i,
+    /natatakot (ako)? (umuwi|sa bahay) (dahil|kasi)/i,
+    /(lasing|high|nalasing|naka-droga) (ang|si) (tatay|nanay|magulang) ko (at|tapos) (nananakit|umaaway)/i,
+    /(pinalayas|pinaalis|sinibak) (ako)? (sa bahay|ng magulang|ng pamilya)/i,
+    /wala (akong|na akong) (matulungan|matutuluyan|matirhan|puntahan)/i,
+    /tumakas (na|na lang) (ako)? (sa bahay|sa pamilya)/i,
+  ];
+  familyCrisisPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 5;
+      reasons.push("Family crisis or home danger");
+    }
+  });
+
+  // === ACADEMIC / SCHOOL CRISIS ===
+  const academicCrisisPatterns = [
+    // English
+    /i (am|'m) (going to|about to) (fail|drop out|be expelled|get expelled)/i,
+    /i (cheated|was caught cheating|plagiarized) (on a test|in an exam|in school)/i,
+    /i (can't|cannot) (afford|pay for) (school|tuition|my fees) (anymore|this year)/i,
+    /i (might|will) have to (stop|quit|leave) (school|studying) (because|due to)/i,
+    /(teachers?|school staff|principal) (is|are) (harassing|threatening|discriminating against) me/i,
+    /i (feel|am|so) (overwhelmed|crushed|destroyed) by (school|exams|grades|pressure)/i,
+
+    // Tagalog — academic crisis
+    /mababagsak (na)? (ako|na ako) (sa lahat|sa subject|sa klase)/i,
+    /(mapapalayas|mae-expel|matataboy) (na)? (ako)? (sa eskuwela|sa paaralan)/i,
+    /hindi (na|ko) (kaya|kayang) (bayaran|tulungan|harapin) (ang|ang bayad sa) (eskuwela|tuition)/i,
+    /kailangan (na)? (akong) (mag-drop|umalis sa eskuwela|tumigil mag-aral)/i,
+  ];
+  academicCrisisPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 3;
+      reasons.push("Academic or school-related crisis");
+    }
+  });
+
+  // === MENTAL HEALTH CRISIS (panic, psychosis, dissociation, severe anxiety) ===
+  const mentalHealthPatterns = [
+    // English
+    /i (can't|cannot) (breathe|think|function|stop crying|stop shaking)/i,
+    /i (feel|am) (like i'm going crazy|losing my mind|out of control|like a different person)/i,
+    /i (hear|see|experience) things (that aren't real|that others don't)/i,
+    /(panic attack|anxiety attack|mental breakdown|nervous breakdown)/i,
+    /i (can't|cannot) (stop|control) (my thoughts|my urges|myself)/i,
+    /i (feel|am) (completely numb|emotionally dead|disconnected from everything)/i,
+    /i (haven't|have not) (slept|eaten|left my room|gone outside) (in days|for days|for weeks)/i,
+    /i (am|feel like i'm) (disappearing|not real|watching myself from outside)/i,
+    /(medication|meds|pills) (aren't|not) (working|helping) (anymore|at all)/i,
+    /diagnosed with (depression|anxiety|bipolar|schizophrenia|ptsd|ocd|eating disorder)/i,
+
+    // Tagalog — mental health crisis
+    /hindi (ako|na ako) (makatulog|makakain|makagalaw|makaalis) (ng ilang araw|sa loob ng|nang ilang)/i,
+    /parang (nababaliw|nasisiraan ng ulo|wala na akong kontrol|iba na ako)/i,
+    /(naririnig|nakakakita) (ako)? ng (bagay|tinig|boses) na (hindi totoo|hindi nakikita ng iba)/i,
+    /(panic attack|anxiety attack|mental breakdown) (na naman|palagi|nangyayari)/i,
+    /hindi ko (mapigilan|kontrolin) (ang)? (sarili ko|mga iniisip ko|mga nararamdaman ko)/i,
+    /parang (hindi ko totoo|hindi ako totoo|nanunuod lang ako sa sarili ko)/i,
+  ];
+  mentalHealthPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 4;
+      reasons.push("Mental health crisis or breakdown");
+    }
+  });
+
+  // === LOWER WEIGHT: Isolation, stress, passive ideation ===
+  const isolationPatterns = [
+    // English
+    /no one (understands|cares|listens|loves me)/i,
+    /i feel (so alone|completely alone|invisible|abandoned|unwanted)/i,
+    /i can't handle this/i,
+    /everything (hurts|is too much|is falling apart)/i,
+    /i (have|has) no (friends|one|purpose|reason to live)/i,
+    /i don't (belong|fit in|matter)/i,
+    /i (feel|am) (like a burden|useless|worthless|a failure)/i,
+    /nobody (would notice|would care|would miss) if i (was gone|disappeared|died)/i,
+    /i (give up|quit|stop trying|can't do this anymore)/i,
+
+    // Tagalog — isolation / low distress
+    /walang (nakakaintindi|nagpapahalaga|nakikinig|nagmamahal) sa akin/i,
+    /pakiramdam ko(ng)? (sobrang nag-iisa|ganap na nag-iisa|hindi nakikita|abandunado|ayaw sa akin)/i,
+    /hindi ko na (kaya|kayang tiisin) ito/i,
+    /lahat ay (masakit|sobra na|laban sa akin)/i,
+    /nag-iisa (ako|na lang ako) (palagi|lagi|sa lahat)/i,
+    /wala (akong)? (kaibigan|kakampi|makapitan|matakbuhan)/i,
+    /hindi (ako)? (kasama|kasali|kabilang) (sa grupo|sa lahat)/i,
+    /pakiramdam ko(ng)? (hindi ako mahalaga|hindi ako kailangan|hindi ako gusto)/i,
+    /stressed (na)? (na)? (ako|na ako) (sobra|na)/i,
+    /hindi ko (alam|mahanap) (ang)? (dahilan|rason|paraan) para (magpatuloy|maging masaya)/i,
+    /parang (wala|walang silbi|walang kwenta) (na)? (ako|ang buhay ko)/i,
+    /walang (makakapansin|magmamalasakit|makakaalam) kung (mawala|nawala|maging wala) (na)? ako/i,
+  ];
+  isolationPatterns.forEach(p => {
+    if (p.test(t)) {
+      score += 1.5;
+      reasons.push("Isolation or high stress");
+    }
+  });
+
+  // === COMBO BOOSTERS ===
+  // English
+  if (/i want to/.test(t) && /(hurt|kill|die|end it)/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  if (/(hurt|kill) myself/.test(t) && /(feel|am|want)/.test(t)) {
+    score += 3;
+    reasons.push("Self-directed harm language");
+  }
+  // Tagalog — direct death/harm intent
+  if (/(gusto ko|gusto kong|gusto na)/.test(t) && /(mamatay|magpakamatay|patayin|masaktan)/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  if (/(sarili ko|ang sarili|sarili)/.test(t) && /(patayin|saktan|sugatan|masaktan|saktan|putulin)/.test(t)) {
+    score += 3;
+    reasons.push("Self-directed harm language");
+  }
+  // Tagalog — asking others to kill/hurt
+  if (/(patayin|saktan|tulungan).*(nyo|mo|ninyo|kayo)/.test(t) && /ako/.test(t)) {
+    score += 4;
+    reasons.push("Strong intent phrase combination");
+  }
+  // Addiction + distress combo
+  if (/(adik|droga|shabu|rugby)/.test(t) && /(mamatay|magpakamatay|wala nang pag-asa|sawa na)/.test(t)) {
+    score += 3;
+    reasons.push("Substance use with suicidal ideation");
+  }
+
+  // === KEYWORD / WORD-BASED SCORING (catches casual short phrases regex misses) ===
+  const words = t.split(/\s+/);
+
+  const highRiskWords = ['magpakamatay','magpatiwakal','pakamatay','patiwakal','suicidal','suicide','selfharm','self-harm'];
+  const medRiskWords  = ['mamatay','patay','nakakamatay','overdose','bigti','tumalon','kutsilyo','lason','burned myself'];
+  const substanceWords= ['shabu','meth','rugby','droga','inhalant','solvent','vape','vapong','e-cigarette'];
+  const addictWords   = ['adik','nag-shabu','nagshabu','nagdodroga','nag-vaping'];
+  const distressWords = ['hopeless','depressed','depresado','nawawala','pagod','sawa','wala-na','walanasaysay','breakdown','nababaliw','nasisiraan'];
+  const newRiskWords  = ['purging','starving','sextortion','balisong','nawala-ako'];
+
+  let hasSubstance = false;
+  let hasAddiction = false;
+  let hasDistress  = false;
+
+  words.forEach(w => {
+    if (highRiskWords.some(k => w.includes(k))) {
+      score += 8;
+      reasons.push('Direct self-harm / suicidal intent');
+    }
+    if (medRiskWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Possible plan or method');
+    }
+    if (substanceWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Substance use / addiction');
+      hasSubstance = true;
+    }
+    if (addictWords.some(k => w.includes(k))) {
+      score += 5;
+      reasons.push('Substance use / addiction');
+      hasAddiction = true;
+    }
+    if (distressWords.some(k => w.includes(k))) {
+      score += 2;
+      reasons.push('Emotional distress / hopelessness');
+      hasDistress = true;
+    }
+    if (newRiskWords.some(k => w.includes(k))) {
+      score += 4;
+      reasons.push('Additional risk signal detected');
+    }
+  });
+
+  // Also scan full text for key fragments (handles concatenated / space-free writing)
+  if (/adik/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasAddiction = true; }
+  if (/shabu|rugby|droga/.test(t)) { score += 4; reasons.push('Substance use / addiction'); hasSubstance = true; }
+  if (/self.?harm|selfharm|cutting myself|burn myself/.test(t)) { score += 6; reasons.push('Direct self-harm / suicidal intent'); }
+  if (/\brap(e|ed|ing)\b|molest|sexual.?assault|sextortion/.test(t)) { score += 6; reasons.push('Sexual harassment, assault, or exploitation'); }
+  if (/panic.?attack|mental.?breakdown|nervous.?breakdown/.test(t)) { score += 4; reasons.push('Mental health crisis or breakdown'); }
+  if (/\bgangs?\b|barkada.*(away|gulo)|\brumble\b/.test(t)) { score += 4; reasons.push('Gang involvement or violent threat'); }
+  if (/purging|binge.*purge|purge.*binge|not eating|stop eating|starv/.test(t)) { score += 4; reasons.push('Eating disorder / dangerous diet behavior'); }
+  if (hasSubstance && hasAddiction) { score += 3; reasons.push('Confirmed substance addiction'); }
+  if ((hasSubstance || hasAddiction) && hasDistress) { score += 3; reasons.push('Substance use with suicidal ideation'); }
+
+
+  // Deduplicate reasons
+  reasons = [...new Set(reasons)];
+  const uniqueReasonCount = reasons.length;
+
+  let level = "Low";
+  // Sensitive thresholds — prefer false positives over missed risks
+  if (score >= 12 || (score >= 9 && uniqueReasonCount >= 2)) level = "High";
+  else if (score >= 6 || (score >= 4 && uniqueReasonCount >= 2)) level = "Medium";
+  else if (score >= 2) level = "Low-Medium";
+
+  // Flag at a lower threshold — any meaningful signal gets flagged
+  const flagged = score >= 3 || level !== "Low";
+
+  return { score: Math.round(score), level, flagged, reasons };
+}
+
+// ── URGENCY SCORE (for sorting — higher = more urgent) ──
+function getUrgencyScore(item) {
+  const prioMap = { High: 350, Medium: 120, Low: 0 };
+  const riskMap = { High: 250, Medium: 80, "Low-Medium": 30, Low: 0 };
+
+  let base = (prioMap[(item.priority || 'Low').trim()] || 0) +
+             (riskMap[(item.riskLevel || 'Low').trim()] || 0) +
+             Number(item.aiScore || 0);
+
+  // Bonus for multiple risk signals
+  if (item.reasons && item.reasons.length >= 2) base += 40;
+
+  return Math.round(base);
+}
+
+// ── GLOW CLASS (guidance-only) ──
+function getGlowClass(item, isPending) {
+  if (currentRole !== 'guidance' || !isPending) return '';
+
+  const r = (item.riskLevel || '').trim();
+  const p = (item.priority || '').trim();
+  const score = Number(item.aiScore || 0);
+
+  const isHighRisk = r === 'High';
+  const isMedRisk  = r === 'Medium';
+  const isHighPrio = p === 'High';
+  const isMedPrio  = p === 'Medium';
+
+  // Critical: High risk + High priority OR very high AI score
+  if ((isHighRisk && isHighPrio) || score >= 12) return 'guidance-critical';
+  // High risk regardless of priority
+  if (isHighRisk) return 'guidance-high-risk';
+  // High priority regardless of risk
+  if (isHighPrio) return 'guidance-high-priority';
+  // Medium risk OR medium priority with some AI score
+  if (isMedRisk || (isMedPrio && score >= 4)) return 'guidance-medium-risk';
+
+  return '';
+}
+
+// ── PROFANITY & SENSITIVE WORD SYSTEM ──
+// Words that are HARD BLOCKED (never allowed — explicit/slurs)
+const hardBlockList = [
+
+  // ── FILIPINO CORE PROFANITY ──
+  'tangina','tanginamo','putangina','putanginamo','ptangina','tngina',
+  'puta','putang','putangkayo','putangina',
+  'gago','gaga','gagong','gaguhin','kagaguhan',
+  
+  'hayupak','hinayupak','hayvop',
+  
+  
+  'pakshet','pakshit','pakingshet','pakingsit',
+  'piste','lintek','letse','leche',
+  'punyeta','punyetang','bunyeta',
+  'bwisit','bwisitin',
+  'pakyu','pakyo','packyou','packu',
+  
+  
+  'pokpok','pulpol',
+  'hampaslupa','hampas lupa',
+  'tarantado','tarantadong',
+  'manyak','manyakin','manyakis',
+  'buraot','burauts',
+  
+  'paksit',
+  'kingina','kinginamo',
+  'amputa','amputang',
+  'inamo','inamohin',
+  'yawa','yawang',
+  
+  
+  
+  
+  
+  
+  
+  'gawa ng puta','anak ng puta','anak ng bitch',
+  'putanginang','tang ina','tang ina mo',
+  
+  
+  'ampotang','ampota',
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+  // ── JAKOL AND ALL VARIANTS ──
+  'jakol','jakal','jakul','jakkol','jakoll','jacol','jakohl','jokol','djakol',
+  'nagjajakol','nagjajakul','nagjajakal','najakol',
+  'jakulin','jakolin','jakoling','jakutin','jijakol','mag jakol','mag-jakol',
+  'jakolan','jakolers','jakoler',
+
+  // ── SALSAL AND ALL VARIANTS ──
+  'salsal','salsalin','nagsasal','nagsasalsal','nagsalsal',
+  'ssalsal','salsall','sarsal','mag salsal','mag-salsal',
+  'salsalan','salsalers',
+
+  // ── MASTURBATE / MASTERBATE / MASTERBAIT AND ALL VARIANTS ──
+  'masturbate','masturbating','masturbation','masturbated',
+  'masterbate','masterbating','masterbation','masterbated',
+  'masterbait','masterbeyt','mastorbeyt','masturbayt','mastarbeyt',
+  'mastrubate','mastrubation','mastrubating',
+  'masturbasyon','mastorbasyon','mastorb','masturb',
+  'mastorbet','masterbet','mastorbeat','masterbeat',
+  'nagmamasturbate','nagmamasterbate','nagmamasturba',
+  'mag masturbate','mag masterbate','mag-masturbate',
+
+  // ── KANTOT AND SEXUAL ACTS ──
+  // NOTE: rape, molest, ginahasa, gahasain, sext, sexting are intentionally
+  // REMOVED from this block list — students must be able to report abuse.
+  // These words are handled by detectRisk() which flags them for counselor review.
+  'kantot','kantutin','nagkakantot','nakantot','kantutan',
+  'hindot','hindotin','naghihindot','hindutan',
+  'iyot','nag-iiyot','nagiiyot','iyutin','iyutan',
+  'jakolin','jakulin','salsalin',
+  'nagmamasturbate','nagmamasterbate',
+  'nagkakantot','naghihindot','nagiiyot',
+  'chupa','chupahin','nagchuchupa','chupaan',
+  'kinantot','kinalantot',
+
+  // ── GENITALS - FILIPINO ──
+  'tite','titi','titit',
+  'burat','burats','burak','burak',
+  
+  'kepyas','kepya',
+  'puke','puki','pukiin','pekpek','pepek',
+  'pepe','pepeng',
+  
+  
+  
+  
+  
+  
+  
+
+  // ── SEXUAL SLANG - FILIPINO ──
+  
+  
+  
+  'pokpok','pokpokin','magpokpok',
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+  // ── ENGLISH PROFANITY ──
+  'fuck','fucking','fucked','fucker','fucks','fuckup','fck','fuk','fvck','f uck',
+  'fack','facking','facked','facker','facks','phuck','phucking','phuk','phuking',
+  'shit','shitting','shitty','shits','sht','sh1t','shlt',
+  'bitch','bitching','bitches','bitchy','b1tch','bich',
+  'asshole','assholes','ass hole','azzhole','assholee',
+  'bastard','bastards','baztard',
+  'cunt','cunts','cvnt',
+  'whore','whores','wh0re','whoree',
+  'slut','slutty','sluts','sl0t',
+  'dick','dicks','d1ck','diick',
+  'cock','cocks','c0ck','cok',
+  'pussy','pussies','p0ssy',
+  'nigger','nigga','niga','n1gger','nigg',
+  'retard','retarded','retards',
+  'faggot','faggots','fag','fagot',
+  'motherfucker','motherf','mofo',
+  'piss','pissed','pisser',
+  
+  'asshat','dipshit','jackass','jerkoff','jerk off',
+  'bullshit','bull shit',
+  'wtf','stfu','gtfo',
+  
+  
+  
+  
+  
+  
+  'dumbfuck','dumb fuck',
+  'clusterfuck','cluster fuck',
+
+  // ── ENGLISH SEXUAL ──
+  // NOTE: sex, sexual, naked, nude, penis, vagina, condom, sext, sexting, fingering
+  // are intentionally REMOVED — students need these words to report sexual abuse.
+  // detectRisk() flags them for counselor review instead of blocking the post.
+  'porn','pornography','porno','pornhub','xvideos','xnxx',
+  'horny','horniest','hornier',
+  'cum','cumshot','cumming','cummed',
+  'clit','clits','clitoris',
+  'boob','boobs','boobies','boobie',
+  'titties','titty',
+  'orgasm','orgasms','orgasmic',
+  'erection','erections','erect',
+  'ejaculate','ejaculation','ejaculating',
+  'jerkoff','jerk off','jacking off','jack off',
+  'wank','wanking','wanker','wankers',
+  'handjob','hand job','blowjob','blow job',
+  'dildo','dildos','vibrator','vibrators',
+  
+  'stripper','strippers','striptease',
+  'onlyfans','only fans',
+  'hentai','ecchi',
+  'threesome','foursome','gangbang','gang bang',
+  'bdsm','fetish','fetishes',
+
+  // ── THREATS AND VIOLENCE ──
+  // NOTE: 'shoot you','stab you','hurt you' removed — students need to report
+  // threats made against them. Only block directed-outward threat phrases.
+  'kill yourself','kill urself','kil yourself',
+  'go die','you should die','drop dead',
+  
+  'pahirapan','gaguhin','lokohin kita',
+  'bubugbugin','bugbugin','ibubulag',
+
+  // ── HATE SPEECH AND SLURS ──
+  'nigger','nigga','niga','chink','gook','spic','wetback','cracker',
+  'kike','raghead','towelhead','sandnigger','zipperhead',
+  'tranny','shemale','ladyboy',
+  'faggot','fag',
+  'retard','retarded','tard','spaz','spastic',
+  
+
+  // ── DRUG REFERENCES ──
+  // NOTE: shabu, meth, marijuana, cocaine etc. are intentionally REMOVED from
+  // the block list — students must be able to report drug involvement/threats.
+  // detectRisk() already flags these for counselor review.
+
+  // ── SPAM / IRRELEVANT / DISRESPECTFUL ──
+  'suicidebait','suicide bait',
+  
+  
+  
+  
+
+];
+
+// Soft censor list cleared — sensitive words display as typed, still detected by detectRisk()
+const softCensorList = [];
+
+// Leet-speak / repeated-letter normaliser applied to ONE token at a time
+function normalizeToken(w) {
+  return w.toLowerCase()
+    .replace(/ph/g,'f')
+    .replace(/[4@]/g,'a').replace(/8/g,'b').replace(/3/g,'e')
+    .replace(/[1!|]/g,'i').replace(/0/g,'o').replace(/[5$]/g,'s').replace(/7/g,'t')
+    .replace(/[^a-z]/g,'')
+    .replace(/(.)\1+/g,'$1');
+}
+function normalizeText(text) { return text ? text.split(/\s+/).map(normalizeToken).join(''):''; }
+
+// Built ONCE (the old version rebuilt ~700 RegExps on every keystroke-submit)
+let _profSingle = null, _profPhrases = null;
+function _buildProfanityIndex() {
+  _profSingle = new Set(); _profPhrases = [];
+  hardBlockList.forEach(w => {
+    if (/\s/.test(w.trim())) {
+      const p = w.trim().split(/\s+/).map(normalizeToken).filter(Boolean).join(' ');
+      if (p) _profPhrases.push(' ' + p + ' ');
+    } else {
+      const n = normalizeToken(w);
+      if (n.length >= 2) _profSingle.add(n);
+    }
+  });
+}
+
+function containsProfanity(text) {
+  if (!text) return false;
+  if (!_profSingle) _buildProfanityIndex();
+  const rawTokens = String(text).split(/[\s.,;:?"()\[\]{}<>\/\\*_+=~`^-]+/).filter(Boolean);
+  const tokens = rawTokens.map(normalizeToken).filter(Boolean);
+  for (const t of tokens) if (_profSingle.has(t)) return true;
+  // "f u c k" style: join runs of single letters
+  let run = '';
+  for (const w of rawTokens) {
+    if (w.length === 1) { run += normalizeToken(w); }
+    else { if (run.length >= 3 && _profSingle.has(run.replace(/(.)\1+/g,'$1'))) return true; run = ''; }
+  }
+  if (run.length >= 3 && _profSingle.has(run.replace(/(.)\1+/g,'$1'))) return true;
+  if (_profPhrases.length) {
+    const joined = ' ' + tokens.join(' ') + ' ';
+    for (const p of _profPhrases) if (joined.includes(p)) return true;
+  }
+  return false;
+}
+
+// A student who may be at risk must never be blocked from reaching help just because of rough language
+function shouldBlockForLanguage(text) {
+  return containsProfanity(text) && !detectRiskRegex(text).flagged;
+}
+
+// Censors soft words in text, returns cleaned version
+function censorText(text) {
+  if (!text) return text;
+  let result = text;
+  softCensorList.forEach(({word, mask}) => {
+    // Case-insensitive whole-word replacement
+    const escaped = word.replace(/[-\/\\^$*+?.()|[\]{}]/g,'\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    result = result.replace(regex, mask);
+  });
+  return result;
+}
+
+// Returns true if text contains any soft-censored words (for flagging)
+function containsSensitiveWords(text) {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return softCensorList.some(({word}) => lower.includes(word));
+}
+
+    // ── LOGGING ──
+    async function addLog(action,user,type) {
+      user=user||'system';type=type||'info';
+      const id=Date.now()*1000+Math.floor(Math.random()*1000);
+      const log={id,action,user,type,time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',second:'2-digit'}),timestamp:Date.now()};
+      try{await db.collection('logs').doc(String(id)).set(log);}
+      catch(e){systemLogs.unshift(log);scheduleRender();}
+    }
+
+    // ── AUTH ──
+    // ── AUTH FUNCTIONS ──
+
+// ── ADMIN ACCOUNT CHECKER ─────────────────────────────────────────────────────
+let _acLastUid = null;
+
+function _acShow(type, html) {
+  const el = document.getElementById('acResult');
+  if (!el) return;
+  el.style.display = 'block';
+  // Use semi-transparent tints so they work in both light and dark mode
+  if (type === 'success') {
+    el.style.background = '#2e7d3222'; el.style.border = '1px solid #66bb6a55'; el.style.color = darkMode ? '#a5d6a7' : '#1b5e20';
+  } else if (type === 'error') {
+    el.style.background = '#c6282822'; el.style.border = '1px solid #ef9a9a55'; el.style.color = darkMode ? '#ef9a9a' : '#b71c1c';
+  } else {
+    el.style.background = '#1565c022'; el.style.border = '1px solid #90caf955'; el.style.color = darkMode ? '#90caf9' : '#0d47a1';
+  }
+  el.innerHTML = html;
+}
+
+async function adminCheckAccount() {
+  const email    = (document.getElementById('acEmail').value    || '').trim().toLowerCase();
+  const password = (document.getElementById('acPassword').value || '').trim();
+  const wantRole = (document.getElementById('acRole').value     || '');
+  const fixBtn   = document.getElementById('acFixBtn');
+  const checkBtn = document.getElementById('acCheckBtn');
+  _acLastUid = null;
+  if (fixBtn) fixBtn.style.display = 'none';
+  if (!email || !password) { _acShow('error', '❌ Enter both email and password.'); return; }
+
+  if (checkBtn) { checkBtn.disabled = true; checkBtn.innerHTML = '⏳ Checking...'; }
+  try {
+    // Use a secondary app so admin session is not disturbed
+    const tempApp  = firebase.initializeApp(firebase.app().options, 'ac-check-' + Date.now());
+    const tempAuth = tempApp.auth();
+    const uc = await tempAuth.signInWithEmailAndPassword(email, password);
+    const uid = uc.user.uid;
+    _acLastUid = uid;
+    const verified = uc.user.emailVerified;
+    await tempAuth.signOut();
+    tempApp.delete().catch(()=>{});
+
+    const snap = await db.collection('users').doc(uid).get();
+    const hasDoc = snap.exists;
+    const storedRole = hasDoc ? (snap.data().role || '— no role field —') : null;
+
+    let lines = [];
+    lines.push(`<strong>UID:</strong> <code style="font-size:11px;word-break:break-all">${_esc(uid)}</code>`);
+    lines.push(`<strong>Email verified:</strong> ${verified ? '✅ Yes' : '⚠️ No'}`);
+    lines.push(`<strong>Firestore doc:</strong> ${hasDoc ? '✅ Exists' : '❌ Missing'}`);
+    lines.push(`<strong>Stored role:</strong> <strong>${_esc(storedRole || 'none')}</strong>`);
+
+    if (wantRole) {
+      if (!hasDoc || storedRole !== wantRole) {
+        lines.push(`<br>⚠️ Role mismatch or missing. Click <strong>Fix Role</strong> to set it to <strong>${_esc(wantRole)}</strong>.`);
+        if (fixBtn) { fixBtn.style.display = 'inline-flex'; fixBtn.textContent = `🔧 Fix → set role to "${wantRole}"`; }
+        _acShow('error', lines.join('<br>'));
+      } else {
+        lines.push(`<br>✅ Role matches! This account should log in correctly as <strong>${_esc(wantRole)}</strong>.`);
+        _acShow('success', lines.join('<br>'));
+      }
+    } else {
+      _acShow('info', lines.join('<br>'));
+    }
+  } catch(e) {
+    _acShow('error', '❌ ' + _esc(e.message || 'Login failed. Check email and password.'));
+  }
+  if (checkBtn) { checkBtn.disabled = false; checkBtn.innerHTML = '<i data-lucide="search" style="width:15px;height:15px;display:inline;vertical-align:middle"></i> Check Account'; lucide.createIcons(); }
+}
+
+async function adminFixAccount() {
+  const email    = (document.getElementById('acEmail').value    || '').trim().toLowerCase();
+  const password = (document.getElementById('acPassword').value || '').trim();
+  const wantRole = (document.getElementById('acRole').value     || '');
+  const fixBtn   = document.getElementById('acFixBtn');
+  if (!wantRole)   { _acShow('error', '❌ Select a role first.'); return; }
+  if (!_acLastUid) { _acShow('error', '❌ Run Check first.'); return; }
+
+  if (fixBtn) { fixBtn.disabled = true; fixBtn.textContent = '⏳ Fixing...'; }
+  try {
+    const tempApp  = firebase.initializeApp(firebase.app().options, 'ac-fix-' + Date.now());
+    const tempAuth = tempApp.auth();
+    const uc = await tempAuth.signInWithEmailAndPassword(email, password);
+    const uid = uc.user.uid;
+    await tempAuth.signOut();
+    tempApp.delete().catch(()=>{});
+
+    const snap = await db.collection('users').doc(uid).get();
+    if (snap.exists) {
+      await db.collection('users').doc(uid).update({ role: wantRole, email });
+    } else {
+      await db.collection('users').doc(uid).set({ email, role: wantRole, createdAt: Date.now() });
+    }
+
+    addLog(`Admin fixed role for ${email} → ${wantRole}`, currentUserEmail, 'success');
+    if (fixBtn) { fixBtn.style.display = 'none'; fixBtn.disabled = false; }
+    _acShow('success', `✅ Done! Role for <strong>${_esc(email)}</strong> is now <strong>${_esc(wantRole)}</strong>. They can log in normally.`);
+  } catch(e) {
+    if (fixBtn) { fixBtn.disabled = false; fixBtn.textContent = '🔧 Fix Role'; }
+    _acShow('error', '❌ Fix failed: ' + _esc(e.message));
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// Creates the /users/{uid} Firestore document for accounts that were created
+// manually in Firebase Auth (guidance/admin) and never got a Firestore doc.
+// Only shown on the login screen when "Access Denied" error occurs.
+let bootstrapStatus = ''; // '', 'loading', 'success', 'error'
+let bootstrapMsg = '';
+
+async function bootstrapUserDocument(role) {
+  bootstrapStatus = 'loading';
+  bootstrapMsg = '';
+  render();
+
+  if (!loginEmail.trim() || !loginPassword.trim()) {
+    bootstrapStatus = 'error';
+    bootstrapMsg = 'Please enter your email and password above first.';
+    render(); return;
+  }
+
+  try {
+    // Sign in to get the UID
+    const uc = await auth.signInWithEmailAndPassword(loginEmail.trim().toLowerCase(), loginPassword.trim());
+    const uid = uc.user.uid;
+    const email = uc.user.email.toLowerCase();
+
+    // Check if doc already exists
+    const existing = await db.collection('users').doc(uid).get();
+    if (existing.exists) {
+      // Doc exists — just fix the role
+      await db.collection('users').doc(uid).update({ role, email });
+    } else {
+      // Create new doc
+      await db.collection('users').doc(uid).set({ email, role, createdAt: Date.now() });
+    }
+
+    await auth.signOut();
+    bootstrapStatus = 'success';
+    bootstrapMsg = `✅ Done! Your account has been registered as "${role}". You can now log in normally.`;
+    render();
+  } catch(e) {
+    await auth.signOut().catch(()=>{});
+    bootstrapStatus = 'error';
+    bootstrapMsg = '❌ ' + (e.message || 'Something went wrong. Check your email/password and try again.');
+    render();
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+
+// Roles are stored in Firestore /users/{uid}.role and trusted over email heuristics.
+// The hardcoded admin list is a bootstrap fallback only (for the very first admin
+// before any Firestore user document exists). All other role checks go to Firestore.
+const BOOTSTRAP_ADMIN_EMAILS = ['admin@qhsafety.demo', 'youradminemail@gmail.com'];
+
+async function resolveRoleFromFirestore(uid, email) {
+  try {
+    const snap = await db.collection('users').doc(uid).get();
+    if (snap.exists && snap.data().role) return snap.data().role;
+  } catch(e) { /* Firestore read failed — fall through to bootstrap */ }
+  // Bootstrap: only hardcoded admins get elevated roles without a Firestore doc
+  if (BOOTSTRAP_ADMIN_EMAILS.includes(email)) return 'admin';
+  return 'student'; // default — never grant elevated access by email string pattern
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleLogin(selectedRole) {
+  loginError = '';
+  render();
+
+  try {
+    const uc = await auth.signInWithEmailAndPassword((loginEmail||'').trim().toLowerCase(), loginPassword);
+    const email = uc.user.email.toLowerCase();
+
+    // ── Authoritative role lookup from Firestore (not email string) ──
+    const actualRole = await resolveRoleFromFirestore(uc.user.uid, email);
+
+    if (selectedRole !== actualRole) {
+      await auth.signOut();
+      loginError = `Access Denied: Your account is not registered as "${selectedRole}". Please select the correct role.`;
+      render();
+      return;
+    }
+
+    // For students: require Gmail address
+    if (actualRole === 'student' && !email.endsWith('@gmail.com')) {
+      await auth.signOut();
+      loginError = '🔒 Only Gmail accounts (@gmail.com) are allowed for students.';
+      render();
+      return;
+    }
+
+    // For students: require email verification before allowing login
+    if (actualRole === 'student' && !uc.user.emailVerified) {
+      let resent = false;
+      try { await uc.user.sendEmailVerification(); resent = true; } catch(e) {}
+      await auth.signOut();
+      loginError = '📧 Email not verified. ' + (resent ? 'We just sent you a <strong>new verification link</strong> — ' : '') + 'please check your <strong>inbox or spam/junk folder</strong> and click the link before logging in.';
+      render();
+      return;
+    }
+
+    currentUserEmail = email;
+    currentRole = selectedRole;
+    isAuthenticated = true;
+    activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+    localStorage.setItem('qh_saved_role', selectedRole);
+
+    if (selectedRole === 'guidance') {
+      registerAsCounselor();
+    }
+
+    loadDataFromFirestore();
+    addLog(`Logged in as ${selectedRole}`, email, 'info');
+    render();
+    setTimeout(handleDeepLink, 1000);
+
+  } catch (error) {
+    loginError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+function friendlyAuthError(code, fallback) {
+  switch (code) {
+    case 'auth/invalid-credential':
+      return '❌ Incorrect email or password. If you just signed up, verify your email first before logging in.';
+    case 'auth/wrong-password':
+      return '❌ Wrong password. Please try again or use "Forgot Password?" to reset it.';
+    case 'auth/user-not-found':
+      return '❌ No account found with that email. Please sign up first, or check the email you entered.';
+    case 'auth/invalid-email':
+      return '❌ That does not look like a valid email address. Please check and try again.';
+    case 'auth/invalid-password':
+      return '❌ Incorrect password. Please try again or use "Forgot Password?" to reset it.';
+    case 'auth/user-disabled':
+      return '⛔ This account has been disabled. Please contact your school administrator.';
+    case 'auth/too-many-requests':
+      return '⏳ Too many failed attempts. Your account is temporarily locked — wait a few minutes, then try again or reset your password.';
+    case 'auth/network-request-failed':
+      return '🌐 Network error. Please check your internet connection and try again.';
+    case 'auth/email-already-in-use':
+      return '⚠️ This email is already registered. Go to Login instead, or use "Forgot Password?" if you forgot it.';
+    case 'auth/weak-password':
+      return '🔒 Password is too weak — use at least 6 characters.';
+    case 'auth/operation-not-allowed':
+      return '⛔ Sign-up is currently disabled. Please contact your administrator.';
+    case 'auth/missing-password':
+      return '❌ Please enter your password.';
+    case 'auth/missing-email':
+      return '❌ Please enter your email address.';
+    default:
+      return '❌ Something went wrong (' + (code || 'unknown') + '). Please try again. If this keeps happening, contact your administrator.';
+  }
+}
+
+
+function getOrCreateAnonId() {
+  let id = localStorage.getItem('qh_anon_id');
+  if (!id) {
+    id = 'anon_' + Math.random().toString(36).slice(2, 10) + '_' + Date.now().toString(36);
+    localStorage.setItem('qh_anon_id', id);
+  }
+  return id;
+}
+
+async function handleSignup() {
+  signupError = '';
+  render();
+
+  const email = signupEmail.trim().toLowerCase();
+  const password = signupPassword.trim();
+  const confirm = signupConfirmPassword.trim();
+
+  // Validation
+  if (!email || !password || !confirm) {
+    signupError = 'All fields are required.';
+    render(); return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    signupError = 'Please enter a valid email address.';
+    render(); return;
+  }
+  if (!email.endsWith('@gmail.com')) {
+    signupError = '🔒 Only Gmail accounts (@gmail.com) are allowed to register.';
+    render(); return;
+  }
+  if (password.length < 6) {
+    signupError = 'Password must be at least 6 characters.';
+    render(); return;
+  }
+  if (password !== confirm) {
+    signupError = 'Passwords do not match.';
+    render(); return;
+  }
+  // Only students can self-register
+  if (selectedRoleForLogin !== 'student') {
+    signupError = 'Only students can self-register. Guidance and Admin accounts are created by administrators.';
+    render(); return;
+  }
+
+  try {
+    const uc = await auth.createUserWithEmailAndPassword(email, password);
+    // Store user profile in Firestore
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'student',
+      createdAt: Date.now()
+    });
+
+    // Send email verification
+    await uc.user.sendEmailVerification();
+
+    // Sign out immediately — user must verify email before logging in
+    await auth.signOut();
+
+    signupEmail = ''; signupPassword = ''; signupConfirmPassword = '';
+    currentAuthFlow = 'login';
+    addLog(`New student account created (pending verification): ${email}`, email, 'success');
+    render();
+    showSuccessModal('Almost There! 📧', `A verification email was sent to <strong>${email}</strong>.<br><br>📌 <strong>Can't find it?</strong> Please check your:<ul style="text-align:left;margin:10px 0 0 0;padding-left:20px;line-height:2"><li><strong>Inbox</strong></li><li><strong>Spam / Junk</strong> folder</li><li><strong>Primary</strong> tab (Gmail users)</li></ul><br>The email is sent by Firebase on behalf of QHsafety. Click the verification link, then come back to log in.`);
+  } catch (error) {
+    signupError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+// ── XSS PREVENTION HELPER ────────────────────────────────────────────────────
+// Use _esc() whenever inserting untrusted (user-supplied) strings into innerHTML.
+// Trusted static strings (tr(), template literals with no user data) are fine as-is.
+function _esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── EMAIL MASKING (for logs display) ──
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return email;
+  const [local, domain] = email.split('@');
+  if (local.length <= 2) return local[0] + '***@' + domain;
+  const visible = local.slice(0, 3);
+  const masked = '*'.repeat(Math.min(local.length - 3, 5));
+  return visible + masked + '@' + domain;
+}
+
+// ── MODAL SYSTEM ──
+let _modalResolve = null;
+
+function _getModalColors(type) {
+  if (type === 'error')   return { bg:'#fdecea', color:'#c62828', icon:'⚠️' };
+  if (type === 'warning') return { bg:'#fff3e0', color:'#e65100', icon:'⚡' };
+  if (type === 'success') return { bg:'#e8f5e9', color:'#2e7d32', icon:'✅' };
+  return { bg:'#e3f2fd', color:'#1565c0', icon:'ℹ️' };
+}
+
+function showModal(title, body, type) {
+  const overlay = document.getElementById('qh-modal-overlay');
+  const iconWrap = document.getElementById('qh-modal-icon-wrap');
+  const titleEl  = document.getElementById('qh-modal-title');
+  const bodyEl   = document.getElementById('qh-modal-body');
+  const inputEl  = document.getElementById('qh-modal-input');
+  const btnsEl   = document.getElementById('qh-modal-btns');
+  const c = _getModalColors(type || 'info');
+
+  iconWrap.style.background = c.bg;
+  iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+  titleEl.textContent = title;
+  bodyEl.innerHTML = body;
+  inputEl.style.display = 'none';
+  inputEl.value = '';
+
+  btnsEl.innerHTML = `<button class="qh-modal-btn qh-modal-btn-secondary" onclick="closeModal()">OK</button>`;
+  overlay.classList.add('open');
+}
+
+function showSuccessModal(title, body) {
+  showModal(title, body, 'success');
+}
+
+function closeModal() {
+  const overlay = document.getElementById('qh-modal-overlay');
+  overlay.classList.remove('open');
+  if (_modalResolve) { _modalResolve(false); _modalResolve = null; }
+}
+
+// Returns a Promise<boolean> — true if user confirmed
+function confirmModal(title, body, type) {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    const overlay = document.getElementById('qh-modal-overlay');
+    const iconWrap = document.getElementById('qh-modal-icon-wrap');
+    const titleEl  = document.getElementById('qh-modal-title');
+    const bodyEl   = document.getElementById('qh-modal-body');
+    const inputEl  = document.getElementById('qh-modal-input');
+    const btnsEl   = document.getElementById('qh-modal-btns');
+    const c = _getModalColors(type || 'warning');
+
+    iconWrap.style.background = c.bg;
+    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+    titleEl.textContent = title;
+    bodyEl.innerHTML = body;
+    inputEl.style.display = 'none';
+    inputEl.value = '';
+
+    btnsEl.innerHTML = `
+      <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(false)">Cancel</button>
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(true)">Confirm Delete</button>`;
+    overlay.classList.add('open');
+  });
+}
+
+// Returns a Promise<string|null>
+function promptModal(title, body, type) {
+  return new Promise(resolve => {
+    _modalResolve = resolve;
+    const overlay = document.getElementById('qh-modal-overlay');
+    const iconWrap = document.getElementById('qh-modal-icon-wrap');
+    const titleEl  = document.getElementById('qh-modal-title');
+    const bodyEl   = document.getElementById('qh-modal-body');
+    const inputEl  = document.getElementById('qh-modal-input');
+    const btnsEl   = document.getElementById('qh-modal-btns');
+    const c = _getModalColors(type || 'warning');
+
+    iconWrap.style.background = c.bg;
+    iconWrap.innerHTML = `<span style="font-size:24px">${c.icon}</span>`;
+    titleEl.textContent = title;
+    bodyEl.innerHTML = body;
+    inputEl.style.display = 'block';
+    inputEl.value = '';
+    inputEl.placeholder = 'Type DELETE to confirm';
+
+    btnsEl.innerHTML = `
+      <button class="qh-modal-btn qh-modal-btn-secondary" onclick="_resolveModal(null)">Cancel</button>
+      <button class="qh-modal-btn qh-modal-btn-primary" onclick="_resolveModal(document.getElementById('qh-modal-input').value)">Confirm</button>`;
+    overlay.classList.add('open');
+    setTimeout(() => inputEl.focus(), 100);
+  });
+}
+
+function _resolveModal(value) {
+  document.getElementById('qh-modal-overlay').classList.remove('open');
+  if (_modalResolve) { _modalResolve(value); _modalResolve = null; }
+}
+
+// Fixed createAdminAccount
+// Uses a secondary Firebase app instance so creating the account does NOT
+// sign the current admin out (Firebase Auth side-effect of createUserWithEmailAndPassword).
+async function createAdminAccount() {
+  const email = document.getElementById('newAdminEmail').value.trim().toLowerCase();
+  const password = document.getElementById('newAdminPassword').value.trim();
+
+  if (!email || !password || password.length < 6) {
+    showModal("Input Error", "Please enter valid email and password (minimum 6 characters)", "error");
+    return;
+  }
+
+  let secondaryApp;
+  try {
+    // Create a temporary secondary Firebase app so we don't lose the current admin session
+    secondaryApp = firebase.initializeApp(firebase.app().options, 'admin-create-' + Date.now());
+    const secondaryAuth = secondaryApp.auth();
+    const uc = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'admin',
+      createdBy: currentUserEmail,
+      createdAt: Date.now()
+    });
+
+    await secondaryAuth.signOut();
+    addLog(`Created new Admin account: ${email}`, currentUserEmail, 'success');
+
+    showSuccessModal(
+      "New Admin Account Created!",
+      `Email: ${_esc(email)}<br>Password: ${_esc(password)}<br><br>Share these credentials carefully.`
+    );
+
+    document.getElementById('newAdminEmail').value = '';
+    document.getElementById('newAdminPassword').value = '';
+
+  } catch (error) {
+    showModal("Creation Failed", _esc(error.message) || "Something went wrong", "error");
+  } finally {
+    if (secondaryApp) secondaryApp.delete().catch(()=>{});
+  }
+}
+
+// Fixed createGuidanceAccount
+async function createGuidanceAccount() {
+  const email = document.getElementById('newGuidanceEmail').value.trim().toLowerCase();
+  const password = document.getElementById('newGuidancePassword').value.trim();
+
+  if (!email || !password || password.length < 6) {
+    showModal("Input Error", "Please enter valid email and password (minimum 6 characters)", "error");
+    return;
+  }
+
+  let secondaryApp;
+  try {
+    secondaryApp = firebase.initializeApp(firebase.app().options, 'guidance-create-' + Date.now());
+    const secondaryAuth = secondaryApp.auth();
+    const uc = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+
+    await db.collection('users').doc(uc.user.uid).set({
+      email,
+      role: 'guidance',
+      createdBy: currentUserEmail,
+      createdAt: Date.now()
+    });
+
+    await secondaryAuth.signOut();
+    addLog(`Created new Guidance account: ${email}`, currentUserEmail, 'success');
+
+    showSuccessModal(
+      "New Guidance Counselor Account Created!",
+      `Email: <strong>${_esc(email)}</strong><br>Password: <strong>${_esc(password)}</strong><br><br>Share these credentials carefully with the counselor.`
+    );
+
+    document.getElementById('newGuidanceEmail').value = '';
+    document.getElementById('newGuidancePassword').value = '';
+
+  } catch (error) {
+    showModal("Creation Failed", _esc(error.message) || "Something went wrong", "error");
+  } finally {
+    if (secondaryApp) secondaryApp.delete().catch(()=>{});
+  }
+}
+
+async function handleForgotPassword() {
+  forgotPasswordError = '';
+  forgotPasswordSuccess = '';
+  try {
+    await auth.sendPasswordResetEmail(forgotPasswordEmail);
+    forgotPasswordSuccess = 'Password reset email sent. Please check your inbox or spam folder.';
+    render();
+  } catch (error) {
+    forgotPasswordError = friendlyAuthError(error.code, error.message);
+    render();
+  }
+}
+
+function logout() {
+  // If guidance counselor is logging out, remove the push tag from this device
+  if (currentRole === 'guidance') {
+    unregisterAsCounselor();
+  }
+  localStorage.removeItem('qh_saved_role');
+  localStorage.removeItem('qh_last_page');
+  firestoreUnsubscribes.forEach(u => u());
+  firestoreUnsubscribes = [];
+  const wasAnonymous = isAnonymous;
+  isAuthenticated = false;
+  isAnonymous = false;
+  currentRole = null;
+  currentUserEmail = '';
+  mobileDrawerOpen = false;
+  postLimit = 25; consultLimit = 25;
+  postings = [];
+  consultationPostings = [];
+  feedbackList = [];
+  systemLogs = [];
+  if (!wasAnonymous) {
+    auth.signOut().then(() => render());
+  } else {
+    render();
+  }
+}
+
+    // ── FIRESTORE ──
+    function loadDataFromFirestore() {
+      firestoreUnsubscribes.forEach(u=>u());firestoreUnsubscribes=[];
+
+      // Postings: guidance/admin see all; students see only their own
+      const postingsQuery = (currentRole==='guidance'||currentRole==='admin')
+        ? db.collection('postings')
+        : db.collection('postings').where('authorId','==',currentUserEmail);
+
+      // Consultations: guidance/admin see all; students query by authorId
+      const consultQuery = (currentRole==='guidance'||currentRole==='admin')
+        ? db.collection('consultations')
+        : db.collection('consultations').where('authorId','==',currentUserEmail);
+
+      const isStaff = (currentRole==='guidance'||currentRole==='admin');
+      const byTime = (a,b)=>(b.timestamp||0)-(a.timestamp||0);
+      const onErr = (name)=>(e)=>console.warn('[QHsafety] listener '+name+':',e && e.code);
+      // Staff: newest 150 only (keeps memory + rendering small on weak devices)
+      const pq = isStaff ? postingsQuery.orderBy('timestamp','desc').limit(150) : postingsQuery;
+      const cq = isStaff ? consultQuery.orderBy('timestamp','desc').limit(150) : consultQuery;
+
+      firestoreUnsubscribes.push(
+        pq.onSnapshot(s=>{postings=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('postings')),
+        cq.onSnapshot(s=>{consultationPostings=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('consultations'))
+      );
+      // Feedback: admin sees all, everyone else only their own (was: every user downloaded everything)
+      const fbQuery = currentRole==='admin' ? db.collection('feedback').orderBy('timestamp','desc').limit(200)
+                                            : db.collection('feedback').where('author','==',currentUserEmail);
+      firestoreUnsubscribes.push(
+        fbQuery.onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('feedback'))
+      );
+      // Logs: only the admin Logs page uses them (was: downloaded by every student)
+      if (currentRole==='admin') {
+        firestoreUnsubscribes.push(
+          db.collection('logs').orderBy('timestamp','desc').limit(200).onSnapshot(s=>{systemLogs=s.docs.map(d=>d.data()).sort(byTime);scheduleRender();},onErr('logs'))
+        );
+      }
+    }
+
+    // ── POSTINGS ──
+    async function addPosting() {
+  if(window._postSubmitting)return;
+  if(!postingTitle.trim()||!postingContent.trim()){postingError='Title and content are required';render();return;}
+  if(shouldBlockForLanguage(postingTitle+' '+postingContent)){postingError='🔴 Post blocked: Inappropriate language detected.';render();return;}
+  window._postSubmitting=true;
+  try {
+    // Censor sensitive words instead of blocking
+    const cleanTitle = censorText(postingTitle);
+    const cleanContent = censorText(postingContent);
+    const hasSensitive = containsSensitiveWords(postingTitle+' '+postingContent);
+    const risk = await detectRiskAI(postingTitle+' '+postingContent);
+
+    // AI must verify High risk independently — priority alone is not enough
+    let finalPriority = postingPriority || 'Medium';
+    if (finalPriority === 'High' && risk.level !== 'High') {
+      finalPriority = 'Medium'; // AI override: not genuinely high risk
+    }
+
+    const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+    const newPosting = {
+      id: Date.now(),
+      title: cleanTitle,
+      content: cleanContent,
+      priority: finalPriority,
+      aiScore: risk.score,
+      riskLevel: risk.level,
+      flagged: risk.flagged || hasSensitive,
+      reasons: risk.reasons,
+      author: authorLabel,
+      authorId: currentUserEmail,
+      isAnonymous: isAnonymous,
+      timestamp: Date.now()
+    };
+
+    await db.collection('postings').doc(String(newPosting.id)).set(newPosting);
+    
+    if(risk.flagged || hasSensitive) {
+      addLog('⚠ Flagged post (' + (risk.reasons?.join(', ') || 'Sensitive content') + ')', authorLabel, 'warning');
+    }
+
+    // 📧 Notify guidance if AI confirmed High OR Medium risk
+if (risk.level === 'High' || risk.level === 'Medium') {
+  // fire-and-forget: the student must not wait on email/push round-trips
+  notifyGuidanceOfHighRisk('Posting', authorLabel, cleanTitle, cleanContent, risk.score, risk.level, risk.reasons).catch(()=>{});
+  sendOneSignalPush(
+    `🚨 ${risk.level.toUpperCase()} RISK POST — AI Score: ${risk.score}`,
+    `${authorLabel}: "${cleanTitle}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
+    newPosting.id, 'posting', risk.level, risk.score, risk.reasons
+  ).catch(()=>{});
+  addLog(`🚨 ${risk.level}-risk posting alert sent`, authorLabel, 'warning');
+}
+
+    // Clear form and reset UI
+    postingTitle=''; postingContent=''; showPostingForm=false; postingError=''; render();
+  } catch(e) {
+    postingError = 'Failed to post: ' + e.message;
+    render();
+  } finally {
+    window._postSubmitting = false;
+  }
+}
+
+async function deletePosting(id) {
+  const ok = await confirmModal("Delete Posting", "Are you sure you want to permanently delete this posting?", "warning");
+  if (!ok) return;
+  try {
+    await db.collection('postings').doc(String(id)).delete();
+    addLog('Post deleted', currentUserEmail, 'warning');
+  } catch(e) {
+    showModal("Error", "Failed to delete posting: " + e.message, "error");
+  }
+}
+
+function getPriorityColor(p) {
+  return p === 'High' ? '#ef5350' : p === 'Medium' ? '#ff9800' : '#66bb6a';
+}
+
+// ── PERMISSION HELPER ──
+function canDelete(item, type) {
+  if (!item || !currentRole) return false;
+  if (currentRole === 'admin') return true;
+  if (currentRole === 'guidance') return true;
+  if (currentRole === 'student') {
+    return item.authorId === currentUserEmail;
+  }
+  return false;
+}
+
+// ── ONESIGNAL: Update notification button/indicator UI state ──
+function updateNotifUI() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      const enabled = await OneSignal.Notifications.permission;
+
+      // Mobile topbar bell dot
+      const dot = document.getElementById('mob-notif-dot');
+      if (dot) dot.style.display = enabled ? 'block' : 'none';
+      // Desktop sidebar bell dot
+      const deskDot = document.getElementById('desk-notif-dot');
+      if (deskDot) deskDot.style.display = enabled ? 'block' : 'none';
+
+      // Settings page status label
+      const label = document.getElementById('settings-notif-label');
+      const icon  = document.getElementById('settings-notif-icon');
+      const btn   = document.getElementById('settings-notif-btn');
+      if (label) {
+        if (enabled) {
+          label.textContent = 'Push notifications are enabled on this device.';
+          label.style.color = '#388e3c';
+          if (icon) icon.textContent = '✅';
+          if (btn) {
+            btn.textContent = '✅ Notifications Enabled';
+            btn.style.background = '#66bb6a';
+            btn.style.color = '#fff';
+          }
+        } else {
+          label.textContent = 'Push notifications are not enabled yet.';
+          label.style.color = '';
+          if (icon) icon.textContent = '🔕';
+          if (btn) {
+            btn.innerHTML = '<i data-lucide="bell-ring" style="width:16px;height:16px;display:inline-block;vertical-align:middle;margin-right:6px"></i>Enable Push Notifications';
+            btn.style.background = '#ffee58';
+            btn.style.color = '#2c3e50';
+            lucide.createIcons({nodes: [btn]});
+          }
+        }
+      }
+    } catch(e) {
+      // OneSignal not ready yet — silence
+    }
+  });
+}
+
+// ── ONESIGNAL: Manual push enable button ──
+async function enablePushNotifications() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      const permission = await OneSignal.Notifications.permission;
+      const tag = currentRole === 'guidance' ? 'guidance' : 'student';
+      if (permission) {
+        await OneSignal.User.addTag("user_role", tag);
+        showModal('✅ Already Enabled', `Push notifications are active. You are subscribed as <strong>${tag}</strong>.`, 'success');
+        updateNotifUI();
+        return;
+      }
+      await OneSignal.Notifications.requestPermission();
+      if (await OneSignal.Notifications.permission) {
+        await OneSignal.User.addTag("user_role", tag);
+        showModal('🔔 Notifications Enabled!', `You will now receive push notifications as <strong>${tag}</strong>.`, 'success');
+      } else {
+        showModal('Blocked', 'Notifications are blocked. Go to your browser\'s Site Settings → Notifications → Allow for this site, then try again.', 'error');
+      }
+      updateNotifUI();
+    } catch(e) {
+      showModal('Error', 'Could not enable notifications: ' + (e.message || e), 'error');
+    }
+  });
+}
+
+// ── ONESIGNAL: Register this device as the Guidance Counselor ──
+// Called automatically after a successful guidance login.
+// Tags this device with user_role=guidance so push alerts are
+// delivered ONLY to the counselor — even when offline or app is closed.
+function registerAsCounselor() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      // Request push permission if not yet granted
+      const permission = await OneSignal.Notifications.permission;
+      if (!permission) {
+        await OneSignal.Notifications.requestPermission();
+      }
+      // Tag this device as the guidance counselor
+      await OneSignal.User.addTag("user_role", "guidance");
+      console.log("[QHsafety] Device registered as Guidance Counselor for push alerts.");
+    } catch (e) {
+      console.warn("[QHsafety] Could not register counselor push tag:", e);
+    }
+  });
+}
+
+// ── ONESIGNAL: Remove counselor tag on logout ──
+function unregisterAsCounselor() {
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    try {
+      await OneSignal.User.removeTag("user_role");
+    } catch (e) {
+      console.warn("[QHsafety] Could not remove counselor push tag:", e);
+    }
+  });
+}
+
+// ── ONESIGNAL: Broadcast announcement to all students ──
+// Uses direct OneSignal REST API (same approach as broadcaster reference)
+const ONESIGNAL_CONFIG = {
+  APP_ID: "b6d94be7-713f-4369-8b1f-2df77580872c",
+  REST_KEY: "os_v2_app_w3muxz3rh5bwtcy7fx3xlaehftzv6cylc2eequnxrpk5u34vbksf7p4qespn3wdt755k6wuucwmuxxzcapanfiasvz3gkph5lu2r5iy"
+};
+
+async function sendAnnouncementPush(title, message) {
+  // Route through our own backend — no Cloudflare/corsproxy needed
+  const res = await fetch("/api/notify", {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ title, message, target: "broadcast" })
+  });
+  return await res.json();
+}
+
+async function getAnnouncementStats(notifId) {
+  // Stats fetched from backend to avoid CORS restrictions
+  const res = await fetch(`/api/notify-stats?id=${encodeURIComponent(notifId)}`, { headers: await authHeaders() });
+  if (!res.ok) return {};
+  return await res.json();
+}
+
+let announcementTitle = '', announcementMessage = '';
+
+async function handleSendAnnouncement() {
+  if (!announcementTitle.trim() || !announcementMessage.trim()) {
+    showModal('Missing Fields', 'Please enter both a title and message.', 'error');
+    return;
+  }
+
+  // Disable button and show sending state
+  const btn = document.getElementById('announcement-send-btn');
+  const statusEl = document.getElementById('announcement-status');
+  const progressWrap = document.getElementById('announcement-progress-wrap');
+  const progressFill = document.getElementById('announcement-progress-fill');
+  const timerEl = document.getElementById('announcement-timer');
+  const resultEl = document.getElementById('announcement-result');
+
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i data-lucide="loader" style="width:16px;height:16px;animation:spin 1s linear infinite"></i> Sending...'; lucide.createIcons({nodes:[btn]}); }
+  if (progressWrap) progressWrap.style.display = 'block';
+  if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = '🚀 Deploying announcement...'; statusEl.style.color = '#1565c0'; }
+  if (progressFill) { progressFill.style.transition = 'none'; progressFill.style.width = '0%'; }
+  if (resultEl) resultEl.style.display = 'none';
+
+  try {
+    const data = await sendAnnouncementPush(announcementTitle.trim(), announcementMessage.trim());
+
+    if (!data.id) throw new Error(JSON.stringify(data.errors || data));
+
+    // Sync countdown (10 seconds, like y.html reference)
+    if (statusEl) statusEl.textContent = '⏳ Syncing delivery data...';
+    if (progressFill) {
+      setTimeout(() => { progressFill.style.transition = 'width 10s linear'; progressFill.style.width = '100%'; }, 50);
+    }
+    for (let i = 10; i > 0; i--) {
+      if (timerEl) timerEl.textContent = i + 's';
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    // Get recipient count directly from OneSignal send response
+    if (statusEl) statusEl.textContent = '✅ Verifying recipients...';
+    const delivered = data.recipients || data.successful || data.received || 0;
+
+    if (statusEl) statusEl.textContent = '✅ Announcement delivered!';
+    if (timerEl) timerEl.textContent = 'DONE';
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Verified Recipients</span>`;
+    }
+
+    addLog(`📢 Announcement sent to ${delivered} student(s): "${announcementTitle.trim()}"`, currentUserEmail, 'info');
+    announcementTitle = ''; announcementMessage = '';
+    // Reset input fields directly
+    const titleInp = document.getElementById('announcement-title-input');
+    const msgInp = document.getElementById('announcement-msg-input');
+    if (titleInp) titleInp.value = '';
+    if (msgInp) msgInp.value = '';
+
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = '❌ Failed to send announcement.'; statusEl.style.color = '#c62828'; }
+    if (timerEl) timerEl.textContent = '';
+    showModal('Send Failed', 'Could not broadcast announcement. Check your connection and try again.<br><small>' + e.message + '</small>', 'error');
+    console.error('[QHsafety] Announcement broadcast error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students'; lucide.createIcons({nodes:[btn]}); }
+  }
+}
+
+/** * 🚨 THE MESSENGER FUNCTION 
+ * Sends a push notification ONLY to devices tagged as guidance counselor.
+ * Delivered via OneSignal → OS push service (FCM/APNs), so it arrives
+ * even when the counselor's browser/tab is closed or device is locked.
+ */
+async function sendOneSignalPush(title, message, postId, postType, riskLevel, riskScore, reasons) {
+  try {
+    // Build deep-link URL so counselor lands directly on the post
+    const deepUrl = postId
+      ? `${window.location.origin}?deeplink=${postType || 'posting'}&id=${postId}&risk=${riskLevel || 'High'}&score=${riskScore || 0}`
+      : window.location.href;
+    const response = await fetch("/api/notify", {
+      method: "POST",
+      headers: await authHeaders(),
+      body: JSON.stringify({ title, message, url: deepUrl, reasons: reasons || [] })
+    });
+    return await response.json();
+  } catch (e) {
+    console.error("OneSignal Error:", e);
+  }
+}
+  
+    // ── CONSULTATIONS ──
+    async function addConsultation() {
+      if(window._consultSubmitting)return;
+      if(!consultationReason.trim()||!consultationDescription.trim()){consultationError='Reason and details are required';render();return;}
+      if(!consultationGradeLevel){consultationError='Please select your grade level';render();return;}
+      if(shouldBlockForLanguage(consultationReason+' '+consultationDescription)){consultationError='🔴 Request blocked: Please use appropriate language.';render();return;}
+      window._consultSubmitting=true;
+      try {
+        const cleanReason = censorText(consultationReason);
+        const cleanDesc = censorText(consultationDescription);
+        const risk=await detectRiskAI(consultationReason+' '+consultationDescription);
+
+        // AI must verify High risk independently — user-selected High priority alone is not enough
+        let finalPriority = consultationPriority || 'Medium';
+        if (finalPriority === 'High' && risk.level !== 'High') {
+          finalPriority = 'Medium'; // AI override: content doesn't warrant high risk
+        }
+
+        const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+        const newConsult={id:Date.now(),reason:cleanReason,description:cleanDesc,priority:finalPriority,gradeLevel:consultationGradeLevel,contactPref:consultationContactPref,studentMood:consultationMoodLevel,author:authorLabel,authorId:currentUserEmail,isAnonymous:isAnonymous,status:'Pending',riskLevel:risk.level,aiScore:risk.score,timestamp:Date.now(),messages:[]};
+        await db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
+
+        // 📧 Notify guidance if AI confirmed High OR Medium risk
+if (risk.level === 'High' || risk.level === 'Medium') {
+  notifyGuidanceOfHighRisk('Consultation', authorLabel, cleanReason, cleanDesc, risk.score, risk.level, risk.reasons).catch(()=>{});
+  sendOneSignalPush(
+    `🚨 ${risk.level.toUpperCase()} RISK CONSULTATION — AI Score: ${risk.score}`,
+    `${authorLabel}: "${cleanReason}" — ${(risk.reasons||[]).slice(0,2).join(', ')}`,
+    newConsult.id, 'consultation', risk.level, risk.score, risk.reasons
+  ).catch(()=>{});
+  addLog(`🚨 ${risk.level}-risk consultation alert sent`, authorLabel, 'warning');
+}
+
+        // Clear form and reset UI
+        consultationReason=''; consultationDescription=''; consultationPriority='Medium';
+        consultationGradeLevel=''; consultationContactPref='chat'; consultationMoodLevel=3; showConsultationForm=false; consultationError='';
+        addLog('Consultation submitted', authorLabel, 'info');
+        render();
+      } catch(e) {
+        consultationError = 'Failed to submit: ' + e.message;
+        render();
+      } finally {
+        window._consultSubmitting = false;
+      }
+    }
+
+    async function deleteConsultationPosting(id){
+      const ok = await confirmModal("Cancel Request", "Cancel this consultation request?", "warning");
+      if (!ok) return;
+      try{await db.collection('consultations').doc(String(id)).delete();addLog('Consultation cancelled',currentUserEmail,'warning');}
+      catch(e){showModal("Error","Could not cancel request: "+e.message,"error");}
+    }
+    async function updateConsultationStatus(id){try{await db.collection('consultations').doc(String(id)).update({status:'Done',appointmentStatus:'Done',appointmentStatusUpdatedAt:Date.now()});addLog('Consultation marked as Done',currentUserEmail,'success');}catch(e){console.error(e);addLog('Failed to mark as Done',currentUserEmail,'error');}}
+
+  // ── CONSULTATION: SCHEDULE MEET OR PHONE CALL ──
+async function scheduleConsultMeet(consultId) {
+  const d = consultMeetDraft;
+  if (!d.date || !d.time) { showModal('Missing Info', 'Please select both a date and time.', 'error'); return; }
+  const isoStr = d.date + 'T' + d.time;
+
+  // Get the consultation to check contactPref
+  const ref = db.collection('consultations').doc(String(consultId));
+  const doc = await ref.get();
+  const consultData = doc.data();
+  const isPhone = (consultData.contactPref === 'phone');
+
+  const meetData = {
+    meetDate: d.date,
+    meetTime: d.time,
+    meetDateTime: isoStr,
+    meetLink: d.link.trim() || '',
+    meetNotes: d.notes.trim() || '',
+    meetScheduledBy: currentUserEmail,
+    meetScheduledAt: Date.now(),
+    status: 'Pending'
+  };
+  try {
+    await ref.update(meetData);
+    const existing = consultData.chatMessages || [];
+    const dateLabel = new Date(isoStr).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+
+    let msgText = '';
+    if (isPhone) {
+      // Phone call message — show number as a tappable tel: link
+      const phoneNum = meetData.meetLink;
+      msgText = '📱 <strong>Phone Call Scheduled!</strong><br>Date & Time: ' + dateLabel
+        + (phoneNum ? '<br>📞 <a href="tel:' + phoneNum.replace(/\s/g,'') + '" style="color:#90caf9;text-decoration:underline;font-weight:700">' + _esc(phoneNum) + '</a> (tap to call)' : '')
+        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+    } else {
+      // Google Meet message
+      msgText = '📅 <strong>Meeting Scheduled!</strong><br>Date & Time: ' + dateLabel
+        + (meetData.meetLink ? '<br>🔗 <a href="' + (meetData.meetLink.startsWith('http') ? meetData.meetLink : 'https://' + meetData.meetLink) + '" target="_blank" style="color:#90caf9;text-decoration:underline">Join Google Meet</a>' : '')
+        + (meetData.meetNotes ? '<br>📝 ' + _esc(meetData.meetNotes) : '');
+    }
+
+    const sysMsg = {
+      sender: currentUserEmail,
+      role: 'guidance',
+      isSystem: true,
+      text: msgText,
+      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),
+      ts: Date.now()
+    };
+    await ref.update({ chatMessages: [...existing, sysMsg] });
+    showMeetScheduler[consultId] = false;
+    consultMeetDraft = {date:'',time:'',link:'',notes:''};
+    addLog((isPhone?'Phone call':'Meet')+' scheduled for consultation #'+consultId, currentUserEmail, 'success');
+    render();
+    showModal(isPhone ? '✅ Phone Call Scheduled!' : '✅ Meeting Scheduled!', 'The student will see the details in the chat.', 'success');
+  } catch(e) { showModal('Error', 'Failed to schedule: ' + e.message, 'error'); }
+}
+
+async function cancelConsultMeet(consultId) {
+  const ok = await confirmModal('Cancel Meeting', 'Remove the scheduled meeting from this consultation?', 'warning');
+  if (!ok) return;
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({
+      meetDate: firebase.firestore.FieldValue.delete(),
+      meetTime: firebase.firestore.FieldValue.delete(),
+      meetDateTime: firebase.firestore.FieldValue.delete(),
+      meetLink: firebase.firestore.FieldValue.delete(),
+      meetNotes: firebase.firestore.FieldValue.delete(),
+      meetScheduledBy: firebase.firestore.FieldValue.delete(),
+      meetScheduledAt: firebase.firestore.FieldValue.delete()
+    });
+    addLog('Meet cancelled for consultation #'+consultId, currentUserEmail, 'warning');
+    render();
+  } catch(e) { showModal('Error', 'Failed to cancel meeting: ' + e.message, 'error'); }
+}
+
+// ── CONSULTATION: APPOINTMENT STATUS (Pending → Confirmed → Done) ──
+async function updateAppointmentStatus(consultId, newStatus) {
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({ appointmentStatus: newStatus, appointmentStatusUpdatedAt: Date.now() });
+    const ref = db.collection('consultations').doc(String(consultId));
+    const doc = await ref.get();
+    const existing = doc.data().chatMessages || [];
+    const statusEmoji = newStatus==='Confirmed'?'✅':newStatus==='Done'?'🎉':'⏳';
+    const sysMsg = {
+      sender: currentUserEmail, role: currentRole, isSystem: true,
+      text: `📋 <strong>Appointment ${newStatus}</strong> — The guidance counselor has ${newStatus==='Confirmed'?'confirmed your appointment.':newStatus==='Done'?'marked this session as completed.':'updated the appointment status.'}`,
+      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
+    };
+    await ref.update({ chatMessages: [...existing, sysMsg] });
+    addLog(`Appointment status → ${newStatus} for #${consultId}`, currentUserEmail, 'info');
+    render();
+  } catch(e) { showModal('Error', 'Failed to update status: ' + e.message, 'error'); }
+}
+
+// ── CONSULTATION: FILE ATTACHMENT IN CHAT ──
+async function sendConsultAttachment(consultId) {
+  const input = document.getElementById('attachInput_'+consultId);
+  if (!input || !input.files || !input.files[0]) return;
+  const file = input.files[0];
+
+  // ── STORAGE LEVEL BLOCK ──
+  // If a scan has been done and storage is at warning (50%+) or critical (80%+), block all new attachments
+  if (storageStats && !storageStats.error) {
+    if (storageStats.level === 'critical') {
+      showModal('🚨 Storage Full — Attachments Disabled',
+        `Firebase storage is at <strong>${storageStats.totalPct.toFixed(1)}%</strong> of the free limit.<br><br>Attachments are automatically disabled to prevent data loss. Please ask the admin to delete old consultations, postings, or attachments first.`,
+        'error');
+      input.value = '';
+      return;
+    }
+    if (storageStats.level === 'warning') {
+      showModal('🔶 Storage Warning — Attachments Disabled',
+        `Firebase storage is at <strong>${storageStats.totalPct.toFixed(1)}%</strong> of the free limit (over 50%).<br><br>Attachments have been automatically disabled to protect remaining storage. Ask the admin to free up space before sending files.`,
+        'warning');
+      input.value = '';
+      return;
+    }
+  }
+
+  // Size check
+  if (file.size > ATTACH_MAX_SIZE_BYTES) {
+    showModal('File Too Large', `Maximum file size is 1MB. Your file is ${(file.size/1024).toFixed(1)}KB. Please compress or crop the image first.`, 'error');
+    input.value = '';
+    return;
+  }
+
+  // Per-consultation attachment count check
+  try {
+    const ref = db.collection('consultations').doc(String(consultId));
+    const doc = await ref.get();
+    const existing = doc.data().chatMessages || [];
+    const attachCount = existing.filter(m => m.isAttachment).length;
+    if (attachCount >= ATTACH_MAX_PER_CONSULT) {
+      showModal('Attachment Limit Reached', `Maximum ${ATTACH_MAX_PER_CONSULT} attachments allowed per consultation to keep storage usage low.`, 'warning');
+      input.value = '';
+      return;
+    }
+
+    // Total per-user attachment count check (across all consultations)
+    if (currentRole === 'student') {
+      const allConsults = await db.collection('consultations').where('authorId','==',currentUserEmail).get();
+      let totalAttach = 0;
+      allConsults.forEach(d => {
+        const msgs = d.data().chatMessages || [];
+        totalAttach += msgs.filter(m => m.isAttachment && (m.sender === currentUserEmail || m.sender === 'Anonymous')).length;
+      });
+      if (totalAttach >= ATTACH_MAX_TOTAL_PER_USER) {
+        showModal('Total Attachment Limit Reached', `You have reached the maximum of ${ATTACH_MAX_TOTAL_PER_USER} total attachments across all your consultations. This limit keeps the app running on the free Firebase plan.`, 'warning');
+        input.value = '';
+        return;
+      }
+    }
+
+    // Convert to base64
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = e.target.result;
+      const isImage = file.type.startsWith('image/');
+      const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+      const attachMsg = {
+        sender: authorLabel, role: currentRole, isAttachment: true,
+        fileName: file.name, fileType: file.type, fileSize: file.size,
+        fileData: base64, isImage,
+        time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
+      };
+      await ref.update({ chatMessages: [...existing, attachMsg] });
+      input.value = '';
+      addLog(`Attachment sent in consultation #${consultId}`, authorLabel, 'info');
+      setTimeout(()=>{const box=document.getElementById('consultChatBox_'+consultId);if(box)box.scrollTop=box.scrollHeight;},80);
+    };
+    reader.readAsDataURL(file);
+  } catch(e) { showModal('Error', 'Failed to send attachment: ' + e.message, 'error'); }
+}
+
+// ── CONSULTATION: SESSION RATING (after Done) ──
+async function submitSessionRating(consultId) {
+  const rating = consultSessionRating[consultId];
+  const feedback = (consultSessionFeedback[consultId] || '').trim();
+  if (!rating) { showModal('Rate Session', 'Please select a star rating before submitting.', 'warning'); return; }
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({
+      sessionRating: rating, sessionFeedback: feedback, sessionRatedAt: Date.now(), sessionRatedBy: currentUserEmail
+    });
+    addLog(`Session rated ${rating}/5 for consultation #${consultId}`, currentUserEmail, 'info');
+    consultSessionRating[consultId] = 0;
+    consultSessionFeedback[consultId] = '';
+    showModal('⭐ Thank You!', 'Your feedback helps the guidance office improve their services.', 'success');
+  } catch(e) { showModal('Error', e.message, 'error'); }
+}
+
+// ── CONSULTATION: MEETING REMINDER (email + in-app) ──
+async function sendMeetReminder(consultId, meetDateTime, studentEmail) {
+  try {
+    const dateLabel = new Date(meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'});
+    // In-app system message
+    const ref = db.collection('consultations').doc(String(consultId));
+    const doc = await ref.get();
+    const existing = doc.data().chatMessages || [];
+    const sysMsg = {
+      sender: currentUserEmail, role: 'guidance', isSystem: true,
+      text: `🔔 <strong>Reminder:</strong> Your consultation meeting is scheduled for <strong>${dateLabel}</strong>. Please be ready on time.`,
+      time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now()
+    };
+    await ref.update({ chatMessages: [...existing, sysMsg], reminderSentAt: Date.now() });
+    // Email reminder
+    if (studentEmail && !studentEmail.startsWith('anon_') && studentEmail !== 'Anonymous') {
+      await notifyStudentOfConsultationReply(studentEmail, 'Meeting Reminder',
+        `Reminder: Your consultation meeting is on ${dateLabel}. Please be ready and check the app for the Google Meet link.`);
+    }
+    addLog(`Reminder sent for consultation #${consultId}`, currentUserEmail, 'success');
+    showModal('🔔 Reminder Sent', 'The student has been notified about the upcoming meeting.', 'success');
+  } catch(e) { showModal('Error', e.message, 'error'); }
+}
+
+// ── CONSULTATION: UPDATE MOOD ──
+async function saveConsultMood(consultId, mood) {
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({ studentMood: mood, moodUpdatedAt: Date.now() });
+  } catch(e) { console.warn('Mood save failed:', e); }
+}
+
+// ── CONSULTATION: MARK URGENT ──
+async function toggleConsultUrgent(consultId, currentVal) {
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({ urgent: !currentVal });
+    addLog('Consultation urgency toggled', currentUserEmail, 'warning');
+  } catch(e) { showModal('Error', e.message, 'error'); }
+}
+
+// ── CONSULTATION: ADD PRIVATE GUIDANCE NOTE ──
+async function saveGuidanceNote(consultId) {
+  const noteEl = document.getElementById('guidance-note-'+consultId);
+  if (!noteEl) return;
+  const note = noteEl.value.trim();
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({ guidanceNote: note, noteUpdatedAt: Date.now() });
+    showModal('✅ Saved', 'Your private note has been saved.', 'success');
+  } catch(e) { showModal('Error', e.message, 'error'); }
+}
+
+// ── CONSULTATION: REFERRAL ──
+async function saveReferral(consultId) {
+  const el = document.getElementById('referral-'+consultId);
+  if (!el) return;
+  const val = el.value.trim();
+  try {
+    await db.collection('consultations').doc(String(consultId)).update({ referredTo: val, referredAt: Date.now() });
+    showModal('✅ Referral Saved', 'Student has been referred to: ' + val, 'success');
+    addLog('Student referred to '+val, currentUserEmail, 'info');
+  } catch(e) { showModal('Error', e.message, 'error'); }
+}
+
+  // ── GUIDANCE MESSAGES ──
+let guidanceMessageDraft = {}; // keyed by postingId
+
+async function sendGuidanceMessage(postingId) {
+  const msg = (guidanceMessageDraft[postingId] || '').trim();
+  if (!msg) { showModal('Empty Message', 'Please type a message before sending.', 'warning'); return; }
+  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  try {
+    // Get the posting to find the student's email
+    const postDoc = await db.collection('postings').doc(String(postingId)).get();
+    const postData = postDoc.data() || {};
+    const studentEmail = postData.authorId || postData.author || '';
+    const postTitle = postData.title || 'your posting';
+
+    await db.collection('postings').doc(String(postingId)).update({
+      guidanceMessage: msg,
+      guidanceMessageAt: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
+    });
+    addLog(`Guidance message sent on post #${postingId}`, currentUserEmail, 'info');
+    guidanceMessageDraft[postingId] = '';
+
+    // 📧 Email the student
+    await notifyStudentOfGuidanceReply(studentEmail, postTitle, msg);
+
+    showSuccessModal('Message Sent', 'Your message has been attached to this posting. The student will be notified by email if they have an account.');
+  } catch(e) { showModal('Error', 'Failed to send message: ' + e.message, 'error'); }
+}
+
+// ── POSTING CHAT (student replies) ──
+async function sendPostingChat(postingId) {
+  const msg = (postingChatDraft[postingId] || '').trim();
+  if (!msg) return;
+  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  try {
+    const ref = db.collection('postings').doc(String(postingId));
+    const doc = await ref.get();
+    const existing = doc.data().chatMessages || [];
+    await ref.update({ chatMessages: [...existing, chatMsg] });
+    postingChatDraft[postingId] = '';
+    // Update UI input
+    const inp = document.getElementById('postChat_'+postingId);
+    if(inp) inp.value = '';
+  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+}
+
+// ── CONSULTATION CHAT (student + guidance) ──
+async function sendConsultationChat(consultId) {
+  const msg = (consultationChatDraft[consultId] || '').trim();
+  if (!msg) return;
+  if (containsProfanity(msg)) { showModal('Inappropriate Language', '🔴 Message blocked: inappropriate language detected.', 'error'); return; }
+  const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
+  const chatMsg = { sender: authorLabel, role: currentRole, text: msg, time: new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}), ts: Date.now() };
+  try {
+    const ref = db.collection('consultations').doc(String(consultId));
+    const doc = await ref.get();
+    const consultData = doc.data() || {};
+    const existing = consultData.chatMessages || [];
+    await ref.update({ chatMessages: [...existing, chatMsg] });
+    consultationChatDraft[consultId] = '';
+    const inp = document.getElementById('consultChat_'+consultId);
+    if(inp) inp.value = '';
+    setTimeout(()=>{const box=document.getElementById('consultChatBox_'+consultId);if(box)box.scrollTop=box.scrollHeight;},80);
+
+    // 📧 If guidance replied, notify the student
+    if (currentRole === 'guidance') {
+      const studentEmail = consultData.authorId || consultData.author || '';
+      const consultReason = consultData.reason || 'your consultation';
+      await notifyStudentOfConsultationReply(studentEmail, consultReason, msg);
+    }
+  } catch(e) { showModal('Error','Failed to send: '+e.message,'error'); }
+}
+
+// ── FIXED BULK DELETE (Working with beautiful modal) ──
+async function deleteAllPostings() {
+  const input = await promptModal(
+    "⚠️ Delete All Postings",
+    "This will <strong>permanently delete ALL postings</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('postings').get();
+    if (snapshot.empty) { showModal("Info", "No postings to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All postings deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} postings.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+
+async function deleteAllConsultations() {
+  const input = await promptModal(
+    "⚠️ Delete All Consultations",
+    "This will <strong>permanently delete ALL consultations</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('consultations').get();
+    if (snapshot.empty) { showModal("Info", "No consultations to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All consultations deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} consultations.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+
+async function deleteAllFeedback() {
+  const input = await promptModal(
+    "⚠️ Delete All Feedback",
+    "This will <strong>permanently delete ALL feedback</strong>.<br><br>Type <strong>DELETE</strong> to confirm.",
+    "warning"
+  );
+  if (input !== "DELETE") {
+    if (input !== null) showModal("Cancelled", "Input did not match. Operation cancelled.", "info");
+    return;
+  }
+  try {
+    const snapshot = await db.collection('feedback').get();
+    if (snapshot.empty) { showModal("Info", "No feedback to delete.", "info"); return; }
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    addLog(`All feedback deleted (${snapshot.size} items)`, currentUserEmail, 'warning');
+    showModal("Success", `Successfully deleted ${snapshot.size} feedback entries.`, "success");
+    render();
+  } catch (err) { showModal("Delete Failed", err.message, "error"); }
+}
+  
+
+// ── FIREBASE STORAGE MONITOR ──
+// Firebase Free Tier limits:
+//   Firestore: 1 GiB storage, 50K reads/day, 20K writes/day, 20K deletes/day
+// We estimate usage by summing serialized JSON sizes of all documents.
+let storageStats = null;
+let storageLoading = false;
+
+async function scanFirebaseStorage() {
+  storageLoading = true;
+  storageStats = null;
+  render();
+  try {
+    const FREE_TIER_LIMIT_BYTES = 1 * 1024 * 1024 * 1024; // 1 GiB
+    const collections = [
+      { name: 'postings',      label: 'Postings',      icon: 'megaphone',      color: '#90caf9' },
+      { name: 'consultations', label: 'Consultations', icon: 'users',          color: '#a5d6a7' },
+      { name: 'feedback',      label: 'Feedback',      icon: 'message-circle', color: '#ffe082' },
+      { name: 'counselors',    label: 'Counselors',    icon: 'shield',         color: '#ce93d8' },
+    ];
+    let totalBytes = 0;
+    const results = [];
+    for (const col of collections) {
+      try {
+        const snap = await db.collection(col.name).get();
+        let colBytes = 0;
+        let attachmentBytes = 0;
+        let attachmentCount = 0;
+        let docCount = snap.size;
+        snap.forEach(doc => {
+          const raw = JSON.stringify(doc.data());
+          colBytes += raw.length;
+          // Count base64 attachments separately (big contributors)
+          const msgs = doc.data().chatMessages || [];
+          msgs.forEach(m => {
+            if (m.isAttachment && m.fileData) {
+              const ab = Math.round(m.fileData.length * 0.75); // base64 to bytes
+              attachmentBytes += ab;
+              attachmentCount++;
+            }
+          });
+        });
+        totalBytes += colBytes;
+        results.push({
+          ...col,
+          docCount,
+          bytes: colBytes,
+          attachmentBytes,
+          attachmentCount,
+          pct: FREE_TIER_LIMIT_BYTES > 0 ? (colBytes / FREE_TIER_LIMIT_BYTES) * 100 : 0
+        });
+      } catch(colErr) {
+        // Skip collections we don't have permission to read
+        console.warn('[QHsafety] Skipped collection "' + col.name + '" (no read permission):', colErr.message);
+        results.push({ ...col, docCount: 0, bytes: 0, attachmentBytes: 0, attachmentCount: 0, pct: 0, skipped: true });
+      }
+    }
+    // Sort largest first
+    results.sort((a, b) => b.bytes - a.bytes);
+    const totalPct = (totalBytes / FREE_TIER_LIMIT_BYTES) * 100;
+    const level = totalPct >= 80 ? 'critical' : totalPct >= 50 ? 'warning' : totalPct >= 25 ? 'caution' : 'safe';
+    storageStats = { results, totalBytes, totalPct, FREE_TIER_LIMIT_BYTES, level, scannedAt: Date.now() };
+    addLog('Storage scan completed — ' + formatBytes(totalBytes) + ' used (' + totalPct.toFixed(2) + '%)', currentUserEmail, totalPct >= 80 ? 'warning' : 'info');
+  } catch(e) {
+    storageStats = { error: e.message };
+  }
+  storageLoading = false;
+  render();
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(3) + ' GB';
+}
+
+    // ── FEEDBACK ──
+    async function addFeedback() {
+      if(!feedbackMessage.trim()){feedbackError='Please enter feedback message';render();return;}
+      if(shouldBlockForLanguage(feedbackMessage)){feedbackError='Inappropriate language detected.';render();return;}
+      const newFeedback={id:Date.now(),author:currentUserEmail,authorRole:currentRole==='guidance'?'Guidance Office':currentRole==='student'?'Student':'Admin',rating:feedbackRating,message:feedbackMessage,date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}),time:new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),timestamp:Date.now()};
+      try{await db.collection('feedback').add(newFeedback);feedbackMessage='';feedbackRating=5;showFeedbackForm=false;feedbackError='';addLog('Feedback submitted',currentUserEmail,'info');render();}
+      catch(e){feedbackError='Failed to submit: '+e.message;render();}
+    }
+
+  // Delete consultation (for Guidance & Admin)
+async function deleteConsultation(id) {
+  const ok = await confirmModal("Delete Consultation", "Permanently delete this consultation?", "warning");
+  if (!ok) return;
+  try {
+    await db.collection('consultations').doc(String(id)).delete();
+    addLog(`Consultation deleted by ${currentRole}`, currentUserEmail, 'warning');
+    showModal("Deleted", "Consultation deleted successfully.", "success");
+  } catch (e) {
+    showModal("Error", "Failed to delete consultation: " + e.message, "error");
+  }
+}
+  
+  
+  
+
+// ── CONSULTATION CHAT MESSAGE RENDERER ──
+function renderConsultChatMsg(m, currentUserEmail, isAnonymous, primaryColor, textColor) {
+  const isMine = m.sender === currentUserEmail || (m.sender === 'Anonymous' && isAnonymous);
+  if (m.isSystem) {
+    // System messages are composed by guidance counselors (trusted), not students — allow HTML for meet links
+    return '<div style="width:100%;padding:10px 14px;border-radius:12px;font-size:12px;line-height:1.6;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a33;text-align:center">' +
+      m.text + '<div style="font-size:10px;margin-top:4px;opacity:0.6">' + _esc(m.time||'') + '</div></div>';
+  }
+  const bg = m.role === 'guidance' ? '#1565c0' : isMine ? primaryColor + 'dd' : textColor + '18';
+  const col = m.role === 'guidance' ? '#fff' : textColor;
+  const label = m.role === 'guidance' ? '🎓 Guidance Counselor' : m.sender === 'Anonymous' ? '👤 You (Anonymous)' : _esc(m.sender.split('@')[0]);
+  if (m.isAttachment) {
+    const sizeKB = m.fileSize ? (m.fileSize/1024).toFixed(1)+'KB' : '';
+    const safeFileName = _esc(m.fileName || 'file');
+    const attachContent = m.isImage
+      ? '<img src="' + _esc(m.fileData) + '" alt="' + safeFileName + '" style="max-width:200px;max-height:180px;border-radius:8px;display:block;margin-top:6px;cursor:pointer" onclick="window.open(this.src)" />'
+      : '<a href="' + _esc(m.fileData) + '" download="' + safeFileName + '" style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.2);color:inherit;text-decoration:none;font-size:12px">📎 ' + safeFileName + (sizeKB?' ('+sizeKB+')':'') + '</a>';
+    return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
+      '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
+      '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
+      attachContent +
+      '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
+      '</div></div>';
+  }
+  return '<div style="display:flex;flex-direction:' + (isMine?'row-reverse':'row') + ';gap:8px;align-items:flex-end">' +
+    '<div style="max-width:78%;padding:9px 13px;border-radius:16px;font-size:13px;line-height:1.4;background:' + bg + ';color:' + col + '">' +
+    '<div style="font-size:10px;font-weight:700;margin-bottom:3px;opacity:0.7">' + label + '</div>' +
+    _esc(m.text) +
+    '<div style="font-size:10px;margin-top:3px;opacity:0.5;text-align:right">' + _esc(m.time||'') + '</div>' +
+    '</div></div>';
+}
+
+    // ── RENDER ──
+    let _renderTimer = null;
+    let _typingIdleTimer = null;
+    let _userIsTyping = false;
+
+    // Any focused input/textarea blocks DOM rebuild (covers dynamic IDs like chat inputs)
+    function isUserTyping() {
+      const el = document.activeElement;
+      if (!el) return false;
+      const tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA';
+    }
+
+    function filterPostsInDOM(query) {
+      const q = (query || '').toLowerCase();
+      const cards = document.querySelectorAll('[data-post-id]');
+      let anyVisible = false;
+      cards.forEach(card => {
+        const text = (card.getAttribute('data-search-text') || '').toLowerCase();
+        const show = !q || text.includes(q);
+        card.style.display = show ? '' : 'none';
+        if (show) anyVisible = true;
+      });
+      const emptyEl = document.getElementById('postings-empty-state');
+      if (emptyEl) emptyEl.style.display = (!anyVisible && cards.length > 0) ? '' : 'none';
+    }
+
+    function onFieldInput() {
+      _userIsTyping = true;
+      clearTimeout(_typingIdleTimer);
+      _typingIdleTimer = setTimeout(() => { _userIsTyping = false; }, 2000);
+    }
+
+    function debouncedRender(delay=400) {
+      clearTimeout(_renderTimer);
+      _renderTimer = setTimeout(() => {
+        if (_userIsTyping) {
+          debouncedRender(600);
+        } else {
+          render();
+        }
+      }, delay);
+    }
+
+    // safeRender: called by Firestore — blocked while user is typing or focused on input
+    function safeRender() {
+      if (_userIsTyping || isUserTyping()) {
+        clearTimeout(_renderTimer);
+        _renderTimer = setTimeout(() => safeRender(), 800);
+        return;
+      }
+      render();
+    }
+    // Coalesces bursts of Firestore snapshots (4 listeners fire at start) into ONE rebuild
+    let _schedTimer = null;
+    function scheduleRender() {
+      if (_schedTimer) return;
+      _schedTimer = setTimeout(() => { _schedTimer = null; safeRender(); }, 150);
+    }
+
+    function render() {
+      // If any input/textarea is focused, NEVER rebuild the DOM
+      if (isUserTyping()) return;
+
+      // Save scroll position before rebuilding DOM
+      const prevScroll = document.getElementById('main-scroll');
+      const savedScrollTop = prevScroll ? prevScroll.scrollTop : 0;
+
+      config=darkMode?{...config,background_color:'#1a1a1a',surface_color:'#2d2d2d',text_color:'#e6e6e6'}:{...defaultConfig};
+      document.body.style.colorScheme = darkMode ? 'dark' : 'light';
+      if(!isAuthenticated){selectedRoleForLogin?renderGateway():renderLanding();}
+      else{renderDashboard();}
+      lucide.createIcons({ nameAttr: 'data-lucide' });
+
+      // Restore search input value and re-apply filter
+      const si = document.getElementById('postingSearchInput');
+      if (si && postingSearchQuery) { si.value = postingSearchQuery; filterPostsInDOM(postingSearchQuery); }
+
+      // Restore scroll + auto-scroll chat boxes after browser paints new DOM
+      requestAnimationFrame(() => {
+        const newScroll = document.getElementById('main-scroll');
+        if (newScroll && savedScrollTop) newScroll.scrollTop = savedScrollTop;
+        document.querySelectorAll('[id^="consultChatBox_"],[id^="postChatBox_"]').forEach(el=>{el.scrollTop=el.scrollHeight;});
+        // Scroll active bottom nav item into view
+        const activeNavBtn = document.querySelector('.mobile-bottom-nav button.active');
+        if (activeNavBtn) activeNavBtn.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
+      });
+      // Keep notification button/indicator in sync with OneSignal state
+      if(isAuthenticated) setTimeout(updateNotifUI, 200);
+    }
+
+    function renderLanding() {
+      const fs=config.font_size||16;
+      app.innerHTML=`
+<div class="grid-bg" style="height:100vh;width:100%;overflow-y:auto;background-color:${config.background_color}">
+  <nav class="flex items-center justify-between px-6 py-4" style="background:#2c3e50">
+    <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${config.primary_action_color}">QH</span>safety</span>
+    <button onclick="showLandingSettings=!showLandingSettings;render()" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
+  </nav>
+  ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6)" onclick="if(event.target===this){showLandingSettings=false;render()}"><div style="background:${darkMode?'rgba(30,34,44,0.92)':'rgba(255,255,255,0.92)'};backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid ${darkMode?'rgba(255,255,255,0.10)':'rgba(0,0,0,0.08)'};border-radius:20px;padding:28px;width:360px;max-width:90vw;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px"><div style="display:flex;align-items:center;gap:10px"><div style="width:34px;height:34px;border-radius:10px;background:${config.primary_action_color}22;display:flex;align-items:center;justify-content:center"><i data-lucide="settings-2" style="width:17px;height:17px;color:${config.primary_action_color}"></i></div><h2 style="font-weight:700;font-size:18px;color:${config.text_color};margin:0">Settings</h2></div><button onclick="showLandingSettings=false;render()" style="width:32px;height:32px;border-radius:50%;border:none;background:${config.text_color}12;cursor:pointer;display:flex;align-items:center;justify-content:center;color:${config.text_color};font-size:18px;line-height:1">&times;</button></div><div style="height:1px;background:${config.text_color}10;margin-bottom:20px"></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${config.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><div style="width:30px;height:30px;border-radius:8px;background:${darkMode?'#5c6bc022':'#fdd83522'};display:flex;align-items:center;justify-content:center"><i data-lucide="${darkMode?'moon':'sun'}" style="width:15px;height:15px;color:${darkMode?'#7986cb':'#f9a825'}"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">${darkMode?'Currently on':'Currently off'}</div></div></div><button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" style="position:relative;width:48px;height:26px;border-radius:13px;border:none;cursor:pointer;background:${darkMode?config.primary_action_color:'#ccc'};flex-shrink:0"><div style="position:absolute;top:3px;${darkMode?'right:3px':'left:3px'};width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.25)"></div></button></div><div style="padding:14px 16px;border-radius:14px;background:${config.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><div style="width:30px;height:30px;border-radius:8px;background:#42a5f522;display:flex;align-items:center;justify-content:center"><i data-lucide="languages" style="width:15px;height:15px;color:#42a5f5"></i></div><div><div style="font-weight:600;font-size:14px;color:${config.text_color}">${tr('langSetting')}</div><div style="font-size:11px;color:${config.text_color}66;margin-top:1px">Choose display language</div></div></div><div style="display:flex;gap:8px"><button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇺🇸 English</button><button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'22':'transparent'};color:${config.text_color};cursor:pointer">🇵🇭 Filipino</button></div></div></div></div>`:''}
+  <section class="flex flex-col items-center justify-center text-center px-6 py-20 fade-in">
+    <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${config.secondary_action_color}33;color:${config.text_color}">🛡️ School Safety Platform</div>
+    <h1 class="font-bold leading-tight mb-4" style="font-size:${fs*3}px;color:${config.text_color}">${config.hero_title}</h1>
+    <p class="max-w-lg mb-12" style="font-size:${fs}px;color:${config.text_color}aa">${config.hero_subtitle}</p>
+    <p class="text-sm font-semibold mb-6" style="color:${config.text_color}">${tr('selectRole')}</p>
+    <div class="flex flex-col sm:flex-row gap-4">
+      <button onclick="selectedRoleForLogin='student';currentAuthFlow='login';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="user" style="width:20px;height:20px"></i>${tr('student')}</button>
+      <button onclick="selectedRoleForLogin='guidance';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:${config.secondary_action_color};color:${config.text_color}"><i data-lucide="users" style="width:20px;height:20px"></i>${tr('counselor')}</button>
+      <button onclick="selectedRoleForLogin='admin';render()" class="px-8 py-3 rounded-lg font-bold card-hover flex items-center gap-2 justify-center" style="background:#90caf9;color:${config.text_color}"><i data-lucide="shield" style="width:20px;height:20px"></i>${tr('admin')}</button>
+    </div>
+
+  </section>
+  <section class="max-w-4xl mx-auto px-6 pb-16">
+    <h2 class="font-bold text-center mb-8" style="font-size:${fs*1.5}px;color:${config.text_color}">${tr('aboutMission')}</h2>
+    <p class="text-center max-w-2xl mx-auto mb-12" style="color:${config.text_color}aa;font-size:${fs}px">${tr('aboutDesc')}</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      ${[{icon:'shield-check',title:tr('howToUse'),desc:tr('howToUseDesc')},{icon:'file-text',title:tr('termsPrivacy'),desc:tr('termsDesc')},{icon:'heart',title:tr('weCare'),desc:tr('weCareDesc')}].map(c=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color};border:2px solid ${config.text_color}0d"><div class="w-10 h-10 rounded-lg flex items-center justify-center mb-4" style="background:${config.primary_action_color}33"><i data-lucide="${c.icon}" style="width:20px;height:20px;color:${config.text_color}"></i></div><h3 class="font-bold mb-2" style="font-size:${fs*1.1}px;color:${config.text_color}">${c.title}</h3><p style="font-size:${fs*0.85}px;color:${config.text_color}88">${c.desc}</p></div>`).join('')}
+    </div>
+  </section>
+</div>`;
+    }
+
+    function renderGateway() {
+      const fs=config.font_size||16;
+      app.innerHTML=`
+<div class="grid-bg fade-in" style="height:100vh;width:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 24px;background-color:${config.background_color};overflow-y:auto">
+  <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';bootstrapStatus='';bootstrapMsg='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${config.text_color}88;background:none;border:none;cursor:pointer"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
+  <div class="w-full max-w-sm">
+    <div class="text-center mb-8">
+      <span class="mono font-bold mb-2" style="font-size:${fs*2}px;color:${config.text_color}"><span style="color:${config.primary_action_color}">QH</span>safety</span>
+      <p style="color:${config.text_color}88;font-size:${fs}px;margin-top:12px">${showForgotPassword?'Reset Password':currentAuthFlow==='signup'?'Create Account':'Login'} as ${selectedRoleForLogin==='student'?'Student':selectedRoleForLogin==='guidance'?'Counselor':'Administrator'}</p>
+    </div>
+    <div class="p-6 rounded-xl" style="background:${config.surface_color}">
+      ${showForgotPassword?`
+        ${forgotPasswordError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${forgotPasswordError}</div>`:''}
+        ${forgotPasswordSuccess?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#66bb6a;color:#fff;text-align:center">${forgotPasswordSuccess}</div>`:''}
+        <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input type="email" value="${_esc(forgotPasswordEmail)}" oninput="forgotPasswordEmail=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter your email" /></div>
+        <button onclick="handleForgotPassword()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Send Reset Email</button>
+        <button onclick="showForgotPassword=false;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Back to Login</button>
+      `:`
+        ${selectedRoleForLogin==='student'?`
+        <div class="flex gap-2 mb-6">
+          <button onclick="currentAuthFlow='signup';signupError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='signup'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Sign Up</button>
+          <button onclick="currentAuthFlow='login';loginError='';render()" class="flex-1 py-2 rounded-lg text-sm font-semibold" style="background:${currentAuthFlow==='login'?config.primary_action_color:config.text_color+'22'};color:${config.text_color};border:none;cursor:pointer">Login</button>
+        </div>
+        `:``}
+        ${(currentAuthFlow==='signup' && selectedRoleForLogin==='student')?`
+          ${signupError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${signupError}</div>`:''}
+          ${selectedRoleForLogin==='student'?`<div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:#e3f2fd;border:1px solid #90caf955"><i data-lucide="info" style="width:15px;height:15px;color:#1565c0;margin-top:1px;flex-shrink:0"></i><p style="font-size:12px;color:#1565c0;line-height:1.5;margin:0">📧 A <strong>Gmail account (@gmail.com)</strong> is required. A verification link will be sent to your email — you must verify it before you can log in.</p></div>`:''}
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="su-email" type="email" value="${_esc(signupEmail)}" oninput="signupEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="${selectedRoleForLogin==='student'?'yourname@gmail.com':'Enter email'}" /></div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="su-pass" type="password" value="${_esc(signupPassword)}" oninput="signupPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Min. 6 characters" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Confirm Password</label><input id="su-confirm" type="password" value="${_esc(signupConfirmPassword)}" oninput="signupConfirmPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();handleSignup();}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Re-enter password" /></div>
+          <button onclick="handleSignup()" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Create Account</button>
+        `:`
+          ${loginError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:${loginError.includes('success')?'#66bb6a':'#ef5350'};color:#fff;text-align:center">${loginError}</div>`:''}
+          <div class="mb-4 p-3 rounded-lg flex items-start gap-2" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}55">
+            <i data-lucide="info" style="width:15px;height:15px;color:${config.text_color}99;margin-top:1px;flex-shrink:0"></i>
+            <p style="font-size:12px;color:${config.text_color}88;line-height:1.5;margin:0">${selectedRoleForLogin==='student'?'Sign up first with your <strong>Gmail (@gmail.com)</strong> and verify your email before logging in.':'Use the email and password provided by your administrator.'}</p>
+          </div>
+          <div class="mb-4"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Email</label><input id="li-email" type="email" value="${_esc(loginEmail)}" oninput="loginEmail=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter email" /></div>
+          <div class="mb-6"><label style="display:block;font-size:${fs*0.9}px;font-weight:600;color:${config.text_color};margin-bottom:8px">Password</label><input id="li-pass" type="password" value="${_esc(loginPassword)}" oninput="loginPassword=this.value;onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();if(selectedRoleForLogin)handleLogin(selectedRoleForLogin);}" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:${fs}px" placeholder="Enter password" /></div>
+          <button onclick="handleLogin('${selectedRoleForLogin}')" class="w-full px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer;font-size:${fs}px">Login</button>
+          <button onclick="showForgotPassword=true;forgotPasswordError='';forgotPasswordSuccess='';render()" class="w-full mt-3 px-6 py-3 rounded-lg font-semibold text-sm" style="background:transparent;color:${config.text_color}88;border:1px solid ${config.text_color}22;cursor:pointer">Forgot Password?</button>
+        `}
+      `}
+    </div>
+  </div>
+</div>`;
+    }
+
+    function renderDashboard() {
+      const fs=config.font_size||16;
+      let items,icons,itemKeys;
+      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','users','message-circle','file-text','settings'];itemKeys=['dashboard','users','feedback','logs','settings'];}
+      else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
+      else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
+      const bottomItems=items,bottomIcons=icons,bottomKeys=itemKeys;
+      app.innerHTML=`
+<div style="position:relative;height:100vh;width:100%;overflow:hidden;display:flex;flex-direction:column">
+  <div class="drawer-overlay ${mobileDrawerOpen?'open':''}" onclick="mobileDrawerOpen=false;render()"></div>
+  <div class="drawer-panel ${mobileDrawerOpen?'open':''}">
+    <div class="p-5 pb-2 flex items-center justify-between" style="border-bottom:1px solid #ffffff11">
+      <div><span class="font-bold" style="font-size:${fs*1.2}px;color:#ffee58">QHsafety</span><div class="mt-1 text-xs" style="color:#ffffff66">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
+      <button onclick="mobileDrawerOpen=false;render()" style="background:none;border:none;color:#ffffff88;cursor:pointer;padding:4px"><i data-lucide="x" style="width:20px;height:20px"></i></button>
+    </div>
+    <div class="p-3 mx-3 mt-4 rounded-xl flex items-center gap-3" style="background:#ffffff11">
+      <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+      <div><div class="text-xs font-semibold" style="color:#fff">${isAnonymous?'Anonymous User':currentUserEmail}</div><div class="text-xs" style="color:#ffffff66">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div></div>
+    </div>
+    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');mobileDrawerOpen=false;render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
+    <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm w-full" style="background:none;border:none;cursor:pointer;color:#ffffff66;border-top:1px solid #ffffff11"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
+  </div>
+  <div class="flex" style="flex:1;overflow:hidden;background-color:${config.background_color}">
+    <aside class="desktop-sidebar">
+      <div class="desktop-sidebar-logo">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="mono font-bold" style="font-size:${fs*1.25}px;color:${config.primary_action_color}">QH<span style="color:#fff">safety</span></span>
+          ${currentRole==='guidance'?`<button onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative;opacity:0.7;transition:opacity 0.2s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i data-lucide="bell" style="width:18px;height:18px;color:#fff"></i><span id="desk-notif-dot" style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span></button>`:''}
+        </div>
+        <div class="mt-1 text-xs font-medium" style="color:#ffffff55">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div>
+      </div>
+      <div class="desktop-sidebar-user">
+        <div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;background:${isAnonymous?'#90a4ae':config.primary_action_color};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+        <div style="overflow:hidden;min-width:0">
+          <div style="font-size:12px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isAnonymous?'Anonymous User':currentUserEmail}</div>
+          <div style="font-size:11px;color:#ffffff55">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div>
+        </div>
+      </div>
+      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()" class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
+      <div class="desktop-sidebar-footer">
+        <button onclick="logout()" class="sidebar-item w-full flex items-center gap-3 px-5 py-3 text-sm" style="background:none;border:none;cursor:pointer;color:#ffffff55"><i data-lucide="log-out" style="width:16px;height:16px;flex-shrink:0"></i><span>${tr('logout')}</span></button>
+      </div>
+    </aside>
+    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
+      <div class="mobile-topbar">
+        <button onclick="mobileDrawerOpen=true;render()" style="background:none;border:none;color:#fff;cursor:pointer;padding:4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
+        <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button id="mob-notif-btn" onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative">
+            <i data-lucide="bell" style="width:22px;height:22px;color:#fff"></i>
+            <span id="mob-notif-dot" style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span>
+          </button>
+          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':(currentUserEmail||'?')[0].toUpperCase()}</div>
+        </div>
+      </div>
+      <main id="main-scroll" class="flex-1 overflow-y-auto p-4 md:p-8 mobile-main" style="background-color:${config.background_color}">
+        <div class="hidden md:block mb-8">
+          <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">${tr('welcomeBack')}, <span class="highlight-cyan">${currentRole==='admin'?tr('admin'):currentRole==='student'?tr('student'):tr('counselor')}</span></h1>
+          <p class="mt-1" style="font-size:${fs*0.85}px;color:${config.text_color}88">${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})}</p>
+        </div>
+        <div class="md:hidden mb-5">
+          <h2 class="font-bold" style="font-size:${fs*1.2}px;color:${config.text_color}">${tr(itemKeys[items.indexOf(activeSidebarItem)] || 'dashboard')}</h2>
+          <p style="font-size:${fs*0.8}px;color:${config.text_color}66">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</p>
+        </div>
+        ${getDashboardContent(fs)}
+      </main>
+    </div>
+  </div>
+  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" onclick="activeSidebarItem='${item}';localStorage.setItem('qh_last_page','${item}');render()"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
+</div>`;
+    }
+
+    function getDashboardContent(fs) {
+      const myEmail=currentUserEmail; // always use currentUserEmail (works for both auth and anon)
+      const isGuidance=currentRole==='guidance';
+
+      // ── POSTINGS ──
+      // ── POSTINGS ──
+if(activeSidebarItem==='Postings') {
+  let visiblePostings;
+
+  if(currentRole==='guidance') {
+    // Guidance sees ALL postings, sorted by urgency (AI Risk + Priority)
+    visiblePostings = [...postings]
+      .map(p => ({
+        ...p,
+        aiScore: Number(p.aiScore || 0),
+        priority: (p.priority || 'Medium').trim(),
+        riskLevel: (p.riskLevel || 'Low').trim()
+      }))
+      .sort((a, b) => getUrgencyScore(b) - getUrgencyScore(a));
+  } else {
+    // Students/anon: always filter by authorId (the real device ID stored at post time)
+    visiblePostings = postings
+      .filter(p => p.authorId === myEmail)
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }
+
+  // DOM filtering handles search visually - always render all posts
+  const filtered = visiblePostings;
+
+  return `
+  ${(currentRole === 'guidance' || currentRole === 'admin') ? `
+  <div class="mb-4">
+    <button onclick="deleteAllPostings()" 
+        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+        style="background:#ef5350;color:#fff">
+  <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+  ${tr('deleteAllPostings')}
+</button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  ${currentRole==='student' ? `
+    <div class="mb-8">
+      <button onclick="showPostingForm=!showPostingForm;render()" 
+              class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" 
+              style="background:${config.primary_action_color};color:${config.text_color}">
+        <i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('newPosting')}
+      </button>
+    </div>` : ''}
+
+  <div class="mb-6">
+    <div class="flex items-center gap-2 px-4 py-3 rounded-lg" 
+         style="background:${config.surface_color};border:1px solid ${config.text_color}22">
+      <i data-lucide="search" style="width:18px;height:18px;color:${config.text_color}88"></i>
+      <input type="text" placeholder="${tr('search')}" 
+             id="postingSearchInput" oninput="postingSearchQuery=this.value;filterPostsInDOM(this.value);onFieldInput()" onkeydown="if(event.key==='Enter'){event.preventDefault();filterPostsInDOM(this.value);this.blur();}" autocomplete="off" onfocus="onFieldInput()" 
+             style="flex:1;background:transparent;border:none;outline:none;color:${config.text_color};font-size:${fs}px" />
+    </div>
+  </div>
+
+  ${showPostingForm ? `
+  <div class="p-6 rounded-xl card-hover mb-6" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+    ${postingError ? `<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${postingError}</div>` : ''}
+    <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e3f2fd;border-left:4px solid #1565c0;color:#1a237e">
+      ${tr('postGuide')}
+    </div>
+    <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
+    <input type="text" id="postingTitleInput" placeholder="${tr('title')}" value="${postingTitle}" 
+           onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="postingTitle=this.value;onFieldInput()" 
+           style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
+    <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-bold" style="background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
+    <textarea id="postingContentTA" placeholder="${tr('content')}" oninput="postingContent=this.value;onFieldInput()" 
+              style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical"></textarea>
+    <div class="flex gap-3">
+      <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
+              style="background:${config.primary_action_color};color:${config.text_color}">${tr('publish')}</button>
+      <button onclick="showPostingForm=false;postingTitle='';postingContent='';postingError='';render()" 
+              class="px-4 py-2 rounded-lg font-semibold" 
+              style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
+    </div>
+  </div>` : ''}
+
+  <div class="space-y-4">
+    ${filtered.length === 0 
+      ? `<div id="postings-empty-state" class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22">
+           <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}44"></i>
+           <p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noPostings')}</p>
+         </div>`
+      : filtered.slice(0, postLimit).map(p => {
+          const isPending = true; // Postings are always "active"
+          const gc = getGlowClass(p, isPending);
+
+          return `
+      <div data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl card-hover ${gc}" 
+           style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+        <div class="flex items-start justify-between mb-3">
+          <div class="flex-1">
+            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${_esc(p.title)}</h3>
+            
+            ${currentRole==='guidance' ? `
+            <div class="flex items-center gap-2 mt-2 flex-wrap">
+              ${p.riskLevel ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
+                style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">
+                ${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${tr(p.riskLevel.toLowerCase())} ${appLang==='tl'?'Panganib':'Risk'} · AI:${_esc(String(p.aiScore||0))}
+              </span>` : ''}
+              
+              ${p.priority ? `<span class="text-xs px-3 py-1 rounded-full font-bold" 
+                style="background:${p.priority==='High'?'#ef535022':p.priority==='Medium'?'#ff980022':'#66bb6a22'};color:${getPriorityColor(p.priority)};border:1.5px solid ${getPriorityColor(p.priority)}">
+                ${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${tr(p.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}
+              </span>` : ''}
+              
+              ${p.reasons && p.reasons.length ? `<span class="text-xs text-red-500">⚠ ${_esc(p.reasons.join(', '))}</span>` : ''}
+            </div>` : ''}
+
+            <div class="text-xs mt-2" style="color:${config.text_color}66">
+              ${p.author ? `${tr('by')}: ${_esc(p.author)}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
+            </div>
+          </div>
+          
+          ${canDelete(p, 'posting') ? `
+  <button onclick="deletePosting(${p.id})" 
+          class="text-xs px-4 py-1.5 rounded-lg font-medium shrink-0" 
+          style="background:#ef5350;color:#fff">
+    ${tr('delete')}
+  </button>` : ''}
+                  </div>
+        <p style="color:${config.text_color}88; line-height:1.5;max-height:120px;overflow-y:auto;padding-right:4px">${_esc(p.content)}</p>
+
+        ${p.guidanceMessage ? `
+        <div class="mt-3 p-3 rounded-lg" style="background:#e3f2fd;border-left:4px solid #1565c0">
+          <div class="text-xs font-bold mb-1" style="color:#1565c0">${tr('msgFromGuidance')}${p.guidanceMessageAt ? ' · ' + p.guidanceMessageAt : ''}</div>
+          <p class="text-sm" style="color:#1a237e">${p.guidanceMessage}</p>
+        </div>` : ''}
+
+        ${currentRole === 'guidance' ? `
+        <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}88">${tr('guidanceReply')}</div>
+          <div class="flex gap-2">
+            <textarea rows="2" placeholder="Type a message for the student..." 
+              oninput="guidanceMessageDraft['${p.id}']=this.value;onFieldInput()"
+              style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;resize:none">${guidanceMessageDraft[p.id]||''}</textarea>
+            <button onclick="sendGuidanceMessage(${p.id})" 
+              style="padding:8px 14px;background:#1565c0;color:#fff;border-radius:8px;font-weight:700;font-size:13px;white-space:nowrap;align-self:flex-end">
+              ${tr('send')}
+            </button>
+          </div>
+        </div>` : ''}
+
+        <!-- Student/anyone chat thread on postings -->
+        <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}66">💬 Comments</div>
+          ${(p.chatMessages && p.chatMessages.length) ? `
+          <div style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding-right:4px">
+            ${p.chatMessages.map(m=>`
+            <div style="display:flex;flex-direction:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?'row-reverse':'row'};gap:8px;align-items:flex-end">
+              <div style="max-width:75%;padding:8px 12px;border-radius:14px;font-size:13px;background:${(m.sender===currentUserEmail||m.sender==='Anonymous'&&isAnonymous)?config.primary_action_color+'cc':config.text_color+'18'};color:${config.text_color}">
+                <div style="font-size:10px;font-weight:700;margin-bottom:2px;opacity:0.65">${m.role==='guidance'?'🎓 Guidance':m.sender==='Anonymous'?'👤 Anonymous':_esc(m.sender.split('@')[0])}</div>
+                ${_esc(m.text)}
+                <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${_esc(m.time||'')}</div>
+              </div>
+            </div>`).join('')}
+          </div>` : `<p style="font-size:12px;color:${config.text_color}44;margin-bottom:8px">No comments yet.</p>`}
+          <div style="display:flex;gap:8px">
+            <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." 
+              oninput="postingChatDraft['${p.id}']=this.value"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();sendPostingChat(${p.id})}"
+              style="flex:1;padding:8px 12px;border:1px solid ${config.text_color}22;border-radius:20px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+            <button onclick="sendPostingChat(${p.id})" 
+              style="padding:8px 14px;background:${config.primary_action_color};color:${config.text_color};border-radius:20px;font-weight:700;font-size:13px">Send</button>
+          </div>
+        </div>
+      </div>`;
+        }).join('')}
+    ${filtered.length > postLimit ? `<button onclick="postLimit+=25;render()" class="w-full py-3 rounded-lg text-sm font-semibold" style="background:${config.text_color}11;color:${config.text_color}">Show more (${filtered.length - postLimit} remaining)</button>` : ''}
+  </div>
+</div>`;
+}
+
+      // ── CONSULTATIONS ──
+      if(activeSidebarItem==='Consultations') {
+        let visibleConsultations=isGuidance
+          ?[...consultationPostings].map(c=>({...c,aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim(),status:(c.status||'Pending').trim()}))
+            .sort((a,b)=>{
+              // Pending before Done
+              if(a.status==='Pending'&&b.status!=='Pending')return -1;
+              if(a.status!=='Pending'&&b.status==='Pending')return 1;
+              // Among pending: highest urgency first
+              if(a.status==='Pending')return getUrgencyScore(b)-getUrgencyScore(a);
+              // Among done: newest first
+              return(b.timestamp||0)-(a.timestamp||0);
+            })
+          :consultationPostings.filter(c=>c.authorId===myEmail||c.author===myEmail||c.studentEmail===myEmail);
+
+        return `
+        ${(currentRole === 'guidance' || currentRole === 'admin') ? `
+  <div class="mb-4">
+    <button onclick="deleteAllConsultations()" 
+          class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+          style="background:#ef5350;color:#fff">
+    <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+    ${tr('deleteAllConsult')}
+  </button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  <div class="flex justify-between items-center mb-6">
+    <h2 class="font-bold text-2xl" style="color:${config.text_color}">${tr('consultations')}</h2>
+    ${currentRole==='student'?`<button onclick="showConsultationForm=true;render()" class="flex items-center gap-2 px-6 py-3 rounded-xl font-bold" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:18px;height:18px"></i> ${tr('newConsultation')}</button>`:''}
+  </div>
+  ${showConsultationForm?`
+  <div class="p-6 rounded-xl mb-8" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
+    ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${consultationError}</div>`:''}
+    <div class="p-3 rounded-lg mb-5 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
+      🤝 <strong>Consultation Guide:</strong> Describe your concern clearly. The guidance counselor will review and reply. Your request is confidential.
+    </div>
+    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">📋 New Consultation Request</h3>
+
+    <!-- Grade Level -->
+    <div class="mb-5">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📚 Grade Level</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">Junior High School</div>
+          ${[7,8,9,10].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#1565c0':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
+        </div>
+        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#fce4ec;color:#c62828;text-transform:uppercase;letter-spacing:.05em">Senior High School</div>
+          ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
+        </div>
+      </div>
+      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:#2e7d32">✅ ${consultationGradeLevel} selected</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
+    </div>
+
+    <!-- Reason + Priority -->
+    <div class="mb-4">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📝 Reason / Topic</label>
+      <input type="text" id="consultReasonInput" placeholder="e.g. Academic stress, Family issue, Personal problem..." value="${consultationReason||''}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+    </div>
+    <div class="mb-4">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">⚡ Priority Level</label>
+      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" class="px-4 py-2 rounded-lg flex-1 text-sm font-semibold" style="background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${p}</button>`).join('')}</div>
+    </div>
+
+    <!-- How are you feeling (mood slider) -->
+    <div class="mb-4 p-4 rounded-xl" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">💭 How are you feeling right now?</label>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="consultationMoodLevel=${i+1};render()" style="font-size:${consultationMoodLevel===i+1?'28px':'20px'};transition:all 0.15s;opacity:${consultationMoodLevel===i+1?'1':'0.45'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
+      </div>
+      <div style="text-align:center;font-size:12px;font-weight:600;color:${config.text_color}88">${['Very Sad','Sad','Neutral','Good','Great'][consultationMoodLevel-1]}</div>
+    </div>
+
+    <!-- Contact Preference -->
+    <div class="mb-4">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">📞 Preferred Contact Method</label>
+      <div class="flex gap-2 flex-wrap">
+        ${[{v:'chat',l:'💬 Chat',d:'In-app chat'},{v:'meet',l:'📹 Google Meet',d:'Video call'},{v:'facetoface',l:'🏫 Face to Face',d:'In person'},{v:'phone',l:'📱 Phone Call',d:'Call me'}].map(o=>`<button onclick="consultationContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${consultationContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${consultationContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
+      </div>
+    </div>
+
+    <!-- Details textarea -->
+    <div class="mb-5">
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">🗒️ Describe Your Concern</label>
+      <textarea id="consultDescTA" placeholder="Share as much or as little as you feel comfortable with. Everything is confidential." oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${consultationDescription||''}</textarea>
+    </div>
+
+    <div class="flex gap-3">
+      <button onclick="addConsultation()" class="px-6 py-3 rounded-lg font-bold flex-1" style="background:${config.primary_action_color};color:${config.text_color}">📤 ${tr('submitRequest')}</button>
+      <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationContactPref='chat';consultationMoodLevel=3;consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
+    </div>
+  </div>`:''}
+  <div class="space-y-4">
+    ${visibleConsultations.length===0
+      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noConsultations')}</p></div>`
+      :visibleConsultations.slice(0, consultLimit).map(c=>{
+        const isPending=c.status==='Pending';
+        const gc=getGlowClass(c,isPending);
+        return `
+        <div class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 2px 12px rgba(0,0,0,0.05)">
+
+          <!-- TOP: badges row -->
+          <div class="flex flex-wrap gap-2 mb-3">
+            <span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${isPending?(c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'):'#66bb6a'};color:#fff">
+              ${isPending?(c.priority==='High'?'⚡ ':c.priority==='Medium'?'▲ ':'▽ ')+c.priority+' Priority':tr('resolved')}
+            </span>
+            ${c.urgent?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#b71c1c;color:#fff;animation:pulseRed 1s infinite">🚨 URGENT</span>`:''}
+            ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} AI Risk: ${c.riskLevel} · ${c.aiScore}</span>`:''}
+            ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'🎓 SHS':'📚 JHS'} · ${c.gradeLevel}</span>`:''}
+            ${c.contactPref?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone Call':'💬 Chat'}</span>`:''}
+            ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very Sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
+            ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">📅 Meet: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
+            ${c.referredTo?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#fff3e0;color:#e65100">↗️ Referred: ${_esc(c.referredTo)}</span>`:''}
+          </div>
+
+          <!-- Title + action buttons -->
+          <div class="flex flex-col md:flex-row justify-between items-start gap-3 mb-3">
+            <div class="flex-1">
+              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${_esc(c.reason)}</h3>
+              ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}55">
+                <span>👤 ${_esc(c.studentEmail||c.author)}</span>
+                <span>📋 <strong style="color:${isPending?'#ff9800':'#66bb6a'}">${c.status||'Pending'}</strong></span>
+                <span>📅 ${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
+              </div>`:''}
+            </div>
+            <div class="flex gap-2 flex-wrap shrink-0">
+              ${(c.author===myEmail||c.authorId===myEmail)&&c.status==='Pending'?`<button onclick="deleteConsultationPosting('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350;border:1px solid #ef535044">${tr('cancel')}</button>`:''}
+              ${canDelete(c,'consultation')?`<button onclick="deleteConsultation(${c.id})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef5350;color:#fff">${tr('delete')}</button>`:''}
+              ${currentRole==='guidance'&&c.status==='Pending'?`
+                <button onclick="toggleConsultUrgent('${c.id}',${!!c.urgent})" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${c.urgent?'#b71c1c22':'#ff980022'};color:${c.urgent?'#b71c1c':'#e65100'};border:1px solid ${c.urgent?'#b71c1c44':'#ff980044'}">${c.urgent?'🔕 Unmark Urgent':'🚨 Mark Urgent'}</button>
+                <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markResolved')}</button>
+              `:''}
+            </div>
+          </div>
+
+          <!-- Description -->
+          <div style="max-height:80px;overflow-y:auto;padding-right:4px;margin-bottom:12px">
+            <p style="color:${config.text_color}88;line-height:1.6;font-size:13px">${_esc(c.description)}</p>
+          </div>
+
+          <!-- Meet Banner (if scheduled) -->
+          ${c.meetDateTime?`
+          <div class="mb-3 p-3 rounded-xl" style="background:#e8f5e9;border:1px solid #66bb6a44">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <div class="font-bold text-sm" style="color:#2e7d32">📅 Scheduled Meeting</div>
+                <div class="text-xs mt-1" style="color:#388e3c">${new Date(c.meetDateTime).toLocaleString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})}</div>
+                ${c.meetNotes?`<div class="text-xs mt-1" style="color:#388e3c">📝 ${c.meetNotes}</div>`:''}
+              </div>
+              <div class="flex gap-2">
+                ${c.meetLink?`<a href="${c.meetLink.startsWith('http')?c.meetLink:'https://'+c.meetLink}" target="_blank" class="text-xs px-3 py-1.5 rounded-lg font-bold" style="background:#34a853;color:#fff;text-decoration:none">🔗 Join Meet</a>`:''}
+                ${currentRole==='guidance'?`<button onclick="cancelConsultMeet('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:#ef535022;color:#ef5350">Cancel</button>`:''}
+              </div>
+            </div>
+          </div>`:''}
+
+          <!-- GUIDANCE TOOLS (only visible to guidance) -->
+          ${currentRole==='guidance'?`
+          <div class="mb-3" style="border:1px solid ${config.text_color}11;border-radius:12px;overflow:hidden">
+
+            <!-- Schedule Meet / Phone Call Accordion -->
+            <button onclick="showMeetScheduler['${c.id}']=!showMeetScheduler['${c.id}'];render()" class="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold" style="background:${showMeetScheduler[c.id]?'#e8f5e9':config.text_color+'08'};color:${showMeetScheduler[c.id]?'#2e7d32':config.text_color};border:none;cursor:pointer">
+              <span>${c.contactPref==='phone'?'📱':'📹'} ${c.meetDateTime?(c.contactPref==='phone'?'Reschedule Call':'Reschedule Meeting'):(c.contactPref==='phone'?'Schedule Phone Call':'Schedule Google Meet')}</span>
+              <i data-lucide="${showMeetScheduler[c.id]?'chevron-up':'chevron-down'}" style="width:16px;height:16px"></i>
+            </button>
+            ${showMeetScheduler[c.id]?`
+            <div class="p-4" style="background:${config.text_color}05;border-top:1px solid ${config.text_color}11">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+                <div>
+                  <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📅 DATE</label>
+                  <input type="date" id="meet-date-${c.id}" value="${consultMeetDraft.date||''}" oninput="consultMeetDraft.date=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                </div>
+                <div>
+                  <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">⏰ TIME</label>
+                  <input type="time" id="meet-time-${c.id}" value="${consultMeetDraft.time||''}" oninput="consultMeetDraft.time=this.value;onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                </div>
+              </div>
+              ${c.contactPref==='phone'?`
+              <div style="margin-bottom:10px">
+                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📱 PHONE NUMBER TO CALL</label>
+                <input type="tel" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="+63 9XX XXX XXXX" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 The student will see this number and know to expect your call.</p>
+              </div>`:`
+              <div style="margin-bottom:10px">
+                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">🔗 GOOGLE MEET LINK (optional)</label>
+                <input type="url" id="meet-link-${c.id}" value="${consultMeetDraft.link||''}" oninput="consultMeetDraft.link=this.value;onFieldInput()" placeholder="https://meet.google.com/xxx-xxxx-xxx" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <p style="font-size:11px;color:${config.text_color}55;margin-top:4px">💡 Create a meet at <a href="https://meet.google.com" target="_blank" style="color:#1565c0">meet.google.com</a> and paste the link above.</p>
+              </div>`}
+              <div style="margin-bottom:12px">
+                <label style="display:block;font-size:11px;font-weight:700;color:${config.text_color}88;margin-bottom:4px">📝 NOTES FOR STUDENT (optional)</label>
+                <input type="text" id="meet-notes-${c.id}" value="${consultMeetDraft.notes||''}" oninput="consultMeetDraft.notes=this.value;onFieldInput()" placeholder="e.g. Please bring your report card..." style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+              </div>
+              <button onclick="scheduleConsultMeet('${c.id}')" class="w-full py-2 rounded-lg font-bold text-sm" style="background:#34a853;color:#fff">${c.contactPref==='phone'?'📱 Confirm & Notify Student':'📅 Confirm & Notify Student'}</button>
+            </div>`:''}
+
+            <!-- Private Guidance Note -->
+            <div style="border-top:1px solid ${config.text_color}11">
+              <div class="px-4 py-3 flex items-center gap-2" style="background:${config.text_color}04">
+                <i data-lucide="lock" style="width:13px;height:13px;color:${config.text_color}55"></i>
+                <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Private Guidance Note</span>
+              </div>
+              <div class="px-4 pb-3">
+                <textarea id="guidance-note-${c.id}" placeholder="Internal notes — not visible to student..." oninput="onFieldInput()" style="width:100%;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px;min-height:60px;resize:vertical">${c.guidanceNote||''}</textarea>
+                <button onclick="saveGuidanceNote('${c.id}')" class="mt-2 px-4 py-1.5 rounded-lg text-xs font-bold" style="background:${config.text_color}18;color:${config.text_color}">💾 Save Note</button>
+                ${c.noteUpdatedAt?`<span class="text-xs ml-2" style="color:${config.text_color}44">Last saved: ${new Date(c.noteUpdatedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
+              </div>
+            </div>
+
+            <!-- Referral -->
+            <div style="border-top:1px solid ${config.text_color}11">
+              <div class="px-4 py-3 flex items-center gap-2" style="background:${config.text_color}04">
+                <i data-lucide="external-link" style="width:13px;height:13px;color:${config.text_color}55"></i>
+                <span class="text-xs font-bold" style="color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Refer Student</span>
+              </div>
+              <div class="px-4 pb-3 flex gap-2">
+                <input id="referral-${c.id}" type="text" value="${c.referredTo||''}" placeholder="e.g. School Psychologist, DSWD, Admin..." oninput="onFieldInput()" style="flex:1;padding:8px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:13px" />
+                <button onclick="saveReferral('${c.id}')" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#90caf9;color:#1a237e">↗️ Save</button>
+              </div>
+            </div>
+
+          </div>
+          `:''}
+
+          <!-- STUDENT: Mood Update -->
+          ${currentRole==='student'&&isPending?`
+          <div class="mb-3 p-3 rounded-xl flex items-center gap-3 flex-wrap" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
+            <span class="text-xs font-bold" style="color:${config.text_color}88">Update your mood:</span>
+            ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="saveConsultMood('${c.id}',${i+1})" style="font-size:${(c.studentMood||3)===i+1?'22px':'16px'};opacity:${(c.studentMood||3)===i+1?'1':'0.4'};background:none;border:none;cursor:pointer;transition:all 0.15s">${e}</button>`).join('')}
+          </div>`:''}
+
+          <!-- ── APPOINTMENT STATUS TRACKER ── -->
+          <div class="mb-3 p-3 rounded-xl" style="background:${config.text_color}06;border:1px solid ${config.text_color}11">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <i data-lucide="clipboard-check" style="width:13px;height:13px;color:${config.text_color}55"></i>
+                <span style="font-size:11px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Appointment Status</span>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                ${['Pending','Confirmed','Done'].map(s=>{
+                  const cur = c.appointmentStatus||'Pending';
+                  const colors = {Pending:'#ff9800',Confirmed:'#1565c0',Done:'#2e7d32'};
+                  const icons = {Pending:'⏳',Confirmed:'✅',Done:'🎉'};
+                  const isActive = cur===s;
+                  const canClick = currentRole==='guidance' && cur!==s && !(cur==='Done');
+                  return `<button ${canClick?`onclick="updateAppointmentStatus('${c.id}','${s}')"`:'disabled'} style="padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;border:2px solid ${isActive?colors[s]:config.text_color+'22'};background:${isActive?colors[s]+'22':'transparent'};color:${isActive?colors[s]:config.text_color+'44'};cursor:${canClick?'pointer':'default'}">${icons[s]} ${s}</button>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+
+          <!-- ── SESSION HISTORY & NOTES (collapsible) ── -->
+          ${(c.chatMessages&&c.chatMessages.length>0)||(c.guidanceNote&&currentRole==='guidance')||(c.sessionRating)?`
+          <details class="mb-3" style="border:1px solid ${config.text_color}11;border-radius:10px;overflow:hidden">
+            <summary style="padding:10px 14px;font-size:12px;font-weight:700;color:${config.text_color}77;cursor:pointer;background:${config.text_color}04;list-style:none;display:flex;align-items:center;gap:6px">
+              <i data-lucide="history" style="width:13px;height:13px"></i>
+              Session History ${c.chatMessages?'('+c.chatMessages.length+' messages)':''}
+              ${c.sessionRating?`<span style="margin-left:auto;color:#ffb300">${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)}</span>`:''}
+            </summary>
+            <div style="padding:10px 14px;font-size:12px;color:${config.text_color}77;line-height:1.7">
+              <div><strong>Submitted:</strong> ${c.timestamp?new Date(c.timestamp).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'-'}</div>
+              ${c.gradeLevel?`<div><strong>Grade:</strong> ${c.gradeLevel}</div>`:''}
+              ${c.contactPref?`<div><strong>Preferred Contact:</strong> ${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone':' 💬 Chat'}</div>`:''}
+              ${c.referredTo?`<div><strong>Referred to:</strong> ${_esc(c.referredTo)}</div>`:''}
+              ${c.meetScheduledAt?`<div><strong>Meet scheduled by:</strong> ${c.meetScheduledBy||'Guidance'} on ${new Date(c.meetScheduledAt).toLocaleDateString()}</div>`:''}
+              ${c.reminderSentAt?`<div><strong>Reminder sent:</strong> ${new Date(c.reminderSentAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div>`:''}
+              ${c.sessionRating?`<div><strong>Session rating:</strong> ${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)} ${c.sessionFeedback?'— "'+c.sessionFeedback+'"':''}</div>`:''}
+            </div>
+          </details>`:''}
+
+          <!-- Chat Thread -->
+          <div style="border-top:1px solid ${config.text_color}11;padding-top:12px;margin-top:4px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
+              <i data-lucide="message-square" style="width:14px;height:14px;color:${config.text_color}55"></i>
+              <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
+              ${c.chatMessages?`<span style="margin-left:auto;font-size:11px;color:${config.text_color}44">${c.chatMessages.filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} attachments</span>`:''}
+            </div>
+            <div id="consultChatBox_${c.id}" style="min-height:60px;max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}">
+              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,currentUserEmail,isAnonymous,config.primary_action_color,config.text_color)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'44">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
+            </div>
+            ${isPending||currentRole==='guidance'?`
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;gap:8px">
+                <input id="consultChat_${c.id}" type="text"
+                  placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
+                  oninput="consultationChatDraft['${c.id}']=this.value"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
+                  style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
+                <button onclick="sendConsultationChat('${c.id}')"
+                  style="padding:9px 16px;background:${currentRole==='guidance'?'#1565c0':config.primary_action_color};color:${currentRole==='guidance'?'#fff':config.text_color};border-radius:22px;font-weight:700;font-size:13px;white-space:nowrap">
+                  <i data-lucide="send" style="width:14px;height:14px;display:inline;vertical-align:middle"></i> Send
+                </button>
+              </div>
+              <!-- File Attachment Row -->
+              ${(()=>{
+                const storageBlocked = storageStats && !storageStats.error && (storageStats.level==='critical'||storageStats.level==='warning');
+                const blockColor = storageStats&&storageStats.level==='critical'?'#c62828':'#e65100';
+                const blockBg    = storageStats&&storageStats.level==='critical'?'#ffebee':'#fff3e0';
+                const blockIcon  = storageStats&&storageStats.level==='critical'?'🚨':'🔶';
+                const blockMsg   = storageStats&&storageStats.level==='critical'?'Attachments disabled — storage critical':'Attachments disabled — storage over 50%';
+                return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                ${storageBlocked?`
+                  <div style="display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;border:1px solid ${blockColor}44;color:${blockColor};background:${blockBg};cursor:not-allowed;opacity:0.85">
+                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> ${blockIcon} ${blockMsg}
+                  </div>`:`
+                  <label style="display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px dashed ${config.text_color}33;color:${config.text_color}77;background:${config.text_color}05">
+                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> Attach (max 1MB)
+                    <input id="attachInput_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx" style="display:none" onchange="sendConsultAttachment('${c.id}')" />
+                  </label>`}
+                <span style="font-size:11px;color:${storageBlocked?blockColor:config.text_color+'44'}">${(c.chatMessages||[]).filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} files used</span>`;
+              })()}
+                ${currentRole==='guidance'&&c.meetDateTime?`
+                <button onclick="sendMeetReminder('${c.id}','${c.meetDateTime}','${c.authorId||''}')"
+                  style="margin-left:auto;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;background:#e8f5e9;color:#2e7d32;border:1px solid #66bb6a55;cursor:pointer">
+                  🔔 Send Reminder
+                </button>`:''}
+              </div>
+            </div>`:`
+            <div>
+              <p style="font-size:12px;color:${config.text_color}44;text-align:center;margin-bottom:10px">Chat closed — consultation resolved.</p>
+              <!-- Post-session rating (student only, if not yet rated) -->
+              ${currentRole==='student'&&!c.sessionRating?`
+              <div class="p-3 rounded-xl" style="background:#fff8e1;border:1px solid #ffecb355">
+                <div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px">⭐ Rate Your Session</div>
+                <div style="display:flex;gap:6px;margin-bottom:8px">
+                  ${[1,2,3,4,5].map(n=>`<button onclick="consultSessionRating['${c.id}']=${n};render()" style="font-size:${(consultSessionRating['${c.id}']||0)>=n?'26px':'20px'};background:none;border:none;cursor:pointer;transition:all 0.15s;opacity:${(consultSessionRating['${c.id}']||0)>=n?'1':'0.4'}">${(consultSessionRating['${c.id}']||0)>=n?'★':'☆'}</button>`).join('')}
+                </div>
+                <input type="text" placeholder="Optional: share your thoughts..." oninput="consultSessionFeedback['${c.id}']=this.value;onFieldInput()" value="${consultSessionFeedback['${c.id}']||''}"
+                  style="width:100%;padding:8px 12px;border:1px solid #ffcc0244;border-radius:8px;background:#fff;color:#333;font-size:13px;margin-bottom:8px" />
+                <button onclick="submitSessionRating('${c.id}')" style="padding:7px 16px;border-radius:20px;font-size:12px;font-weight:700;background:#ff8f00;color:#fff;border:none;cursor:pointer">Submit Rating</button>
+              </div>`:''}
+              ${c.sessionRating?`<div style="text-align:center;font-size:13px;color:#2e7d32">⭐ You rated this session: ${'★'.repeat(c.sessionRating)}${'☆'.repeat(5-c.sessionRating)}</div>`:''}
+            </div>`}
+          </div>
+        </div>`
+      }).join('')}
+    ${visibleConsultations.length > consultLimit ? `<button onclick="consultLimit+=25;render()" class="w-full py-3 rounded-lg text-sm font-semibold" style="background:${config.text_color}11;color:${config.text_color}">Show more (${visibleConsultations.length - consultLimit} remaining)</button>` : ''}
+  </div>
+</div>`;
+      }
+
+      // ── USERS (admin) ──
+      if(activeSidebarItem==='Users'&&currentRole==='admin') return `
+<div class="max-w-4xl">
+  <div class="flex justify-between items-center mb-8"><div><h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">User Management</h1><p class="text-sm mt-1" style="color:${config.text_color}66">Create Admin or Guidance accounts • Only Admins can access this page</p></div></div>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="shield" style="width:28px;height:28px;color:#90caf9"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Admin</h3></div><input type="email" id="newAdminEmail" placeholder="admin@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newAdminPassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createAdminAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:#90caf9;color:${config.text_color}">Create Admin Account</button></div>
+    <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-4"><i data-lucide="users" style="width:28px;height:28px;color:#ffee58"></i><h3 class="font-bold" style="color:${config.text_color}">Create New Guidance Counselor</h3></div><input type="email" id="newGuidanceEmail" placeholder="counselor@qhsafety.edu" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><input type="password" id="newGuidancePassword" placeholder="Password (min 6 chars)" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" /><button onclick="createGuidanceAccount()" class="w-full py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">Create Guidance Account</button></div>
+  </div>
+
+  <!-- ── ACCOUNT CHECKER ── -->
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color};border:2px solid ${config.primary_action_color}33">
+    <div class="flex items-center gap-3 mb-1">
+      <i data-lucide="search" style="width:22px;height:22px;color:${config.primary_action_color}"></i>
+      <h3 class="font-bold" style="color:${config.text_color};font-size:${fs*1.05}px">Account Checker & Role Fixer</h3>
+    </div>
+    <p class="text-sm mb-5" style="color:${config.text_color}66">Verify whether an account has the correct Firestore role, and fix it instantly if not.</p>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">EMAIL</label>
+        <input type="email" id="acEmail" placeholder="user@example.com"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">PASSWORD</label>
+        <input type="password" id="acPassword" placeholder="••••••••"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      </div>
+      <div>
+        <label style="display:block;font-size:12px;font-weight:700;color:${config.text_color}88;margin-bottom:6px">EXPECTED ROLE</label>
+        <select id="acRole"
+          style="width:100%;padding:10px 12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px">
+          <option value="">— just check —</option>
+          <option value="student">Student</option>
+          <option value="guidance">Guidance Counselor</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+    </div>
+    <div class="flex gap-3 mb-4">
+      <button onclick="adminCheckAccount()" id="acCheckBtn"
+        style="padding:10px 22px;border-radius:8px;background:${config.primary_action_color};color:${config.text_color};border:none;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
+        <i data-lucide="search" style="width:15px;height:15px"></i> Check Account
+      </button>
+      <button onclick="adminFixAccount()" id="acFixBtn"
+        style="padding:10px 22px;border-radius:8px;background:#f57f17;color:#fff;border:none;font-weight:700;font-size:14px;cursor:pointer;display:none;align-items:center;gap:6px">
+        <i data-lucide="wrench" style="width:15px;height:15px"></i> Fix Role
+      </button>
+    </div>
+    <div id="acResult" style="display:none;padding:14px;border-radius:10px;font-size:13px;line-height:1.7"></div>
+  </div>
+
+  <div class="p-6 rounded-xl" style="background:${config.surface_color}"><p style="color:${config.text_color}88">• New accounts are created immediately.<br>• Only these credentials will allow login with the correct role.</p></div>
+</div>`;
+
+
+      // ── FEEDBACK ──
+      if(activeSidebarItem==='Feedback') {
+        const visibleFeedback=currentRole==='admin'?feedbackList:feedbackList.filter(f=>f.author===myEmail);
+        return `
+        ${currentRole === 'admin' ? `
+  <div class="mb-4">
+    <button onclick="deleteAllFeedback()" 
+        class="px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" 
+        style="background:#ef5350;color:#fff">
+      <i data-lucide="trash-2" style="width:18px;height:18px"></i>
+      ${tr('deleteAllFeedback')}
+    </button>
+  </div>` : ''}
+<div class="max-w-3xl">
+  ${currentRole!=='admin'?`<div class="mb-8"><button onclick="showFeedbackForm=!showFeedbackForm;render()" class="px-6 py-3 rounded-lg font-semibold flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color}"><i data-lucide="plus" style="width:20px;height:20px"></i> ${tr('leaveFeedback')}</button></div>`:''}
+  ${showFeedbackForm?`<div class="p-6 rounded-xl mb-8 card-hover" style="background:${config.surface_color};border:1px solid ${config.text_color}11">${feedbackError?`<div class="p-3 rounded-lg mb-4 text-sm" style="background:#ef5350;color:#fff;text-align:center">${feedbackError}</div>`:''}<h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('leaveFeedback')}</h3><div class="mb-4"><label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('rating')}</label><div class="flex gap-2">${[1,2,3,4,5].map(n=>`<button onclick="feedbackRating=${n};render()" class="w-10 h-10 rounded-lg font-bold text-lg" style="background:${feedbackRating>=n?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${n}</button>`).join('')}</div></div><textarea placeholder="${tr('writeFeedback')}" oninput="feedbackMessage=this.value" style="width:100%;padding:12px;margin-bottom:16px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${feedbackMessage}</textarea><div class="flex gap-3"><button onclick="addFeedback()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.primary_action_color};color:${config.text_color}">${tr('submit')}</button><button onclick="showFeedbackForm=false;feedbackMessage='';feedbackRating=5;feedbackError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button></div></div>`:''}
+  <div class="space-y-4">
+    ${visibleFeedback.length===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="message-circle" style="width:32px;height:32px;color:${config.text_color}44"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${tr('noFeedback')}</p></div>`:visibleFeedback.map(f=>`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex justify-between items-start mb-2"><div><span class="text-xs font-bold" style="color:${config.text_color}88">${f.authorRole||'Student'}</span><div class="flex gap-1 mt-1">${[1,2,3,4,5].map(n=>`<span style="color:${f.rating>=n?'#ffee58':config.text_color+'33'};font-size:14px">★</span>`).join('')}</div></div><span class="text-xs" style="color:${config.text_color}55">${f.date||''}</span></div><p style="color:${config.text_color}88;margin-top:8px">${_esc(f.message)}</p></div>`).join('')}
+  </div>
+</div>`;
+      }
+
+      // ── LOGS (admin) ──
+      if(activeSidebarItem==='Logs'&&currentRole==='admin') {
+        const filtered=logFilter==='all'?systemLogs:systemLogs.filter(l=>l.type===logFilter);
+        return `
+<div class="max-w-4xl">
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="font-bold" style="font-size:${fs*1.6}px;color:${config.text_color}">System Logs</h1>
+    <div class="flex gap-2">${['all','info','warning','error','success'].map(t=>`<button onclick="logFilter='${t}';render()" class="px-3 py-1.5 rounded-lg text-xs font-semibold" style="background:${logFilter===t?config.primary_action_color:config.text_color+'22'};color:${config.text_color}">${t.charAt(0).toUpperCase()+t.slice(1)}</button>`).join('')}</div>
+  </div>
+  <div class="space-y-2">${filtered.length===0?`<div class="p-8 rounded-xl text-center" style="background:${config.surface_color}"><p style="color:${config.text_color}66">No logs found</p></div>`:filtered.map(l=>`<div class="p-4 rounded-xl flex items-start gap-3" style="background:${config.surface_color}"><div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background:${l.type==='error'?'#ef5350':l.type==='warning'?'#ff9800':l.type==='success'?'#66bb6a':'#90caf9'}"></div><div class="flex-1 min-w-0"><p class="text-sm" style="color:${config.text_color}">${l.action}</p><p class="text-xs mt-1" style="color:${config.text_color}55">${maskEmail(l.user)} · ${l.time}</p></div></div>`).join('')}</div>
+</div>`;
+      }
+
+
+
+      // ── SETTINGS ──
+      if(activeSidebarItem==='Settings') return `
+<div class="max-w-xl">
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color}">
+    <h3 class="font-bold mb-4" style="color:${config.text_color}">${tr('appearance')}</h3>
+    <div class="flex items-center justify-between p-4 rounded-lg mb-3" style="background:${config.text_color}08">
+      <div class="flex items-center gap-3">
+        <i data-lucide="${darkMode?'moon':'sun'}" style="width:20px;height:20px;color:${config.text_color}"></i>
+        <span style="font-weight:600;color:${config.text_color}">${tr('darkMode')}</span>
+      </div>
+      <button onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="relative w-14 h-7 rounded-full" style="background:${darkMode?config.primary_action_color+'cc':config.text_color}33">
+        <div class="absolute w-6 h-6 rounded-full" style="top:0.5px;${darkMode?'right:0.5px':'left:0.5px'};background:${config.text_color}"></div>
+      </button>
+    </div>
+    <div class="p-4 rounded-lg" style="background:${config.text_color}08">
+      <div class="flex items-center gap-3 mb-3">
+        <i data-lucide="languages" style="width:20px;height:20px;color:${config.text_color}"></i>
+        <span style="font-weight:600;color:${config.text_color}">${tr('langSetting')}</span>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="appLang='en';localStorage.setItem('qh_lang','en');render()"
+          style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='en'?config.primary_action_color:'transparent'};background:${appLang==='en'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
+          🇺🇸 English
+        </button>
+        <button onclick="appLang='tl';localStorage.setItem('qh_lang','tl');render()"
+          style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:13px;border:2px solid ${appLang==='tl'?config.primary_action_color:'transparent'};background:${appLang==='tl'?config.primary_action_color+'33':'transparent'};color:${config.text_color}">
+          🇵🇭 Filipino
+        </button>
+      </div>
+    </div>
+  </div>
+  <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color}">
+    <div class="flex items-center gap-3 mb-4">
+      <i data-lucide="bell" style="width:20px;height:20px;color:${config.primary_action_color}"></i>
+      <h3 class="font-bold" style="color:${config.text_color}">Push Notifications</h3>
+    </div>
+    <div id="settings-notif-status" class="p-3 rounded-lg mb-4 flex items-center gap-2" style="background:${config.text_color}08;border:1px solid ${config.text_color}11">
+      <span id="settings-notif-icon" style="font-size:16px">🔔</span>
+      <span id="settings-notif-label" class="text-sm" style="color:${config.text_color}88">Checking notification status…</span>
+    </div>
+    <button id="settings-notif-btn" onclick="enablePushNotifications()" class="px-5 py-2.5 rounded-lg font-semibold text-sm flex items-center gap-2" style="background:${config.primary_action_color};color:${config.text_color};border:none;cursor:pointer">
+      <i data-lucide="bell-ring" style="width:16px;height:16px"></i>
+      Enable Push Notifications
+    </button>
+    <p class="text-xs mt-3" style="color:${config.text_color}55">Get real-time alerts even when the app is closed. ${currentRole==='guidance'?'You will be notified of high-risk student submissions.':'You will receive announcements from the guidance office.'}</p>
+  </div>
+  <div class="p-6 rounded-xl" style="background:${config.surface_color}">
+    <h3 class="font-bold mb-2" style="color:${config.text_color}">${tr('account')}</h3>
+    ${isAnonymous?`
+    <div class="flex items-center gap-2 mb-3 p-3 rounded-lg" style="background:#90a4ae22;border:1px solid #90a4ae44">
+      <i data-lucide="eye-off" style="width:16px;height:16px;color:#90a4ae"></i>
+      <span class="text-sm font-semibold" style="color:${config.text_color}88">${tr('signedInAs')}</span>
+    </div>
+    <p class="text-sm mb-4" style="color:${config.text_color}66">${tr('anonNote')}</p>
+    <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#90a4ae;color:#fff">${tr('leaveAnon')}</button>`:`
+    <p class="text-sm mb-4" style="color:${config.text_color}88">${tr('loggedInAs')} <strong>${currentUserEmail}</strong> (${currentRole})</p>
+    <button onclick="logout()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:#ef5350;color:#fff">${tr('logout')}</button>`}
+  </div>
+</div>`;
+
+      // ── PROBLEMS (guidance) ──
+      if(activeSidebarItem==='Problems'&&currentRole==='guidance') {
+        const problemConsultations=[...consultationPostings]
+          .filter(c=>c.status==='Pending')
+          .map(c=>({...c,_type:'consultation',aiScore:Number(c.aiScore||0),priority:(c.priority||'Medium').trim(),riskLevel:(c.riskLevel||'Low').trim()}))
+          // AI must have verified High risk — priority alone is NOT sufficient
+          .filter(c=>c.riskLevel==='High'||c.riskLevel==='Medium')
+          .sort((a,b)=>getUrgencyScore(b)-getUrgencyScore(a));
+        const problemPostings=[...postings]
+          .map(p=>({...p,_type:'posting',aiScore:Number(p.aiScore||0),priority:(p.priority||'Medium').trim(),riskLevel:(p.riskLevel||'Low').trim()}))
+          // AI must have verified High risk — priority alone is NOT sufficient
+          .filter(p=>p.riskLevel==='High'||p.riskLevel==='Medium')
+          .sort((a,b)=>getUrgencyScore(b)-getUrgencyScore(a));
+        const totalCount=problemConsultations.length+problemPostings.length;
+        return `
+<div class="max-w-3xl">
+  <div class="mb-6 p-4 rounded-xl flex items-center gap-3" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}44">
+    <i data-lucide="alert-triangle" style="width:20px;height:20px;color:#f57c00"></i>
+    <span style="color:${config.text_color};font-weight:600">${totalCount} ${appLang==='tl'?'item':'item'}${totalCount!==1&&appLang!=='tl'?'s':''} ${appLang==='tl'?'nangangailangan ng pansin':'require attention'} &mdash; ${problemConsultations.length} ${appLang==='tl'?'konsultasyon':'consultation'}${problemConsultations.length!==1&&appLang!=='tl'?'s':''}, ${problemPostings.length} ${appLang==='tl'?'post':'posting'}${problemPostings.length!==1&&appLang!=='tl'?'s':''}</span>
+  </div>
+  ${totalCount===0?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:2px dashed ${config.text_color}22"><i data-lucide="check-circle" style="width:32px;height:32px;color:#66bb6a"></i><p class="mt-3 text-sm" style="color:${config.text_color}66">${appLang==='tl'?'Walang problema! Walang medium o high risk na item.':'All clear! No medium or high risk items.'}</p></div>`:''}
+  ${problemConsultations.length>0?`
+  <div class="mb-3 flex items-center gap-2"><i data-lucide="users" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Nakabinbing Konsultasyon':'Pending Consultations'}</span></div>
+  <div class="space-y-4 mb-8">
+    ${problemConsultations.map(c=>{const gc=getGlowClass(c,true);return `
+    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+      <div class="flex justify-between items-start mb-2">
+        <div>
+          <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#90caf922;color:#5c9be0;border:1px solid #90caf944">${appLang==='tl'?'Konsultasyon':'Consultation'}</span></div>
+          <h3 class="font-bold" style="color:${config.text_color}">${_esc(c.reason)}</h3>
+          <div class="flex gap-2 mt-1 flex-wrap">
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.priority==='High'?'#ef5350':c.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.priority==='High'?'⚡':c.priority==='Medium'?'▲':'▽'} ${tr(c.priority.toLowerCase())} ${appLang==='tl'?'Prioridad':'Priority'}</span>
+            <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} ${c.riskLevel} Risk · AI:${c.aiScore}</span>
+          </div>
+        </div>
+        <button onclick="updateConsultationStatus('${c.id}')" class="text-xs px-3 py-1.5 rounded-lg shrink-0 font-semibold" style="background:${config.secondary_action_color};color:${config.text_color}">${tr('markDone')}</button>
+      </div>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(c.description)}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Estudyante:':'Student:'} ${_esc(c.studentEmail||c.author)} · ${_esc(c.date||'')}</p>
+    </div>`;}).join('')}
+  </div>`:''}
+  ${problemPostings.length>0?`
+  <div class="mb-3 flex items-center gap-2"><i data-lucide="megaphone" style="width:14px;height:14px;color:${config.text_color}55"></i><span class="text-xs font-bold uppercase tracking-widest" style="color:${config.text_color}55">${appLang==='tl'?'Mga Naka-flag na Post':'Flagged Postings'}</span></div>
+  <div class="space-y-4">
+    ${problemPostings.map(p=>{const gc=getGlowClass(p,true);return `
+    <div class="p-6 rounded-xl card-hover ${gc}" style="background:${config.surface_color}">
+      <div class="mb-2">
+        <div class="mb-1"><span class="text-xs px-2 py-0.5 rounded font-bold" style="background:#ffee5822;color:#9a8000;border:1px solid #ffee5855">${appLang==='tl'?'Post':'Posting'}</span></div>
+        <h3 class="font-bold" style="color:${config.text_color}">${p.title}</h3>
+        <div class="flex gap-2 mt-1 flex-wrap">
+          <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.priority==='High'?'#ef5350':p.priority==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.priority==='High'?'⚡':p.priority==='Medium'?'▲':'▽'} ${p.priority} Priority</span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-bold" style="background:${p.riskLevel==='High'?'#ef5350':p.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${p.riskLevel==='High'?'🔴':p.riskLevel==='Medium'?'🟠':'🟢'} ${p.riskLevel} Risk · AI:${p.aiScore}</span>
+          ${p.reasons&&p.reasons.length?`<span class="text-xs px-2 py-0.5 rounded-full font-semibold" style="background:#ef535018;color:#ef5350">⚠ ${p.reasons[0]}${p.reasons.length>1?' +'+(p.reasons.length-1)+' more':''}</span>`:''}
+        </div>
+      </div>
+      <p class="text-sm mb-2" style="color:${config.text_color}88">${_esc(p.content)}</p>
+      <p class="text-xs" style="color:${config.text_color}55">${appLang==='tl'?'Ni':'By'}: ${p.author} · ${p.timestamp?new Date(p.timestamp).toLocaleDateString():''}</p>
+    </div>`;}).join('')}
+  </div>`:''}
+</div>`;
+      }
+
+      // ── DASHBOARD ──
+      return `
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+  ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="megaphone" style="width:20px;height:20px;color:${config.primary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('postings')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?postings.length:postings.filter(p=>p.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalPosted'):tr('yourPosts')}</p></div>`:''}
+  ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="users" style="width:20px;height:20px;color:${config.secondary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('consultations')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?consultationPostings.length:consultationPostings.filter(c=>c.author===currentUserEmail||c.studentEmail===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalRequests'):tr('yourRequests')}</p></div>`:''}
+  <div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="message-circle" style="width:20px;height:20px;color:#90caf9"></i><span class="font-semibold" style="color:${config.text_color}">${tr('feedback')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${currentRole==='admin'?feedbackList.length:feedbackList.filter(f=>f.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${currentRole==='admin'?tr('totalFeedback'):tr('yourFeedback')}</p></div>
+  ${isGuidance?`<div class="p-6 rounded-xl card-hover" style="background:#ef535011;border:1px solid #ef535033"><div class="flex items-center gap-3 mb-2"><i data-lucide="alert-triangle" style="width:20px;height:20px;color:#ef5350"></i><span class="font-semibold" style="color:${config.text_color}">${tr('problems')}</span></div><p class="text-3xl font-bold" style="color:#ef5350">${consultationPostings.filter(c=>c.status==='Pending').length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${tr('needAttention')}</p></div>`:''}
+</div>
+<div class="p-6 rounded-xl" style="background:${config.surface_color}">
+  <h3 class="font-bold mb-1" style="color:${config.text_color}">${tr('welcomeMsg')}</h3>
+  <p style="color:${config.text_color}88;font-size:14px">${currentRole==='student'?tr('dashHint_student'):isGuidance?tr('dashHint_guidance'):tr('dashHint_admin')}</p>
+</div>
+${isGuidance?`
+<div class="p-6 rounded-xl mt-6" style="background:${config.surface_color};border:1px solid #90caf933">
+  <div class="flex items-center gap-3 mb-4">
+    <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#90caf922">
+      <i data-lucide="megaphone" style="width:18px;height:18px;color:#90caf9"></i>
+    </div>
+    <div>
+      <h3 class="font-bold" style="color:${config.text_color}">📢 Send Announcement to Students</h3>
+      <p class="text-xs" style="color:${config.text_color}66">Push notification delivered to all subscribed students</p>
+    </div>
+  </div>
+  <input id="announcement-title-input" type="text" placeholder="Announcement title..." value="${announcementTitle}"
+    onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="announcementTitle=this.value;onFieldInput()"
+    style="width:100%;padding:10px 14px;margin-bottom:10px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+  <textarea id="announcement-msg-input" placeholder="Write your message to all students..." oninput="announcementMessage=this.value;onFieldInput()"
+    style="width:100%;padding:10px 14px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px;min-height:80px;resize:vertical">${announcementMessage}</textarea>
+  <button id="announcement-send-btn" onclick="handleSendAnnouncement()"
+    style="padding:10px 20px;background:#90caf9;color:#1a237e;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px">
+    <i data-lucide="send" style="width:16px;height:16px"></i> Send to All Students
+  </button>
+  <!-- Progress & status area (shown during/after send) -->
+  <div style="margin-top:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span id="announcement-status" style="display:none;font-size:12px;font-weight:700;color:#1565c0"></span>
+      <span id="announcement-timer" style="font-size:12px;font-family:monospace;color:#888"></span>
+    </div>
+    <div id="announcement-progress-wrap" style="display:none;width:100%;height:6px;background:#e0e0e0;border-radius:4px;overflow:hidden">
+      <div id="announcement-progress-fill" style="height:100%;background:#90caf9;width:0%;transition:none;border-radius:4px"></div>
+    </div>
+    <div id="announcement-result" style="display:none;text-align:center;margin-top:10px"></div>
+  </div>
+</div>`:''}`;
+    }
+
+    // ── DEEP LINK HANDLER ──
+    // When counselor taps a OneSignal push notification, the URL contains
+    // ?deeplink=posting&id=123&risk=High&score=18
+    // This handler waits for auth + data to load, then auto-navigates.
+    let _deepLinkBusy = false;
+    function handleDeepLink() {
+      if (_deepLinkBusy) return;
+      const params = new URLSearchParams(window.location.search);
+      const type  = params.get('deeplink');
+      const id    = params.get('id');
+      const risk  = params.get('risk');
+      const score = params.get('score');
+      if (!type || !id) return;
+
+      // ── Validate params to prevent injection via crafted URLs ──
+      const safeTypes = ['posting', 'consultation'];
+      if (!safeTypes.includes(type)) return;          // only known types
+      if (!/^\d+$/.test(id)) return;                  // id must be digits only
+      const safeRisk  = ['Low','Low-Medium','Medium','High'].includes(risk) ? risk : 'High';
+      const safeScore = /^\d+$/.test(score) ? score : '?';
+
+      // Poll until data is loaded and user is authenticated as guidance
+      _deepLinkBusy = true;
+      let attempts = 0;
+      const check = setInterval(() => {
+        attempts++;
+        if (attempts > 30) { clearInterval(check); _deepLinkBusy = false; return; } // timeout after 15s
+
+        const isReady = isAuthenticated && currentRole === 'guidance' &&
+          (type === 'posting' ? postings.length > 0 : consultationPostings.length > 0);
+        if (!isReady) return;
+        clearInterval(check);
+
+        // Navigate to the correct section
+        if (type === 'posting') {
+          activeSidebarItem = 'Postings';
+          expandedPost = Number(id);
+        } else if (type === 'consultation') {
+          activeSidebarItem = 'Consultations';
+          expandedConsult = Number(id);
+        }
+        render();
+
+        // Scroll to the specific post — poll until element appears in DOM
+        let scrollAttempts = 0;
+        const scrollCheck = setInterval(() => {
+          scrollAttempts++;
+          if (scrollAttempts > 20) { clearInterval(scrollCheck); return; }
+          const el = document.querySelector(`[data-post-id="${id}"]`);
+          if (el) {
+            clearInterval(scrollCheck);
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.style.outline = '3px solid #ef5350';
+            setTimeout(() => { el.style.outline = ''; }, 3000);
+          }
+        }, 300);
+
+        // Show a banner about why they're here
+        setTimeout(() => {
+          showModal(
+            `🚨 ${_esc(safeRisk)} Risk Alert`,
+            `AI Score: <strong>${_esc(safeScore)}</strong><br>A student submission was flagged and needs your attention. You have been brought directly to the item below.`,
+            'error'
+          );
+        }, 400);
+
+        // Clean up URL so refresh doesn't re-trigger
+        window.history.replaceState({}, '', window.location.pathname);
+        _deepLinkBusy = false;
+      }, 500);
+    }
+
+    handleDeepLink();
+
+    // ── AUTO-LOGIN via Firebase session ──
+    auth.onAuthStateChanged(async (user) => {
+      if (user && !isAuthenticated) {
+        const savedRole = localStorage.getItem('qh_saved_role');
+        if (!savedRole) { render(); return; }
+
+        const email = user.email.toLowerCase();
+        // ── Authoritative role from Firestore (not email string heuristics) ──
+        const actualRole = await resolveRoleFromFirestore(user.uid, email);
+
+        if (savedRole !== actualRole) { render(); return; }
+
+        currentUserEmail = email;
+        currentRole = actualRole; // trust Firestore, not localStorage
+        isAuthenticated = true;
+        activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+        localStorage.setItem('qh_saved_role', actualRole); // keep localStorage in sync
+
+        if (savedRole === 'guidance') registerAsCounselor();
+        loadDataFromFirestore();
+        setTimeout(handleDeepLink, 1000);
+        render();
+      } else if (!user) {
+        render();
+      }
+    });
+
+    render();
