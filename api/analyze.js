@@ -1,10 +1,16 @@
-export default async function handler(req, res) {
+const { getUser, readBody } = require('./_auth');
+
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { text } = req.body;
-  if (!text) {
+  const user = await getUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required' });
+
+  const body = readBody(req);
+  const text = typeof body.text === 'string' ? body.text.slice(0, 2000) : '';
+  if (!text.trim()) {
     return res.status(400).json({ error: 'text is required' });
   }
 
@@ -19,49 +25,20 @@ export default async function handler(req, res) {
   // This prevents the AI from treating crude language as a risk signal.
   // Words are replaced with [removed] so sentence structure is preserved.
   const lewdPatterns = [
-    // Filipino sexual slang — root forms catch all conjugations/spellings
-    /\bjakal+\b/gi,           // jakol, jakall, etc.
-    /\bj[a4]k[o0]l+\b/gi,
-    /\bsals[a4]l+\b/gi,       // salsal
-    /\bm[a4]st[u]rb[a4](te?|syon|tion|ng)?\b/gi,  // masturbate, masturbation, masturbasyon
-    /\bm[a4]sts?\b/gi,        // mast (shorthand)
-    /\bkant[o0]t+\b/gi,       // kantot
-    /\bp[u|oo]t[a4][n]?[g]?\b/gi, // puta, putang
-    /\bt[a4]ng[- ]?in[a4]\b/gi,   // tangina
-    /\bgag[o0]+\b/gi,
-    /\bulul+\b/gi,
-    /\bbwis[i]+t+\b/gi,
-    /\bhub[o0]g?\b/gi,        // hubog/hubo (naked)
-    /\btelp[ao]\b/gi,
-    /\bseks[ey]?\b/gi,        // sekse, sexy (in lewd context)
-    /\bp[e3]t[e3]k[iy]?\b/gi,
+    // Crude slang only. Words like sex/sexual/nude/porn/boobs/hubo(g)/bola are NOT stripped:
+    // students use them to describe abuse, grooming and sextortion, and the AI must see them.
+    /\bj[a4]k[a4o0]l+\b/gi,           // jakol
+    /\bsals[a4]l+\b/gi,               // salsal
+    /\bm[a4]st[eu]rb[a4]t?(e|ion|syon)?\b/gi,   // masturbate / masterbate / masturbasyon
+    /\bkant[o0]t+\b/gi,               // kantot
+    /\bp[e3]t[e3]k\b/gi,
     /\bburat+\b/gi,
-    /\bt[i1]t[i1]+\b/gi,      // titi
-    /\bp[e3]k[pe3]+\b/gi,     // pekpek
-    /\bp[uo]k[i1]+\b/gi,      // puki
-    /\bb[o0]+l[ao]+\b/gi,     // bola (in crude context) — low risk so just remove
+    /\bt[i1]t[i1]t?\b/gi,             // titi / titit
+    /\bp[e3]kp[e3]k\b/gi,
+    /\bp[uo]k[i1]+\b/gi,
     /\biyot+\b/gi,
-    /\bp[a4]ksh[a4]l[a4]\b/gi,
-    /\bt[ae]+e+\b/gi,          // tae (feces)
-
-    // English equivalents
-    /\bmasterbat(e|ing|ion)?\b/gi,  // common misspelling
-    /\bmasturbat(e|ing|ion)?\b/gi,
-    /\bjerk(ing)?[ -]?off\b/gi,
     /\bwank(ing|er)?\b/gi,
-    /\bfuck(ing|ed|er|s)?\b/gi,
-    /\bsh[i1]t+\b/gi,
-    /\bb[i1]tch\b/gi,
-    /\bc[u0]nt\b/gi,
-    /\bd[i1]ck\b/gi,
-    /\bp[u0]ssy\b/gi,
-    /\bass(h[o0]le)?\b/gi,
-    /\bb[o0][o0]b[s]?\b/gi,
-    /\bn[i1]pp?l[e3]s?\b/gi,
-    /\bp[o0]rn(o|hub)?\b/gi,
-    /\bn[u0]d[e3]s?\b/gi,
-    /\bh[o0]rny\b/gi,
-    /\bs[e3]x(y|ual|ting)?\b/gi,   // only strip if standalone crude use
+    /\bjerk(ing)?[ -]?off\b/gi,
   ];
 
   let cleanedText = text;
@@ -206,15 +183,17 @@ Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation.
 
     if (!response.ok) {
       console.error('[analyze] Groq API error:', JSON.stringify(data));
-      return res.status(500).json({ error: 'AI analysis failed', detail: data });
+      return res.status(502).json({ error: 'AI analysis failed' });
     }
 
     const raw = data?.choices?.[0]?.message?.content || '';
     const cleaned = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/); // tolerate stray text around the JSON
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
 
     if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
-      parsed.score = Math.min(parsed.score, 20);
+      parsed.score = Math.max(0, Math.min(Math.round(parsed.score), 20));
+      if (typeof parsed.flagged !== 'boolean') parsed.flagged = parsed.score >= 3 || parsed.level !== 'Low';
       return res.status(200).json(parsed);
     } else {
       throw new Error('Unexpected response shape from Groq');
@@ -223,4 +202,4 @@ Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation.
     console.error('[analyze] Error:', e);
     return res.status(500).json({ error: 'AI analysis failed' });
   }
-}
+};

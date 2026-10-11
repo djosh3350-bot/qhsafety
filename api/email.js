@@ -8,10 +8,15 @@
 //   EMAILJS_GUIDANCE_TEMPLATE e.g. template_schi35q
 //   GUIDANCE_EMAIL            e.g. djosh3350@gmail.com
 
-export default async function handler(req, res) {
+const { getUser, isStaff, readBody } = require('./_auth');
+
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  const user = await getUser(req);
+  if (!user) return res.status(401).json({ error: 'Sign in required' });
 
   const {
     type,           // 'student_reply' | 'consultation_reply' | 'high_risk' | 'reminder'
@@ -29,7 +34,7 @@ export default async function handler(req, res) {
     ai_score,
     risk_level,
     risk_reasons,
-  } = req.body;
+  } = readBody(req);
 
   const PUBLIC_KEY        = process.env.EMAILJS_PUBLIC_KEY;
   const SERVICE_ID        = process.env.EMAILJS_SERVICE_ID;
@@ -50,14 +55,15 @@ export default async function handler(req, res) {
   let templateParams;
 
   if (type === 'student_reply' || type === 'consultation_reply' || type === 'reminder') {
-    // Email to student
-    if (!to_email) return res.status(400).json({ error: 'to_email required' });
+    // Email to student — only staff may send these (prevents using us as an open mail relay)
+    if (!isStaff(user)) return res.status(403).json({ error: 'Forbidden' });
+    if (!to_email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to_email)) return res.status(400).json({ error: 'valid to_email required' });
     templateId = STUDENT_TEMPLATE;
     templateParams = {
       to_email,
       to_name:          to_name  || to_email.split('@')[0],
       post_title:       post_title || (type === 'consultation_reply' ? 'your consultation' : 'your posting'),
-      guidance_message: guidance_message || '',
+      guidance_message: String(guidance_message || '').slice(0, 2000),
       app_url:          app_url  || 'https://qh-safety.vercel.app',
       sent_at:          sent_at  || new Date().toLocaleString(),
     };
@@ -70,7 +76,7 @@ export default async function handler(req, res) {
       alert_type:  alert_type  || 'Submission',
       author:      author      || 'Anonymous',
       reason:      reason      || '',
-      description: description || '',
+      description: String(description || '').slice(0, 3000),
       ai_score:    ai_score    ?? '',
       risk_level:  risk_level  || '',
       risk_reasons: risk_reasons || '',
@@ -104,4 +110,4 @@ export default async function handler(req, res) {
     console.error('[email] Fetch error:', e);
     return res.status(500).json({ error: e.message });
   }
-}
+};
