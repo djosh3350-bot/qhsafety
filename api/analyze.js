@@ -1,15 +1,9 @@
 const { getUser, readBody } = require('./_auth');
 
-const THREAT_PATTERNS = [
-  /\b(i|we)\s*(will|'ll|'?m going to|am going to|'?m gonna|am gonna|gonna|going to|want to|wanna|plan to|am planning to|'?m planning to|should|might|could|can)\s+(kill|murder|shoot|stab|massacre|slaughter|bomb|blow up|burn down|attack|hurt|harm|beat up|rape|poison)\b(?!\s*(my ?self|it\b|this (exam|test|quiz)|that (exam|test|quiz)|the (exam|test|quiz)))/i,
-  /\b(kill|murder|shoot|stab|massacre|slaughter)\s+(all|every ?one|every ?body|them|him|her|you|some ?one|some ?body|any ?one|students?|teachers?|people|classmates?|kids|everyone)\b/i,
-  /\b(shoot(ing)? up|bomb(ing)?|blow(ing)? up|burn(ing)? down|attack(ing)?)\s+(the |this |our |my )?(school|campus|classroom|class|canteen|gym|building)\b/i,
-  /\bschool shooting\b|\bmass (shooting|murder|killing)\b|\bmake them pay\b/i,
-  /\b(papatayin|patayin|susugatan|sasaksakin|sasaksak|babarilin|bubugbugin|sasaktan|sisirain|pasasabugin)\s+ko\b(?!\s+(na\s+)?(ang\s+)?(sarili|sarili ko))/i,
-  /\b(papatay|mamamatay[- ]?tao|mamamaril|mamaril|manaksak|manakit|mananakit|pumatay)\b(?!\s+ng\s+sarili)/i,
-  /\bpapatay\s+(ako|ng)\b/i,
-];
-const hasThreat = (txt) => THREAT_PATTERNS.some(p => p.test(String(txt||'').toLowerCase()));
+// The local rules (threat detection, safety floors) are shared with the browser and the tests.
+const Risk = require('../risk-engine.js');
+const hasThreat = (txt) => Risk.detectThreatToOthers(txt);
+const TIMEOUT_MS = 9000; // per provider — a stuck provider must not hold the student's request open
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -26,9 +20,10 @@ module.exports = async function handler(req, res) {
   }
 
   const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
-    console.error('[analyze] GROQ_API_KEY environment variable is not set');
-    return res.status(500).json({ error: 'Server misconfiguration' });
+  if (!apiKey && !process.env.ANTHROPIC_API_KEY && !process.env.GITHUB_MODELS_TOKEN) {
+    console.error('[analyze] No AI key set (GROQ_API_KEY / GITHUB_MODELS_TOKEN / ANTHROPIC_API_KEY)');
+    const local = Risk.analyzeRisk(text);
+    return res.status(200).json({ score: local.score, level: local.level, flagged: local.flagged, reasons: local.reasons, aiUnavailable: true });
   }
 
   // ── LEWD WORD FILTER ──────────────────────────────────────────────────────
@@ -59,166 +54,152 @@ module.exports = async function handler(req, res) {
 
   // ─────────────────────────────────────────────────────────────────────────
 
-  const systemPrompt = `You are an expert school counselor AI and mental health risk analyst for a Philippine public high school (Quirino High School). Your job is to analyze student-submitted text and detect ANY sign of distress, danger, or need for intervention.
+  const systemPrompt = `You are a school-safety risk analyst for Quirino High School (Philippines). Read ONE student-submitted text and rate how urgently a guidance counselor must act. Students write English, Filipino/Tagalog and Taglish, often indirectly, with typos, ALL CAPS or humor. Judge meaning, not formatting. When unsure, rate HIGHER: a false alarm is safer than a missed crisis. "joke lang"/"haha" never lowers the risk.
 
-CRITICAL RULES:
-- Analyze in BOTH English and Filipino/Tagalog — many students mix both (Taglish)
-- ALWAYS err on the side of flagging — a false positive is safer than a missed crisis
-- Detect indirect, vague, or coded language — students rarely say things directly
-- Understatement, humor, and casual phrasing can mask serious issues — treat them seriously
-- A student saying "joke lang" (just joking) after a serious statement does NOT reduce the risk
-- Consider cultural context: Filipino students often understate problems due to shame (hiya) or family loyalty
+SCORE (0-20) from the most serious signals found:
+14-20 HIGH (immediate danger): wants/plans to kill or hurt OTHER people or the school (any threat, even vague like "I will kill someone"); suicide intent, plan or method; active self-harm; asking how to self-harm; being attacked or abused right now; weapon brought to school.
+7-13 MEDIUM: passive suicidal wishes (disappear, not wake up); past self-harm; severe depression or hopelessness; sexual abuse, assault, grooming, sextortion; severe physical abuse; severe eating disorder; hallucinations/psychosis; heavy drug use; gang involvement; weapon knowledge; running away; pregnancy fear.
+3-6 LOW-MEDIUM: bullying or cyberbullying victim; emotional abuse; neglect; grief; anxiety/panic; trauma; family crisis; homelessness; alcohol/vaping to cope; relationship abuse; self-esteem or body-image distress; academic burnout.
+0-2 LOW: normal stress, mild loneliness, friendship or teacher conflict, or nothing concerning.
 
-IMPORTANT — PROFANITY AND LEWD LANGUAGE:
-- The text has been pre-filtered: lewd/sexual slang appears as [removed]
-- Do NOT flag [removed] tokens or profanity/crude language alone as a risk indicator
-- Profanity by itself (gago, putang ina, etc.) is common Filipino teen expression — NOT a crisis signal
-- Only flag if there is genuine emotional distress, self-harm, abuse, or danger — not just bad words
-- A message that is purely vulgar or joking with no distress signals = score 0, level Low
+RULES:
+- Threats against others are never "just profanity": always HIGH, score at least 14.
+- Profanity, crude slang or [removed] tokens alone, with no distress and no threat = score 0.
+- Figures of speech about oneself or schoolwork ("kill this exam", "patay ako sa nanay ko") = Low unless real danger appears.
+- Two or more different HIGH signals = score 18-20.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CATEGORY A — IMMEDIATE LIFE THREAT (score +10 each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-A1. Active suicidal ideation — direct statements of wanting to die, kill oneself, end one's life
-A2. Suicide plan or method — mentions of specific methods, means, timing, or location
-A3. Active self-harm — currently cutting, burning, hitting, or injuring oneself
-A4. Homicidal ideation or threats — ANY statement of wanting or intending to hurt, kill, shoot, stab, bomb or seriously harm other people, including threats against the school, classmates or teachers (e.g. \"I will kill all students\", \"papatayin ko kayo\"). This is NEVER profanity or venting: always score 14-20, level High
-A5. Immediate danger — student is in active danger right now (being attacked, abused, threatened)
+LEVEL: 0-2 Low | 3-6 Low-Medium | 7-13 Medium | 14-20 High. "flagged" = true when score >= 3.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CATEGORY B — HIGH RISK (score +7 each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-B1. Passive suicidal ideation — indirect wishes to die, disappear, not exist, not wake up
-B2. Non-suicidal self-injury (NSSI) history — past cutting, burning, hitting self
-B3. Severe depression — persistent hopelessness, emptiness, worthlessness, inability to function
-B4. Sexual abuse or assault — any form of sexual violation, molestation, rape, exploitation
-B5. Severe physical abuse — being beaten, kicked, burned, or severely physically harmed
-B6. Online sexual exploitation — sextortion, non-consensual intimate images, grooming
-B7. Severe eating disorder — dangerous restriction, purging, bingeing causing harm
-B8. Active psychosis or hallucinations — hearing voices, seeing things, paranoid delusions
-B9. Severe dissociation or depersonalization — feeling unreal, watching oneself from outside
-B10. Dangerous substance use — heavy drug addiction (shabu, rugby, meth), overdose risk
+EXAMPLES:
+"i will kill someone" -> {"score":18,"level":"High","flagged":true,"reasons":["Threat to harm others"]}
+"I will blow out the school" -> {"score":18,"level":"High","flagged":true,"reasons":["Threat against school"]}
+"papatayin ko kayo lahat" -> {"score":18,"level":"High","flagged":true,"reasons":["Threat to harm others"]}
+"gusto ko nang mamatay" -> {"score":16,"level":"High","flagged":true,"reasons":["Suicidal ideation"]}
+"sinasaktan ako ng tatay ko gabi-gabi" -> {"score":12,"level":"Medium","flagged":true,"reasons":["Physical abuse"]}
+"gago ka putang ina" -> {"score":0,"level":"Low","flagged":false,"reasons":[]}
+"I will kill this exam tomorrow" -> {"score":0,"level":"Low","flagged":false,"reasons":[]}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CATEGORY C — MODERATE-HIGH RISK (score +5 each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-C1. Emotional or psychological abuse — constant humiliation, gaslighting, verbal attacks
-C2. Neglect — not being fed, clothed, supervised, or cared for at home
-C3. Bullying — repeated physical, verbal, relational bullying as a victim
-C4. Cyberbullying or online harassment — harassment via social media or chat
-C5. Grief or traumatic loss — recent death of loved one, especially sudden or violent
-C6. Severe anxiety disorder — panic attacks, extreme fear, inability to function
-C7. Trauma and PTSD symptoms — flashbacks, nightmares, avoidance after trauma
-C8. Severe academic crisis — failing all subjects, expulsion threat, extreme pressure
-C9. Family breakdown — severe domestic violence witnessed, family in crisis
-C10. Homelessness or housing instability — no stable place to sleep
-C11. Pregnancy — student is pregnant or believes they may be, especially if scared or hiding
-C12. Gang involvement — membership, pressure to join, gang-related threats or violence
-C13. Weapons at school — student has or knows someone with a weapon on campus
-C14. Running away from home — planning or having run away due to danger or abuse
-C15. Severe social isolation — complete withdrawal from all friends, family, activities
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CATEGORY D — MODERATE RISK (score +3 each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-D1. Moderate depression — persistent sadness, loss of interest, low energy
-D2. Relationship violence — abuse from a romantic partner
-D3. Alcohol use — regular or binge drinking especially to cope
-D4. Vaping or smoking addiction — heavy use especially to cope
-D5. Financial crisis — extreme poverty affecting basic needs
-D6. Caregiver burden — student is primary caregiver for siblings or ill parents
-D7. LGBTQ+ identity distress — fear, shame, or family rejection related to identity
-D8. Religious or cultural conflict — severe distress from belief vs family conflict
-D9. Peer pressure — pressured into harmful, illegal, or risky behavior
-D10. Grief over breakup — intense pain from romantic loss linked to self-worth
-D11. Obsessive or intrusive thoughts — unwanted thoughts about harm or disturbing images
-D12. Body image issues — significant distress about physical appearance or weight
-D13. Sleep disorders — severe insomnia or hypersomnia linked to emotional distress
-D14. Academic burnout — complete exhaustion and disengagement from school
-D15. Witnessing violence — seeing violence at home or in community causing trauma
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CATEGORY E — LOW-MODERATE RISK (score +1.5 each)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-E1. General stress and overwhelm
-E2. Loneliness — feeling alone or misunderstood
-E3. Low self-esteem — persistent negative self-talk
-E4. Friendship problems — falling out, exclusion, betrayal
-E5. Teacher or authority conflict causing distress
-E6. Identity confusion — unsure of values or future
-E7. Fear of the future — extreme anxiety about graduating or adult life
-E8. Jealousy or envy causing significant distress
-E9. Phone or social media addiction disrupting life
-E10. Mild substance experimentation
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SPECIAL RULES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- "joke lang" or "haha" after serious statement: do NOT reduce score
-- Asking "how to" for self-harm or suicide: automatic High level
-- 2+ Category A items detected: multiply total score by 2
-- Any Category A + any Category B together: add +5 bonus
-- Cap final score at 20
-- Threats of violence against others are NOT profanity: any threat to kill or harm others = level High, score at least 14, regardless of tone, capital letters, or \"joke lang\"
-- Profanity or lewd words alone with NO distress and NO threat: score must be 0
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SCORING SCALE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-0-2 = Low | 3-6 = Low-Medium | 7-13 = Medium | 14-20 = High
-
-Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation.
-{"score": <0-20 integer>, "level": <"Low"|"Low-Medium"|"Medium"|"High">, "flagged": <true|false>, "reasons": [<short strings like "Suicidal ideation (A1)", "Bullying victim (C3)">]}
-"flagged" = true if score >= 3 or level is not "Low".`;
+Reply with ONLY one JSON object: {"score":<integer 0-20>,"level":"Low"|"Low-Medium"|"Medium"|"High","flagged":<boolean>,"reasons":[<short strings>]}`;
 
   const userMessage = `Analyze this student submission for risk:\n\n${cleanedText}`;
 
-  try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
+  // ── PROVIDERS ─────────────────────────────────────────────────────────────
+  // Order: Claude (if ANTHROPIC_API_KEY is set) -> Groq models. First one that answers wins.
+  // llama-3.3-70b-versatile was shut down by Groq on 16 Aug 2026.
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  async function callClaude(model) {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+        'content-type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userMessage }
-        ],
-        temperature: 0.1,
-        max_tokens: 512,
+        model,
+        max_tokens: 300,
+        temperature: 0,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }]
       })
     });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error('[analyze] Groq API error:', JSON.stringify(data));
-      return res.status(502).json({ error: 'AI analysis failed' });
-    }
-
-    const raw = data?.choices?.[0]?.message?.content || '';
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    const jsonMatch = cleaned.match(/\{[\s\S]*\}/); // tolerate stray text around the JSON
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
-
-    if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
-      parsed.score = Math.max(0, Math.min(Math.round(parsed.score), 20));
-      if (typeof parsed.flagged !== 'boolean') parsed.flagged = parsed.score >= 3 || parsed.level !== 'Low';
-      // Hard floor: threats against others are always High, even if the model under-scores them
-      if (hasThreat(text)) {
-        parsed.level = 'High';
-        parsed.score = Math.max(parsed.score, 16);
-        parsed.flagged = true;
-        if (!parsed.reasons.some(r => /violence|homicid|A4/i.test(String(r)))) parsed.reasons.push('Threat of violence against others (A4)');
-      }
-      return res.status(200).json(parsed);
-    } else {
-      throw new Error('Unexpected response shape from Groq');
-    }
-  } catch (e) {
-    console.error('[analyze] Error:', e);
-    return res.status(500).json({ error: 'AI analysis failed' });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data, text: data?.content?.[0]?.text || '' };
   }
+
+  async function callGroq(model) {
+    const payload = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      temperature: 0.1,
+      max_completion_tokens: 700, // reasoning models think first, then print the short JSON
+      response_format: { type: 'json_object' },
+    };
+    if (/gpt-oss/.test(model)) payload.reasoning_effort = 'low';
+    let out;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json().catch(() => ({}));
+      out = { ok: r.ok, status: r.status, data, text: data?.choices?.[0]?.message?.content || '' };
+      if (r.status !== 429) break;
+      const wait = Math.min(1200, (parseFloat(r.headers.get('retry-after')) || 1) * 1000);
+      await sleep(wait); // short rate-limit hiccup: wait once, retry the same model
+    }
+    return out;
+  }
+
+  // GitHub Models: free with a GitHub token that has the "models:read" permission.
+  async function callGithub(model) {
+    const r = await fetch('https://models.github.ai/inference/chat/completions', {
+      method: 'POST',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Authorization': `Bearer ${process.env.GITHUB_MODELS_TOKEN}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.1,
+        max_tokens: 400
+      })
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data, text: data?.choices?.[0]?.message?.content || '' };
+  }
+
+  const attempts = [];
+  if (process.env.ANTHROPIC_API_KEY) attempts.push(() => callClaude(process.env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001'));
+  const groqModels = [process.env.GROQ_MODEL || 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']
+    .filter((m, i, arr) => arr.indexOf(m) === i);
+  if (apiKey) groqModels.forEach(m => attempts.push(() => callGroq(m)));
+  // GitHub Models free tier has low rate limits, so it is a backup after Groq.
+  if (process.env.GITHUB_MODELS_TOKEN) {
+    attempts.push(() => callGithub(process.env.GITHUB_MODELS_MODEL || 'openai/gpt-4.1-mini'));
+  }
+  if (apiKey) attempts.push(() => callGroq('qwen/qwen3.6-27b')); // last resort
+
+  function parseResult(raw) {
+    const cleaned = String(raw || '').replace(/```json|```/g, '').trim();
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(m ? m[0] : cleaned);
+    if (typeof parsed.score !== 'number' || !parsed.level || !Array.isArray(parsed.reasons)) {
+      throw new Error('Unexpected response shape');
+    }
+    parsed.score = Math.max(0, Math.min(Math.round(parsed.score), 20));
+    if (typeof parsed.flagged !== 'boolean') parsed.flagged = parsed.score >= 3 || parsed.level !== 'Low';
+    return parsed;
+  }
+
+  for (const attempt of attempts) {
+    try {
+      const out = await attempt();
+      if (!out.ok) { console.error('[analyze] provider error', out.status, JSON.stringify(out.data).slice(0, 400)); continue; }
+      const parsed = parseResult(out.text);
+      // Safety floors (same code the browser uses): a clear threat or a direct statement of wanting
+      // to die is always High, and anything the local rules rate High never drops below Medium.
+      return res.status(200).json(Risk.applyFloors(text, parsed));
+    } catch (e) {
+      console.error('[analyze] attempt failed:', e && e.message);
+    }
+  }
+
+  // Every AI provider failed: answer with the local rules so the caller still gets a rating.
+  const local = Risk.analyzeRisk(text);
+  return res.status(200).json({ score: local.score, level: local.level, flagged: local.flagged, reasons: local.reasons, aiUnavailable: true });
 };
