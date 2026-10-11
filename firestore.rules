@@ -17,7 +17,10 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
+    function hasEmail() { return 'email' in request.auth.token; }
     function myEmail()  { return request.auth.token.email; }
+    // an item is "mine" if it carries my email, or (anonymous students) my anonymous id
+    function mine(owner) { return (hasEmail() && owner == myEmail()) || owner == 'anon_' + request.auth.uid; }
     function myDoc()    { return /databases/$(database)/documents/users/$(request.auth.uid); }
     function myRole()   { return exists(myDoc()) ? get(myDoc()).data.role : 'student'; }
     function isStaff()  { return signedIn() && myRole() in ['guidance', 'admin']; }
@@ -33,26 +36,39 @@ service cloud.firestore {
     }
 
     match /postings/{id} {
-      allow read:           if signedIn() && (resource.data.authorId == myEmail() || isStaff());
-      allow create:         if signedIn() && request.resource.data.authorId == myEmail();
-      allow update, delete: if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+      allow read:           if signedIn() && (mine(resource.data.authorId) || isStaff());
+      allow create:         if signedIn() && mine(request.resource.data.authorId);
+      allow update, delete: if signedIn() && (mine(resource.data.authorId) || isStaff());
     }
 
     match /consultations/{id} {
-      allow read:           if signedIn() && (resource.data.authorId == myEmail() || isStaff());
-      allow create:         if signedIn() && request.resource.data.authorId == myEmail();
-      allow update, delete: if signedIn() && (resource.data.authorId == myEmail() || isStaff());
+      allow read:           if signedIn() && (mine(resource.data.authorId) || isStaff());
+      allow create:         if signedIn() && mine(request.resource.data.authorId);
+      allow update, delete: if signedIn() && (mine(resource.data.authorId) || isStaff());
     }
 
     match /feedback/{id} {
-      allow read:   if signedIn() && (resource.data.author == myEmail() || isAdmin());
-      allow create: if signedIn() && request.resource.data.author == myEmail();
+      allow read:   if signedIn() && (mine(resource.data.author) || isAdmin());
+      allow create: if signedIn() && mine(request.resource.data.author);
       allow delete: if isAdmin();
     }
 
     match /logs/{id} {
       allow create: if signedIn();
       allow read, delete: if isAdmin();
+    }
+
+    // open appointment times: counselors publish them, a student may claim one that is still free
+    match /slots/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || (signedIn() && resource.data.takenBy == '' && mine(request.resource.data.takenBy)
+                    && request.resource.data.start == resource.data.start && request.resource.data.counselor == resource.data.counselor);
+    }
+
+    match /announcements/{id} {
+      allow read: if signedIn();
+      allow create, delete: if isStaff();
     }
 
     match /counselors/{id} {

@@ -166,6 +166,7 @@
     let showLandingSettings=false, showForgotPassword=false, forgotPasswordEmail='', forgotPasswordError='', forgotPasswordSuccess='';
     let firestoreUnsubscribes=[];
     let isAnonymous=false;
+    let postingAbout='me', postingAboutWho='';
     let announcementBusy=false;
     let appLang = localStorage.getItem('qh_lang') || 'en';
     const app=document.getElementById('app');
@@ -322,6 +323,8 @@ async function refineRiskInBackground(col, item, text, local, kind, heading, bod
     }).catch(e => console.warn('[QHsafety] could not store refined risk:', e && e.code));
   }
   if (risk.level === 'High' || risk.level === 'Medium') alertOnce(risk);
+  // the AI saw something the local rules did not: show the student where to get help now
+  if (levelRank(risk.level) >= levelRank('Medium') && levelRank(local.level) < levelRank('Medium') && !document.getElementById('qh-help')) maybeShowSupport(risk, !!item.aboutOther);
   if (risk.flagged) addLog('⚠ Flagged ' + kind.toLowerCase() + ' (' + ((risk.reasons || []).join(', ') || 'Sensitive content') + ')', authorLabel, 'warning');
 }
 
@@ -338,6 +341,7 @@ function escalateFromChat(col, id, msg) {
   const risk = { level: r.level, score: Math.max(Number(item.aiScore || 0), r.score), reasons };
   db.collection(col).doc(String(id)).update({ riskLevel: risk.level, aiScore: risk.score, flagged: true, reasons }).catch(() => {});
   const kind = col === 'postings' ? 'Posting' : 'Consultation';
+  maybeShowSupport(r, !!item.aboutOther);
   alertGuidance(kind, item.author || (isAnonymous ? 'Anonymous' : currentUserEmail), (item.title || item.reason || 'Chat message'), msg, risk, id);
 }
 
@@ -629,6 +633,8 @@ async function finishSignIn(user, selectedRole, viaGoogle) {
   activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
   localStorage.setItem('qh_saved_role', actualRole);
   if (actualRole === 'guidance') registerAsCounselor();
+  isAnonymous = false; _lastActive = Date.now();
+  loadSeen(); startOverdueWatch();
   loadDataFromFirestore();
   addLog(`Logged in as ${actualRole}` + (viaGoogle ? ' (Google)' : ''), email, 'info');
   setTimeout(handleDeepLink, 1000);
@@ -722,6 +728,7 @@ function friendlyAuthError(code, fallback) {
       return '⚠️ This email is already registered. Go to Login instead, or use "Forgot Password?" if you forgot it.';
     case 'auth/weak-password':
       return '🔒 Password is too weak — use at least 6 characters.';
+    case 'auth/admin-restricted-operation':
     case 'auth/operation-not-allowed':
       return '⛔ This sign-in method is not switched on yet. Ask your administrator to enable it in Firebase → Authentication → Sign-in method.';
     case 'auth/unauthorized-domain':
@@ -1057,6 +1064,11 @@ function logout() {
   feedbackList = [];
   systemLogs = [];
   booting = false; loginError = ''; selectedRoleForLogin = null; _threatMemo.clear(); _attStore.clear();
+  _seen = null; clearTimeout(_seenTimer); _seenTimer = null; clearInterval(_overdueTimer); _overdueTold.clear();
+  staffFilter = { risk: 'all', needsReply: false, mine: false, grade: '', q: '' }; reportCache = {}; storageStats = null;
+  postingAbout = 'me'; postingAboutWho = '';
+  closeSheet('qh-help'); closeSheet('qh-history');
+  slots = []; announcements = []; replyTemplates = null; templatesEditing = null; slotDraft = { date: '', time: '' };
   render();
   if (!wasAnonymous) auth.signOut().catch(() => {});
 }
@@ -1095,6 +1107,7 @@ function logout() {
       firestoreUnsubscribes.push(
         fbQuery.onSnapshot(s=>{feedbackList=s.docs.map(d=>d.data()).filter(Boolean).sort(byTime);dataLoaded.feedback=true;scheduleRender();},onErr('feedback'))
       );
+      loadExtras();
       // Logs: only the admin Logs page uses them
       if (currentRole==='admin') {
         firestoreUnsubscribes.push(
@@ -1130,12 +1143,16 @@ function logout() {
         isAnonymous: isAnonymous,
         timestamp: Date.now()
       };
+      const aboutOther = postingAbout === 'other';
+      if (aboutOther) { newPosting.aboutOther = true; newPosting.aboutWho = postingAboutWho.trim().slice(0, 80); }
       const write = db.collection('postings').doc(String(newPosting.id)).set(newPosting);
 
       // Clear the form straight away — the live listener already shows the new post
       postingTitle = ''; postingContent = ''; postingPriority = 'Medium'; showPostingForm = false; postingError = '';
+      postingAbout = 'me'; postingAboutWho = '';
       render();
-      toast(appLang === 'tl' ? 'Nai-post na' : 'Posted');
+      toast((appLang === 'tl' ? 'Nai-post na' : 'Posted') + (isAfterHours() ? ' — ' + tr('afterHours').toLowerCase() : ''));
+      maybeShowSupport(local, aboutOther);
 
       write.then(() => refineRiskInBackground('postings', newPosting, fullText, local, 'Posting', cleanTitle, cleanContent, chosen))
         .catch(e => {
@@ -1322,6 +1339,8 @@ async function handleSendAnnouncement() {
     const r = resultEl();
     if (r) { r.style.display = 'block'; r.innerHTML = `<span style="font-size:28px;font-weight:900;color:${delivered>0?'#388e3c':'#f57c00'}">${delivered}</span><br><span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px">Recipients</span>`; }
     addLog(`📢 Announcement sent to ${delivered} student(s): "${title}"`, currentUserEmail, 'info');
+    const annId = newDocId();   // keep a copy on the board so students can read it later
+    db.collection('announcements').doc(String(annId)).set({ id: annId, title, message, by: currentUserEmail, timestamp: Date.now() }).catch(() => {});
     announcementTitle = ''; announcementMessage = '';
   } catch(e) {
     say('Failed to send announcement.', '#c62828');
@@ -1379,7 +1398,8 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
       consultationReason = ''; consultationDescription = ''; consultationPriority = 'Medium';
       consultationGradeLevel = ''; consultationContactPref = 'chat'; consultationMoodLevel = 3; showConsultationForm = false; consultationError = '';
       render();
-      toast(appLang === 'tl' ? 'Naipadala ang kahilingan' : 'Request sent');
+      toast((appLang === 'tl' ? 'Naipadala ang kahilingan' : 'Request sent') + (isAfterHours() ? ' — ' + tr('afterHours').toLowerCase() : ''));
+      maybeShowSupport(local, false);
 
       write.then(() => {
         addLog('Consultation submitted', authorLabel, 'info');
@@ -1454,11 +1474,13 @@ async function scheduleConsultMeet(consultId) {
 async function cancelConsultMeet(consultId) {
   const ok = await confirmModal('Cancel meeting', 'Remove the scheduled meeting from this consultation?', 'warning', 'Cancel meeting');
   if (!ok) return;
+  const booked = (consultationPostings.find(c => String(c.id) === String(consultId)) || {}).slotId;
   try {
     const del = firebase.firestore.FieldValue.delete();
     await db.collection('consultations').doc(String(consultId)).update({
-      meetDate: del, meetTime: del, meetDateTime: del, meetLink: del, meetNotes: del, meetScheduledBy: del, meetScheduledAt: del
+      meetDate: del, meetTime: del, meetDateTime: del, meetLink: del, meetNotes: del, meetScheduledBy: del, meetScheduledAt: del, slotId: del
     });
+    if (booked) db.collection('slots').doc(String(booked)).update({ takenBy: '', consultId: '' }).catch(() => {});   // the time becomes available again
     addLog('Meet cancelled for consultation #'+consultId, currentUserEmail, 'warning');
     toast('Meeting cancelled');
   } catch(e) { showModal('Error', 'Failed to cancel meeting: ' + _esc(e.message), 'error'); }
@@ -1485,10 +1507,10 @@ async function sendConsultAttachment(consultId) {
   if (!input || !input.files || !input.files[0]) return;
   const file = input.files[0];
   const done = () => { input.value = ''; };
+  const isPhoto = /^image\/(png|jpe?g|webp)$/.test(file.type);
 
-  // Size check
-  if (file.size > ATTACH_MAX_SIZE_BYTES) {
-    showModal('File too large', `Maximum file size is 1MB. Your file is ${(file.size/1024/1024).toFixed(1)}MB. Please compress or crop the image first.`, 'error');
+  if (isPhoto ? file.size > ATTACH_IMAGE_INPUT_MAX : file.size > ATTACH_DOC_MAX_BYTES) {
+    showModal('File too large', isPhoto ? 'That photo is over 12 MB. Please choose a smaller one.' : `Documents and GIFs must be under ${Math.round(ATTACH_DOC_MAX_BYTES/1024)} KB (yours is ${(file.size/1024).toFixed(0)} KB). Photos are shrunk automatically, so a screenshot of the page works well.`, 'error');
     return done();
   }
   const consult = consultationPostings.find(c => String(c.id) === String(consultId));
@@ -1497,7 +1519,6 @@ async function sendConsultAttachment(consultId) {
     showModal('Attachment limit reached', `Maximum ${ATTACH_MAX_PER_CONSULT} attachments allowed per consultation to keep storage usage low.`, 'warning');
     return done();
   }
-  // Total per-user attachment count (across all consultations) — the student's own list is already loaded
   if (currentRole === 'student') {
     let totalAttach = 0;
     consultationPostings.forEach(c => { totalAttach += (c.chatMessages || []).filter(m => m.isAttachment && (m.sender === currentUserEmail || m.sender === 'Anonymous')).length; });
@@ -1506,27 +1527,25 @@ async function sendConsultAttachment(consultId) {
       return done();
     }
   }
-
-  const reader = new FileReader();
-  reader.onerror = () => { showModal('Error', 'Could not read that file.', 'error'); done(); };
-  reader.onload = async (e) => {
-    const base64 = String(e.target.result || '');
+  try {
+    toast('Uploading…');
+    const base64 = isPhoto ? await compressImage(file) : await readAsDataURL(file);
     if (!ATTACH_TYPES.test(base64)) { showModal('File type not supported', 'Please attach an image (PNG, JPG, GIF, WebP), a PDF or a Word document.', 'error'); return done(); }
+    const bytes = Math.round(base64.length * 0.75);
+    // a Firestore document holds at most 1 MB in total, including every earlier message
+    const used = JSON.stringify(consult || {}).length;
+    if (used + base64.length > 950 * 1024) { showModal('This chat is full', 'This consultation cannot hold another file. Please open a new consultation request for further attachments.', 'warning'); return done(); }
     const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
     const attachMsg = {
       sender: authorLabel, role: currentRole, isAttachment: true,
-      fileName: file.name.slice(0, 120), fileType: file.type, fileSize: file.size,
+      fileName: file.name.slice(0, 120), fileType: isPhoto ? 'image/jpeg' : file.type, fileSize: bytes,
       fileData: base64, isImage: file.type.startsWith('image/'),
       time: nowTime(), ts: Date.now()
     };
-    try {
-      toast('Uploading…');
-      await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(attachMsg) });
-      addLog(`Attachment sent in consultation #${consultId}`, authorLabel, 'info');
-    } catch (err) { showModal('Error', 'Failed to send attachment: ' + _esc(err.message), 'error'); }
-    done();
-  };
-  reader.readAsDataURL(file);
+    await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(attachMsg) });
+    addLog(`Attachment sent in consultation #${consultId}`, authorLabel, 'info');
+  } catch (err) { showModal('Error', 'Failed to send attachment: ' + _esc((err && err.message) || 'unknown error'), 'error'); }
+  done();
 }
 
 // ── CONSULTATION: SESSION RATING (after Done) ──
@@ -1618,6 +1637,8 @@ async function sendGuidanceMessage(postingId) {
   try {
     await db.collection('postings').doc(String(postingId)).update({
       guidanceMessage: msg,
+      guidanceMessageTs: Date.now(),
+      ...(post.firstReplyAt ? {} : { firstReplyAt: Date.now() }),
       guidanceMessageAt: new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'})
     });
     addLog(`Guidance message sent on post #${postingId}`, currentUserEmail, 'info');
@@ -1643,7 +1664,8 @@ async function sendPostingChat(postingId) {
   const inp = document.getElementById('postChat_'+postingId);
   if (inp) inp.value = '';
   try {
-    await db.collection('postings').doc(String(postingId)).update({ chatMessages: arrayUnion(chatMsg) });
+    const postItem = postings.find(p => String(p.id) === String(postingId)) || {};
+    await db.collection('postings').doc(String(postingId)).update({ chatMessages: arrayUnion(chatMsg), ...(currentRole === 'guidance' && !postItem.firstReplyAt ? { firstReplyAt: Date.now() } : {}) });
     escalateFromChat('postings', postingId, typed);
   } catch(e) {
     postingChatDraft[postingId] = typed; if (inp && !inp.value) inp.value = typed;
@@ -1663,7 +1685,8 @@ async function sendConsultationChat(consultId) {
   const inp = document.getElementById('consultChat_'+consultId);
   if (inp) inp.value = '';
   try {
-    await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(chatMsg) });
+    const consultItem = consultationPostings.find(c => String(c.id) === String(consultId)) || {};
+    await db.collection('consultations').doc(String(consultId)).update({ chatMessages: arrayUnion(chatMsg), ...(currentRole === 'guidance' ? { guidanceTypingAt: 0, ...(consultItem.firstReplyAt ? {} : { firstReplyAt: Date.now() }) } : {}) });
     escalateFromChat('consultations', consultId, typed);
     // 📧 If guidance replied, notify the student (in the background)
     if (currentRole === 'guidance') {
@@ -1724,6 +1747,8 @@ async function scanFirebaseStorage() {
       { name: 'consultations', label: 'Consultations', icon: 'users',          color: '#a5d6a7' },
       { name: 'feedback',      label: 'Feedback',      icon: 'message-circle', color: '#ffe082' },
       { name: 'counselors',    label: 'Counselors',    icon: 'shield',         color: '#ce93d8' },
+      { name: 'logs',          label: 'Logs',          icon: 'file-text',      color: '#b0bec5' },
+      { name: 'users',         label: 'Users',         icon: 'users',          color: '#80cbc4' },
     ];
     let totalBytes = 0;
     const results = [];
@@ -1865,7 +1890,7 @@ function renderConsultChatMsg(m, c) {
 
     // Only the icons this app uses, inlined (replaces the 350 KB icon library and its page-wide scan).
     // Icon paths: Lucide v0.263 — ISC License, © Lucide Contributors.
-    const ICONS = {"users":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /><circle cx=\"9\" cy=\"7\" r=\"4\" /><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /><path d=\"M16 3.13a4 4 0 0 1 0 7.75\" />","search":"<circle cx=\"11\" cy=\"11\" r=\"8\" /><path d=\"m21 21-4.3-4.3\" />","megaphone":"<path d=\"m3 11 18-5v12L3 14v-3z\" /><path d=\"M11.6 16.8a3 3 0 1 1-5.8-1.6\" />","trash-2":"<path d=\"M3 6h18\" /><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\" /><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\" /><line x1=\"10\" x2=\"10\" y1=\"11\" y2=\"17\" /><line x1=\"14\" x2=\"14\" y1=\"11\" y2=\"17\" />","send":"<path d=\"m22 2-7 20-4-9-9-4Z\" /><path d=\"M22 2 11 13\" />","plus":"<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />","bell":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" />","shield":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" />","paperclip":"<path d=\"m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48\" />","message-circle":"<path d=\"m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z\" />","log-out":"<path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" /><polyline points=\"16 17 21 12 16 7\" /><line x1=\"21\" x2=\"9\" y1=\"12\" y2=\"12\" />","languages":"<path d=\"m5 8 6 6\" /><path d=\"m4 14 6-6 2-3\" /><path d=\"M2 5h12\" /><path d=\"M7 2h1\" /><path d=\"m22 22-5-10-5 10\" /><path d=\"M14 18h6\" />","info":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 16v-4\" /><path d=\"M12 8h.01\" />","bell-ring":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" /><path d=\"M4 2C2.8 3.7 2 5.7 2 8\" /><path d=\"M22 8c0-2.3-.8-4.3-2-6\" />","alert-triangle":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z\" /><path d=\"M12 9v4\" /><path d=\"M12 17h.01\" />","x":"<path d=\"M18 6 6 18\" /><path d=\"m6 6 12 12\" />","wrench":"<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\" />","user":"<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /><circle cx=\"12\" cy=\"7\" r=\"4\" />","settings-2":"<path d=\"M20 7h-9\" /><path d=\"M14 17H5\" /><circle cx=\"17\" cy=\"17\" r=\"3\" /><circle cx=\"7\" cy=\"7\" r=\"3\" />","settings":"<path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","message-square":"<path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\" />","menu":"<line x1=\"4\" x2=\"20\" y1=\"12\" y2=\"12\" /><line x1=\"4\" x2=\"20\" y1=\"6\" y2=\"6\" /><line x1=\"4\" x2=\"20\" y1=\"18\" y2=\"18\" />","lock":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /><path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />","loader":"<line x1=\"12\" x2=\"12\" y1=\"2\" y2=\"6\" /><line x1=\"12\" x2=\"12\" y1=\"18\" y2=\"22\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"4.93\" y2=\"7.76\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"16.24\" y2=\"19.07\" /><line x1=\"2\" x2=\"6\" y1=\"12\" y2=\"12\" /><line x1=\"18\" x2=\"22\" y1=\"12\" y2=\"12\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"19.07\" y2=\"16.24\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"7.76\" y2=\"4.93\" />","history":"<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" /><path d=\"M12 7v5l4 2\" />","eye-off":"<path d=\"M9.88 9.88a3 3 0 1 0 4.24 4.24\" /><path d=\"M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68\" /><path d=\"M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61\" /><line x1=\"2\" x2=\"22\" y1=\"2\" y2=\"22\" />","external-link":"<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\" /><polyline points=\"15 3 21 3 21 9\" /><line x1=\"10\" x2=\"21\" y1=\"14\" y2=\"3\" />","clipboard-check":"<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /><path d=\"m9 14 2 2 4-4\" />","check-circle":"<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\" /><polyline points=\"22 4 12 14.01 9 11.01\" />","calendar":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\" ry=\"2\" /><line x1=\"16\" x2=\"16\" y1=\"2\" y2=\"6\" /><line x1=\"8\" x2=\"8\" y1=\"2\" y2=\"6\" /><line x1=\"3\" x2=\"21\" y1=\"10\" y2=\"10\" />","arrow-left":"<path d=\"m12 19-7-7 7-7\" /><path d=\"M19 12H5\" />","layout-dashboard":"<rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\" />","file-text":"<path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\" /><polyline points=\"14 2 14 8 20 8\" /><line x1=\"16\" x2=\"8\" y1=\"13\" y2=\"13\" /><line x1=\"16\" x2=\"8\" y1=\"17\" y2=\"17\" /><line x1=\"10\" x2=\"8\" y1=\"9\" y2=\"9\" />","heart":"<path d=\"M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z\" />","shield-check":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" /><path d=\"m9 12 2 2 4-4\" />","moon":"<path d=\"M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z\" />","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\" /><path d=\"M12 2v2\" /><path d=\"M12 20v2\" /><path d=\"m4.93 4.93 1.41 1.41\" /><path d=\"m17.66 17.66 1.41 1.41\" /><path d=\"M2 12h2\" /><path d=\"M20 12h2\" /><path d=\"m6.34 17.66-1.41 1.41\" /><path d=\"m19.07 4.93-1.41 1.41\" />","chevron-up":"<path d=\"m18 15-6-6-6 6\" />","chevron-down":"<path d=\"m6 9 6 6 6-6\" />","log-in":"<path d=\"M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4\" /><polyline points=\"10 17 15 12 10 7\" /><line x1=\"15\" x2=\"3\" y1=\"12\" y2=\"12\" />","check":"<polyline points=\"20 6 9 17 4 12\" />","eye":"<path d=\"M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","image":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /><circle cx=\"9\" cy=\"9\" r=\"2\" /><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />","download":"<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" /><polyline points=\"7 10 12 15 17 10\" /><line x1=\"12\" x2=\"12\" y1=\"15\" y2=\"3\" />","clock":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><polyline points=\"12 6 12 12 16 14\" />"};
+    const ICONS = {"users":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /><circle cx=\"9\" cy=\"7\" r=\"4\" /><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\" /><path d=\"M16 3.13a4 4 0 0 1 0 7.75\" />","search":"<circle cx=\"11\" cy=\"11\" r=\"8\" /><path d=\"m21 21-4.3-4.3\" />","megaphone":"<path d=\"m3 11 18-5v12L3 14v-3z\" /><path d=\"M11.6 16.8a3 3 0 1 1-5.8-1.6\" />","trash-2":"<path d=\"M3 6h18\" /><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\" /><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\" /><line x1=\"10\" x2=\"10\" y1=\"11\" y2=\"17\" /><line x1=\"14\" x2=\"14\" y1=\"11\" y2=\"17\" />","send":"<path d=\"m22 2-7 20-4-9-9-4Z\" /><path d=\"M22 2 11 13\" />","plus":"<path d=\"M5 12h14\" /><path d=\"M12 5v14\" />","bell":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" />","shield":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" />","paperclip":"<path d=\"m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48\" />","message-circle":"<path d=\"m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z\" />","log-out":"<path d=\"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4\" /><polyline points=\"16 17 21 12 16 7\" /><line x1=\"21\" x2=\"9\" y1=\"12\" y2=\"12\" />","languages":"<path d=\"m5 8 6 6\" /><path d=\"m4 14 6-6 2-3\" /><path d=\"M2 5h12\" /><path d=\"M7 2h1\" /><path d=\"m22 22-5-10-5 10\" /><path d=\"M14 18h6\" />","info":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M12 16v-4\" /><path d=\"M12 8h.01\" />","bell-ring":"<path d=\"M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" /><path d=\"M4 2C2.8 3.7 2 5.7 2 8\" /><path d=\"M22 8c0-2.3-.8-4.3-2-6\" />","alert-triangle":"<path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z\" /><path d=\"M12 9v4\" /><path d=\"M12 17h.01\" />","x":"<path d=\"M18 6 6 18\" /><path d=\"m6 6 12 12\" />","wrench":"<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z\" />","user":"<path d=\"M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2\" /><circle cx=\"12\" cy=\"7\" r=\"4\" />","settings-2":"<path d=\"M20 7h-9\" /><path d=\"M14 17H5\" /><circle cx=\"17\" cy=\"17\" r=\"3\" /><circle cx=\"7\" cy=\"7\" r=\"3\" />","settings":"<path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","message-square":"<path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\" />","menu":"<line x1=\"4\" x2=\"20\" y1=\"12\" y2=\"12\" /><line x1=\"4\" x2=\"20\" y1=\"6\" y2=\"6\" /><line x1=\"4\" x2=\"20\" y1=\"18\" y2=\"18\" />","lock":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\" /><path d=\"M7 11V7a5 5 0 0 1 10 0v4\" />","loader":"<line x1=\"12\" x2=\"12\" y1=\"2\" y2=\"6\" /><line x1=\"12\" x2=\"12\" y1=\"18\" y2=\"22\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"4.93\" y2=\"7.76\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"16.24\" y2=\"19.07\" /><line x1=\"2\" x2=\"6\" y1=\"12\" y2=\"12\" /><line x1=\"18\" x2=\"22\" y1=\"12\" y2=\"12\" /><line x1=\"4.93\" x2=\"7.76\" y1=\"19.07\" y2=\"16.24\" /><line x1=\"16.24\" x2=\"19.07\" y1=\"7.76\" y2=\"4.93\" />","history":"<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\" /><path d=\"M3 3v5h5\" /><path d=\"M12 7v5l4 2\" />","eye-off":"<path d=\"M9.88 9.88a3 3 0 1 0 4.24 4.24\" /><path d=\"M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68\" /><path d=\"M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61\" /><line x1=\"2\" x2=\"22\" y1=\"2\" y2=\"22\" />","external-link":"<path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\" /><polyline points=\"15 3 21 3 21 9\" /><line x1=\"10\" x2=\"21\" y1=\"14\" y2=\"3\" />","clipboard-check":"<rect width=\"8\" height=\"4\" x=\"8\" y=\"2\" rx=\"1\" ry=\"1\" /><path d=\"M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2\" /><path d=\"m9 14 2 2 4-4\" />","check-circle":"<path d=\"M22 11.08V12a10 10 0 1 1-5.93-9.14\" /><polyline points=\"22 4 12 14.01 9 11.01\" />","calendar":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\" ry=\"2\" /><line x1=\"16\" x2=\"16\" y1=\"2\" y2=\"6\" /><line x1=\"8\" x2=\"8\" y1=\"2\" y2=\"6\" /><line x1=\"3\" x2=\"21\" y1=\"10\" y2=\"10\" />","arrow-left":"<path d=\"m12 19-7-7 7-7\" /><path d=\"M19 12H5\" />","layout-dashboard":"<rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1\" /><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1\" /><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1\" />","file-text":"<path d=\"M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z\" /><polyline points=\"14 2 14 8 20 8\" /><line x1=\"16\" x2=\"8\" y1=\"13\" y2=\"13\" /><line x1=\"16\" x2=\"8\" y1=\"17\" y2=\"17\" /><line x1=\"10\" x2=\"8\" y1=\"9\" y2=\"9\" />","heart":"<path d=\"M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z\" />","shield-check":"<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\" /><path d=\"m9 12 2 2 4-4\" />","moon":"<path d=\"M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z\" />","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\" /><path d=\"M12 2v2\" /><path d=\"M12 20v2\" /><path d=\"m4.93 4.93 1.41 1.41\" /><path d=\"m17.66 17.66 1.41 1.41\" /><path d=\"M2 12h2\" /><path d=\"M20 12h2\" /><path d=\"m6.34 17.66-1.41 1.41\" /><path d=\"m19.07 4.93-1.41 1.41\" />","chevron-up":"<path d=\"m18 15-6-6-6 6\" />","chevron-down":"<path d=\"m6 9 6 6 6-6\" />","log-in":"<path d=\"M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4\" /><polyline points=\"10 17 15 12 10 7\" /><line x1=\"15\" x2=\"3\" y1=\"12\" y2=\"12\" />","check":"<polyline points=\"20 6 9 17 4 12\" />","eye":"<path d=\"M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z\" /><circle cx=\"12\" cy=\"12\" r=\"3\" />","image":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\" /><circle cx=\"9\" cy=\"9\" r=\"2\" /><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\" />","download":"<path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\" /><polyline points=\"7 10 12 15 17 10\" /><line x1=\"12\" x2=\"12\" y1=\"15\" y2=\"3\" />","clock":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><polyline points=\"12 6 12 12 16 14\" />","life-buoy":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"m4.93 4.93 4.24 4.24\"/><path d=\"m14.83 9.17 4.24-4.24\"/><path d=\"m14.83 14.83 4.24 4.24\"/><path d=\"m9.17 14.83-4.24 4.24\"/><circle cx=\"12\" cy=\"12\" r=\"4\" />","phone":"<path d=\"M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z\" />","bar-chart-3":"<path d=\"M3 3v18h18\" /><path d=\"M18 17V9\" /><path d=\"M13 17V5\" /><path d=\"M8 17v-3\" />","hard-drive":"<line x1=\"22\" x2=\"2\" y1=\"12\" y2=\"12\" /><path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\" /><line x1=\"6\" x2=\"6.01\" y1=\"16\" y2=\"16\" /><line x1=\"10\" x2=\"10.01\" y1=\"16\" y2=\"16\" />","user-check":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /><circle cx=\"9\" cy=\"7\" r=\"4\" /><polyline points=\"16 11 18 13 22 9\" />","check-check":"<path d=\"M18 6 7 17l-5-5\" /><path d=\"m22 10-7.5 7.5L13 16\" />","printer":"<polyline points=\"6 9 6 2 18 2 18 9\" /><path d=\"M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2\" /><rect width=\"12\" height=\"8\" x=\"6\" y=\"14\" />","filter":"<polygon points=\"22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3\" />","user-plus":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\" /><circle cx=\"9\" cy=\"7\" r=\"4\" /><line x1=\"19\" x2=\"19\" y1=\"8\" y2=\"14\" /><line x1=\"22\" x2=\"16\" y1=\"11\" y2=\"11\" />","venetian-mask":"<path d=\"M2 12a5 5 0 0 0 5 5 8 8 0 0 1 5 2 8 8 0 0 1 5-2 5 5 0 0 0 5-5V7h-5a8 8 0 0 0-5 2 8 8 0 0 0-5-2H2Z\" /><path d=\"M6 11c1.5 0 3 .5 3 2-2 0-3 0-3-2Z\" /><path d=\"M18 11c-1.5 0-3 .5-3 2 2 0 3 0 3-2Z\" />","book-open":"<path d=\"M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z\" /><path d=\"M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z\" />","calendar-plus":"<path d=\"M21 13V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h8\" /><line x1=\"16\" x2=\"16\" y1=\"2\" y2=\"6\" /><line x1=\"8\" x2=\"8\" y1=\"2\" y2=\"6\" /><line x1=\"3\" x2=\"21\" y1=\"10\" y2=\"10\" /><line x1=\"19\" x2=\"19\" y1=\"16\" y2=\"22\" /><line x1=\"16\" x2=\"22\" y1=\"19\" y2=\"19\" />","calendar-clock":"<path d=\"M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5\" /><path d=\"M16 2v4\" /><path d=\"M8 2v4\" /><path d=\"M3 10h5\" /><path d=\"M17.5 17.5 16 16.25V14\" /><path d=\"M22 16a6 6 0 1 1-12 0 6 6 0 0 1 12 0Z\" />","smile":"<circle cx=\"12\" cy=\"12\" r=\"10\" /><path d=\"M8 14s1.5 2 4 2 4-2 4-2\" /><line x1=\"9\" x2=\"9.01\" y1=\"9\" y2=\"9\" /><line x1=\"15\" x2=\"15.01\" y1=\"9\" y2=\"9\" />","smartphone":"<rect width=\"14\" height=\"20\" x=\"5\" y=\"2\" rx=\"2\" ry=\"2\" /><path d=\"M12 18h.01\" />","message-square-plus":"<path d=\"M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z\" /><line x1=\"9\" x2=\"15\" y1=\"10\" y2=\"10\" /><line x1=\"12\" x2=\"12\" y1=\"7\" y2=\"13\" />","bell-plus":"<path d=\"M19.3 14.8C20.1 16.4 21 17 21 17H3s3-2 3-9c0-3.3 2.7-6 6-6 1 0 1.9.2 2.8.7\" /><path d=\"M10.3 21a1.94 1.94 0 0 0 3.4 0\" /><path d=\"M15 8h6\" /><path d=\"M18 5v6\" />","moon-star":"<path d=\"M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z\" /><path d=\"M19 3v4\" /><path d=\"M21 5h-4\" />"};
     function iconSvg(name, attrs) {
       return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-lucide="' + name + '"' + (attrs || '') + '>' + (ICONS[name] || '') + '</svg>';
     }
@@ -1978,6 +2003,7 @@ function renderConsultChatMsg(m, c) {
     function setHTML(container, html) {
       const tpl = document.createElement('template');
       tpl.innerHTML = inlineIcons(html);
+      if (appLang === 'tl' && isAuthenticated && currentRole !== 'student') translateTree(tpl.content);
       // remember where each kept card currently lives, in case the layout around it changed shape
       let live = null;
       if (html.indexOf('data-same') >= 0) { live = new Map(); container.querySelectorAll('[data-key]').forEach(el => live.set(el.getAttribute('data-key'), el)); }
@@ -2035,6 +2061,7 @@ function renderConsultChatMsg(m, c) {
       if (document.hidden) setTimeout(run, 200); else requestAnimationFrame(run);
     }
 
+    let _lastLang = null;
     let booting = !!localStorage.getItem('qh_saved_role');   // returning user: hold the splash instead of flashing the landing page
     let _lastPage = null, _lastNavItem = null, _notifTimer = null;
 
@@ -2046,6 +2073,7 @@ function renderConsultChatMsg(m, c) {
 
       let html;
       _cardNext = new Map();
+      if (_lastLang !== appLang) { _lastLang = appLang; _cardMemo = new Map(); _mountedKeys = new Set(); }
       try {
         html = !isAuthenticated ? (selectedRoleForLogin ? renderGateway() : renderLanding()) : renderDashboard();
       } catch (err) {
@@ -2055,6 +2083,7 @@ function renderConsultChatMsg(m, c) {
       }
       setHTML(app, html);
       hydrateAttachments();
+      if (isAuthenticated) { observeSeenCards(); scheduleMarkSeen(); }
 
       const page = isAuthenticated ? activeSidebarItem : (selectedRoleForLogin ? 'gateway' : 'landing');
       const main = document.getElementById('main-scroll');
@@ -2104,13 +2133,17 @@ function renderConsultChatMsg(m, c) {
       return `
 <div data-key="landing" class="grid-bg screen" style="width:100%;overflow-y:auto;background-color:${c.background_color}">
   <nav class="flex items-center justify-between px-6 py-4" style="background:#2c3e50">
-    <span class="mono font-bold" style="font-size:${fs*1.25}px;color:#fff"><span style="color:${c.primary_action_color}">QH</span>safety</span>
-    <button onclick="showLandingSettings=!showLandingSettings;render()" aria-label="Settings" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
+    ${logoLockup(30,true)}
+    <div class="flex items-center gap-2">
+      <button onclick="showHelp()" class="help-btn compact"><i data-lucide="life-buoy" style="width:16px;height:16px"></i><span>${tr('getHelp')}</span></button>
+      <button onclick="showLandingSettings=!showLandingSettings;render()" aria-label="Settings" class="p-2 rounded-lg hover:opacity-80" style="color:#fff"><i data-lucide="settings" style="width:20px;height:20px"></i></button>
+    </div>
   </nav>
   ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);padding:16px" onclick="if(event.target===this){showLandingSettings=false;render()}"><div class="fade-in" style="background:${c.surface_color};border:1px solid ${c.text_color}14;border-radius:20px;padding:24px;width:360px;max-width:100%;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px"><h2 style="font-weight:700;font-size:18px;color:${c.text_color};margin:0">${tr('settings')}</h2><button onclick="showLandingSettings=false;render()" aria-label="Close" style="width:32px;height:32px;border-radius:50%;background:${c.text_color}12;display:flex;align-items:center;justify-content:center;color:${c.text_color}"><i data-lucide="x" style="width:16px;height:16px"></i></button></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${c.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><i data-lucide="${on?'moon':'sun'}" style="width:18px;height:18px;color:${c.text_color}"></i><div><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${c.text_color}88;margin-top:1px">${on?'On':'Off'}</div></div></div><button role="switch" aria-checked="${on}" aria-label="${tr('darkMode')}" onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="qh-switch ${on?'on':''}"><span></span></button></div><div style="padding:14px 16px;border-radius:14px;background:${c.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><i data-lucide="languages" style="width:18px;height:18px;color:${c.text_color}"></i><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('langSetting')}</div></div><div style="display:flex;gap:8px">${[['en','English'],['tl','Filipino']].map(l=>`<button onclick="appLang='${l[0]}';localStorage.setItem('qh_lang','${l[0]}');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;text-align:center;border:2px solid ${appLang===l[0]?c.primary_action_color:'transparent'};background:${appLang===l[0]?c.primary_action_color+'22':'transparent'};color:${c.text_color}">${l[1]}</button>`).join('')}</div></div></div></div>`:''}
   <section class="flex flex-col items-center justify-center text-center px-6 hero fade-in">
     <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${c.secondary_action_color}33;color:${c.text_color}">School Safety Platform</div>
-    <h1 class="font-bold leading-tight mb-4 hero-title" style="color:${c.text_color}">${c.hero_title}</h1>
+    <div class="mb-4">${logoMark(72, darkMode)}</div>
+    <h1 class="font-bold leading-tight mb-4 hero-title" style="color:${c.text_color}"><span style="color:${darkMode?c.primary_action_color:'#f9a825'}">QH</span>safety</h1>
     <p class="max-w-lg mb-8" style="font-size:${fs}px;color:${c.text_color}aa">${c.hero_subtitle}</p>
     ${loginError?`<div class="p-3 rounded-lg mb-6 text-sm max-w-sm w-full" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a">${loginError}</div>`:''}
     <p class="text-sm font-semibold mb-4" style="color:${c.text_color}">${tr('selectRole')}</p>
@@ -2122,6 +2155,8 @@ function renderConsultChatMsg(m, c) {
     <div class="quick-google">
       <div class="or-line" style="color:${c.text_color}77"><span>${appLang==='tl'?'o mabilisang pasok para sa estudyante':'or quick student sign-in'}</span></div>
       ${googleButton('student', appLang==='tl'?'Magpatuloy gamit ang Google':'Continue with Google')}
+      <button onclick="handleAnonymousSignIn()" ${authBusy?'disabled':''} class="anon-btn w-full" style="color:${c.text_color};border-color:${c.text_color}33">${authBusy==='anon'?spinner:'<i data-lucide="eye-off" style="width:16px;height:16px"></i>'}<span>${tr('continueAnonLong')}</span></button>
+      <p style="font-size:12px;color:${c.text_color}88;margin-top:8px;line-height:1.5">${tr('anonHint')}</p>
     </div>
   </section>
   <section class="max-w-4xl mx-auto px-6 pb-16">
@@ -2148,7 +2183,7 @@ function renderConsultChatMsg(m, c) {
   <button onclick="selectedRoleForLogin=null;currentAuthFlow='login';showForgotPassword=false;signupEmail='';signupPassword='';signupConfirmPassword='';signupError='';loginEmail='';loginPassword='';loginError='';forgotPasswordEmail='';forgotPasswordError='';forgotPasswordSuccess='';render()" class="absolute top-6 left-6 flex items-center gap-2 text-sm font-medium" style="color:${c.text_color}aa"><i data-lucide="arrow-left" style="width:16px;height:16px"></i> Back</button>
   <div class="w-full max-w-sm fade-in" style="margin:auto 0">
     <div class="text-center mb-6">
-      <span class="mono font-bold" style="font-size:${fs*2}px;color:${c.text_color}"><span style="color:${darkMode?c.primary_action_color:'#fbc02d'}">QH</span>safety</span>
+      <span style="display:inline-flex">${logoLockup(44, darkMode)}</span>
       <p style="color:${c.text_color}99;font-size:${fs}px;margin-top:8px">${mode==='reset'?'Reset password':mode==='signup'?'Create account':'Log in'} as ${roleName}</p>
     </div>
     <div class="p-6 rounded-xl" style="background:${c.surface_color};border:1px solid ${c.text_color}14">
@@ -2187,33 +2222,741 @@ function renderConsultChatMsg(m, c) {
 </div>`;
     }
 
+    // ═══════════════════════════ FEATURES ADDED IN v9 ═══════════════════════════
+
+    // ── Edit these for your school ──
+    const HELP_CONTACTS = {
+      // Shown at the top of the help screen. Leave a field empty to hide it.
+      school: { name: 'Guidance Office', phone: '', room: '', hours: 'School days, 7:00 AM – 5:00 PM' },
+      // Checked October 2026 (DepEd Lusog-Isip page for NCMH; CWC/DSWD for Makabata). Re-check once a year.
+      lines: [
+        { name: 'NCMH Crisis Hotline', note: { en: 'Someone to talk to, any time. Free and confidential.', tl: 'May makakausap ka, kahit anong oras. Libre at kumpidensyal.' },
+          numbers: [['1553', 'Landline, toll-free in Luzon'], ['0917-899-8727', 'Globe / TM'], ['0966-351-4518', 'Globe / TM'], ['0908-639-2672', 'Smart / Sun / TNT']] },
+        { name: 'Makabata Helpline', note: { en: 'For abuse, bullying, or anyone hurting a child.', tl: 'Para sa pang-aabuso, bullying, o sinumang nananakit ng bata.' }, numbers: [['1383', '']] },
+        { name: 'Emergency', note: { en: 'Police, ambulance, fire — if someone is in danger right now.', tl: 'Pulis, ambulansya, bumbero — kung may nasa panganib ngayon.' }, numbers: [['911', '']] },
+      ],
+    };
+    const IDLE_LIMIT_MIN = { student: 15, guidance: 30, admin: 30 };   // auto-logout after this many minutes without activity
+    const OVERDUE_MIN    = { High: 30, Medium: 240 };                  // "waiting too long" thresholds for counselors
+
+    Object.assign(T.en, {
+      reports:'Reports', storagePage:'Storage', getHelp:'Get help now', continueAnonLong:'Continue without an account',
+      anonHint:'No name, no email. Your posts stay on this device\'s session.',
+      aboutMe:'About me', aboutOther:'About someone else', aboutWho:'Who are you worried about? (optional — a name, nickname or section)',
+      stSent:'Sent — not seen yet', stSeen:'Seen by a counselor', stReplied:'A counselor replied', typing:'Counselor is typing…', isNew:'New',
+      cGuide:'<strong>How this works:</strong> Tell us what is going on. A counselor will read it and reply here. What you write stays between you and the guidance office.',
+      cNew:'New consultation request', cGrade:'Grade level', cJHS:'Junior High School', cSHS:'Senior High School', cPickGrade:'Please select your grade level', cSelected:'selected',
+      cReason:'Reason / topic', cReasonPh:'e.g. Academic stress, family issue, personal problem…', cPriority:'Priority level', cFeel:'How are you feeling right now?',
+      cContact:'Preferred contact method', cDescribe:'Describe your concern', cDescribePh:'Share as much or as little as you feel comfortable with. Everything is confidential.',
+      moods:['Very sad','Sad','Neutral','Good','Great'], cChat:'Chat', cMeet:'Google Meet', cFace:'Face to face', cPhone:'Phone call',
+      chatTitle:'Consultation chat', msgCounselor:'Message the counselor…', noMsgs:'No messages yet.', startBelow:'Start the conversation below.', chatClosed:'Chat closed — consultation resolved.',
+      comments:'Comments', addComment:'Add a comment…', noComments:'No comments yet.', attach:'Attach a file', apptStatus:'Appointment status', updateMood:'Update your mood:',
+      helpTitle:'You are not alone', helpLead:'If you are in danger or thinking about hurting yourself, please reach out now. These lines are free.',
+      helpAfter:'Thank you for telling us. The guidance office has been notified and a counselor will reach out to you. You do not have to wait if things feel urgent:',
+      helpFriend:'Thank you for looking out for them. The guidance office has been notified. If they are in danger right now, do not wait:',
+      helpSchool:'At school', helpClose:'Close', call:'Call', idleTitle:'Still there?', idleBody:'For your privacy you will be signed out in one minute.', idleStay:'I\'m still here',
+      idleOut:'You were signed out after a while without activity, to keep your posts private.',
+    });
+    Object.assign(T.tl, {
+      reports:'Mga Ulat', storagePage:'Storage', getHelp:'Humingi ng tulong ngayon', continueAnonLong:'Magpatuloy nang walang account',
+      anonHint:'Walang pangalan, walang email. Mananatili ang iyong mga post sa session ng device na ito.',
+      aboutMe:'Tungkol sa akin', aboutOther:'Tungkol sa ibang tao', aboutWho:'Sino ang inaalala mo? (opsyonal — pangalan, palayaw o section)',
+      stSent:'Naipadala — hindi pa nababasa', stSeen:'Nabasa na ng counselor', stReplied:'Sumagot na ang counselor', typing:'Nagta-type ang counselor…', isNew:'Bago',
+      cGuide:'<strong>Paano ito gumagana:</strong> Sabihin sa amin ang nangyayari. Babasahin ito ng counselor at sasagot dito. Mananatili ito sa pagitan mo at ng guidance office.',
+      cNew:'Bagong kahilingan sa konsultasyon', cGrade:'Baitang', cJHS:'Junior High School', cSHS:'Senior High School', cPickGrade:'Pakipili ang iyong baitang', cSelected:'ang napili',
+      cReason:'Dahilan / paksa', cReasonPh:'hal. Stress sa pag-aaral, problema sa pamilya, personal na problema…', cPriority:'Antas ng prioridad', cFeel:'Kumusta ang pakiramdam mo ngayon?',
+      cContact:'Paano mo gustong makausap', cDescribe:'Ilarawan ang iyong alalahanin', cDescribePh:'Ibahagi kung gaano karami o kakaunti ang komportable ka. Lahat ay kumpidensyal.',
+      moods:['Sobrang lungkot','Malungkot','Ayos lang','Mabuti','Napakabuti'], cChat:'Chat', cMeet:'Google Meet', cFace:'Harapan', cPhone:'Tawag sa telepono',
+      chatTitle:'Chat ng konsultasyon', msgCounselor:'Mag-mensahe sa counselor…', noMsgs:'Wala pang mensahe.', startBelow:'Simulan ang usapan sa ibaba.', chatClosed:'Sarado na ang chat — nalutas na ang konsultasyon.',
+      comments:'Mga komento', addComment:'Magdagdag ng komento…', noComments:'Wala pang komento.', attach:'Mag-attach ng file', apptStatus:'Katayuan ng appointment', updateMood:'I-update ang iyong pakiramdam:',
+      helpTitle:'Hindi ka nag-iisa', helpLead:'Kung nasa panganib ka o naiisip mong saktan ang sarili mo, humingi ng tulong ngayon. Libre ang mga linyang ito.',
+      helpAfter:'Salamat sa pagsasabi sa amin. Naabisuhan na ang guidance office at may counselor na makikipag-ugnayan sa iyo. Hindi mo kailangang maghintay kung apurahan:',
+      helpFriend:'Salamat sa pagmamalasakit mo sa kanila. Naabisuhan na ang guidance office. Kung nasa panganib sila ngayon, huwag nang maghintay:',
+      helpSchool:'Sa paaralan', helpClose:'Isara', call:'Tawagan', idleTitle:'Nandiyan ka pa ba?', idleBody:'Para sa iyong privacy, masa-sign out ka sa loob ng isang minuto.', idleStay:'Nandito pa ako',
+      idleOut:'Na-sign out ka dahil matagal na walang aktibidad, para manatiling pribado ang iyong mga post.',
+    });
+    function trList(key) { const v = (T[appLang] || T.en)[key] || T.en[key]; return Array.isArray(v) ? v : []; }
+
+    // ── LOGO ── a shield with a speech bubble inside: "a safe place to speak up"
+    function logoMark(size, onDark) {
+      const shield = onDark ? '#ffee58' : '#2c3e50', bubble = onDark ? '#2c3e50' : '#ffee58';
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 48 48" aria-hidden="true" style="flex-shrink:0;display:block">' +
+        '<path d="M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z" fill="' + shield + '" stroke="' + shield + '" stroke-width="3" stroke-linejoin="round"/>' +
+        '<path d="M17.5 14.5h13a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-5.2l-5.3 4.6V28.5h-2.5a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4Z" fill="' + bubble + '"/>' +
+        '<circle cx="19.5" cy="21.5" r="1.6" fill="' + shield + '"/><circle cx="24" cy="21.5" r="1.6" fill="' + shield + '"/><circle cx="28.5" cy="21.5" r="1.6" fill="' + shield + '"/></svg>';
+    }
+    function logoLockup(size, onDark) {
+      const ink = onDark ? '#fff' : config.text_color;
+      return '<span class="qh-logo" style="font-size:' + Math.round(size * 0.62) + 'px;color:' + ink + '">' + logoMark(size, onDark) + '<span><b>QH</b>safety</span></span>';
+    }
+
+    // ── HELP SCREEN ── reachable from every page, logged in or not
+    function showHelp(mode) {
+      const old = document.getElementById('qh-help'); if (old) old.remove();
+      const lead = (mode === 'after' ? tr('helpAfter') : mode === 'friend' ? tr('helpFriend') : tr('helpLead')) + (mode && isAfterHours() ? ' <strong>' + tr('afterHours') + ' (' + (SCHOOL_HOURS.label[appLang] || SCHOOL_HOURS.label.en) + ').</strong>' : '');
+      const sc = HELP_CONTACTS.school;
+      const tel = (n) => 'tel:' + String(n).replace(/[^\d+]/g, '');
+      const schoolBits = [sc.room, sc.hours].filter(Boolean).map(_esc).join(' · ');
+      const el = document.createElement('div');
+      el.id = 'qh-help'; el.className = 'qh-sheet-wrap';
+      el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'qh-help-title');
+      el.innerHTML = '<div class="qh-sheet">' +
+        '<div class="qh-sheet-head"><div class="qh-help-icon">' + iconSvg('life-buoy', ' style="width:22px;height:22px"') + '</div><h2 id="qh-help-title">' + tr('helpTitle') + '</h2>' +
+        '<button class="qh-sheet-x" aria-label="' + tr('helpClose') + '" onclick="closeSheet(\'qh-help\')">' + iconSvg('x', ' style="width:18px;height:18px"') + '</button></div>' +
+        '<p class="qh-sheet-lead">' + lead + '</p>' +
+        HELP_CONTACTS.lines.map(l => '<div class="qh-line"><div class="qh-line-name">' + _esc(l.name) + '</div><div class="qh-line-note">' + _esc(l.note[appLang] || l.note.en) + '</div><div class="qh-line-nums">' +
+          l.numbers.map(n => '<a href="' + tel(n[0]) + '">' + iconSvg('phone', ' style="width:14px;height:14px"') + '<span><b>' + _esc(n[0]) + '</b>' + (n[1] ? '<small>' + _esc(n[1]) + '</small>' : '') + '</span></a>').join('') + '</div></div>').join('') +
+        '<div class="qh-line"><div class="qh-line-name">' + tr('helpSchool') + ' — ' + _esc(sc.name) + '</div>' + (schoolBits ? '<div class="qh-line-note">' + schoolBits + '</div>' : '') +
+        (sc.phone ? '<div class="qh-line-nums"><a href="' + tel(sc.phone) + '">' + iconSvg('phone', ' style="width:14px;height:14px"') + '<span><b>' + _esc(sc.phone) + '</b></span></a></div>' : '') + '</div>' +
+        '<button class="qh-sheet-close" onclick="closeSheet(\'qh-help\')">' + tr('helpClose') + '</button></div>';
+      el.addEventListener('click', (e) => { if (e.target === el) closeSheet('qh-help'); });
+      document.body.appendChild(el);
+      requestAnimationFrame(() => el.classList.add('open'));
+      const x = el.querySelector('.qh-sheet-x'); if (x) x.focus();
+    }
+    function closeSheet(id) { const el = document.getElementById(id); if (el) el.remove(); }
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeSheet('qh-help'); closeSheet('qh-history'); } });
+
+    // After a serious post the student sees where to get help straight away (not for threats against others).
+    const SUPPORT_REASONS = /self-harm|suicid|disappear|plan or method|abuse|danger|sexual|eating|another student|distress|hopeless|depress|mental health|bullying/i;
+    function maybeShowSupport(risk, aboutOther) {
+      if (currentRole !== 'student' || !risk) return;
+      const serious = risk.critical || risk.level === 'High' || risk.level === 'Medium';
+      if (!serious || !(risk.reasons || []).some(r => SUPPORT_REASONS.test(r))) return;
+      const friend = aboutOther || (!risk.critical && (risk.reasons || []).some(r => /another student/i.test(r)));
+      setTimeout(() => showHelp(friend ? 'friend' : 'after'), 350);
+    }
+
+    // ── ANONYMOUS MODE ── needs "Anonymous" switched on in Firebase → Authentication → Sign-in method
+    async function handleAnonymousSignIn() {
+      if (authBusy) return;
+      loginError = ''; authBusy = 'anon'; signInFlowActive = true; render();
+      try {
+        let user = auth.currentUser && auth.currentUser.isAnonymous ? auth.currentUser : null;
+        if (!user) user = (await auth.signInAnonymously()).user;
+        enterAnonymous(user);
+        addLog('Anonymous session started', 'Anonymous', 'info');
+      } catch (e) {
+        loginError = friendlyAuthError(e && e.code, e && e.message);
+      } finally { authBusy = ''; signInFlowActive = false; render(); }
+    }
+    function enterAnonymous(user) {
+      isAnonymous = true; currentRole = 'student'; isAuthenticated = true;
+      currentUserEmail = 'anon_' + user.uid;
+      activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
+      localStorage.setItem('qh_saved_role', 'student');
+      loadSeen(); loadDataFromFirestore();
+    }
+
+    // ── UNREAD BADGES ── remembered per account on this device
+    let _seen = null, _seenTimer = null;
+    function loadSeen() {
+      try { _seen = JSON.parse(localStorage.getItem('qh_seen_' + currentUserEmail)); } catch (e) { _seen = null; }
+      if (!_seen || typeof _seen !== 'object' || !_seen.items) { _seen = { base: Date.now(), items: {} }; saveSeen(); }
+    }
+    function saveSeen() { try { localStorage.setItem('qh_seen_' + currentUserEmail, JSON.stringify(_seen)); } catch (e) {} }
+    function otherActivityTs(item) {
+      let t = 0; const iAmStudent = currentRole === 'student';
+      (item.chatMessages || []).forEach(m => { const fromStaff = m.role === 'guidance' || !!m.isSystem; if (iAmStudent === fromStaff) t = Math.max(t, Number(m.ts) || 0); });
+      if (iAmStudent) t = Math.max(t, Number(item.guidanceMessageTs) || 0, Number(item.meetScheduledAt) || 0);
+      else t = Math.max(t, Number(item.timestamp) || 0);
+      return t;
+    }
+    function isUnread(item, kind) {
+      if (!_seen || currentRole === 'admin') return false;
+      return otherActivityTs(item) > Math.max(_seen.items[kind + item.id] || 0, _seen.base || 0);
+    }
+    function unreadCount(page) {
+      if (page === 'Postings') return postings.filter(p => isUnread(p, 'p')).length;
+      if (page === 'Consultations') return consultationPostings.filter(c => isUnread(c, 'c')).length;
+      return 0;
+    }
+    function navBadge(page) { const n = unreadCount(page); return n ? '<span class="nav-badge" aria-label="' + n + ' new">' + (n > 9 ? '9+' : n) + '</span>' : ''; }
+    function scheduleMarkSeen() {
+      const page = activeSidebarItem;
+      if (!isAuthenticated || !_seen || (page !== 'Postings' && page !== 'Consultations') || !unreadCount(page) || _seenTimer || document.hidden) return;
+      _seenTimer = setTimeout(() => {
+        _seenTimer = null;
+        if (activeSidebarItem !== page || !_seen) return;
+        const now = Date.now(), kind = page === 'Postings' ? 'p' : 'c';
+        (page === 'Postings' ? postings : consultationPostings).forEach(i => { if (isUnread(i, kind)) _seen.items[kind + i.id] = now; });
+        const keys = Object.keys(_seen.items); if (keys.length > 600) keys.slice(0, keys.length - 400).forEach(k => delete _seen.items[k]);
+        saveSeen(); render();
+      }, 4000);
+    }
+
+    // ── "SEEN BY A COUNSELOR" ── recorded when a counselor actually has the card on screen
+    let _seenObserver = null; const _seenPending = new Map();
+    function observeSeenCards() {
+      if (currentRole !== 'guidance' || !('IntersectionObserver' in window)) return;
+      if (!_seenObserver) _seenObserver = new IntersectionObserver((entries) => {
+        entries.forEach(en => {
+          const key = en.target.getAttribute('data-unseen'); if (!key) return;
+          if (en.isIntersecting && !_seenPending.has(key)) {
+            _seenPending.set(key, setTimeout(() => {
+              const [col, id] = key.split(':');
+              db.collection(col).doc(id).update({ seenAt: Date.now(), seenBy: currentUserEmail }).catch(() => {});
+              _seenObserver.unobserve(en.target);
+            }, 1500));
+          } else if (!en.isIntersecting && _seenPending.has(key)) { clearTimeout(_seenPending.get(key)); _seenPending.delete(key); }
+        });
+      }, { threshold: 0.4 });
+      document.querySelectorAll('[data-unseen]').forEach(el => { if (!el._seenObs) { el._seenObs = true; _seenObserver.observe(el); } });
+    }
+    function hasCounselorReply(item) { return !!(item.firstReplyAt || item.guidanceMessage || (item.chatMessages || []).some(m => m.role === 'guidance' && !m.isSystem)); }
+    function statusChip(item) {
+      if (currentRole !== 'student') return '';
+      const replied = hasCounselorReply(item), seen = !!item.seenAt || replied;
+      const label = replied ? tr('stReplied') : seen ? tr('stSeen') : tr('stSent');
+      const icon = replied ? 'check-check' : seen ? 'eye' : 'clock';
+      const col = replied ? (darkMode ? '#a5d6a7' : '#2e7d32') : seen ? (darkMode ? '#90caf9' : '#1565c0') : config.text_color + '99';
+      return '<span class="status-chip" style="color:' + col + ';border-color:' + (replied || seen ? col : config.text_color + '33') + '"><i data-lucide="' + icon + '" style="width:12px;height:12px"></i>' + label + '</span>';
+    }
+    function newChip(item, kind) { return isUnread(item, kind) ? '<span class="new-chip">' + tr('isNew') + '</span>' : ''; }
+
+    // ── "COUNSELOR IS TYPING" ── one small write every 6 seconds at most
+    const _typingSent = {}; let _typingTimer = null;
+    function noteTyping(id) {
+      if (currentRole !== 'guidance') return;
+      const now = Date.now(); if (now - (_typingSent[id] || 0) < 6000) return;
+      _typingSent[id] = now;
+      db.collection('consultations').doc(String(id)).update({ guidanceTypingAt: now }).catch(() => {});
+    }
+    function typingLine(c) {
+      if (currentRole !== 'student' || !(Date.now() - (Number(c.guidanceTypingAt) || 0) < 9000)) return '';
+      if (!_typingTimer) _typingTimer = setTimeout(() => { _typingTimer = null; render(); }, 3200);
+      return '<div class="typing-line">' + tr('typing') + '</div>';
+    }
+
+    // ── ASSIGNMENT ──
+    async function assignItem(col, id) {
+      const list = col === 'postings' ? postings : consultationPostings;
+      const item = list.find(x => String(x.id) === String(id)); if (!item) return;
+      const mine = item.assignedTo === currentUserEmail;
+      try {
+        await db.collection(col).doc(String(id)).update(mine ? { assignedTo: firebase.firestore.FieldValue.delete(), assignedAt: firebase.firestore.FieldValue.delete() } : { assignedTo: currentUserEmail, assignedAt: Date.now() });
+        toast(mine ? 'Released' : 'Assigned to you', 'success');
+      } catch (e) { showModal('Error', _esc(e.message), 'error'); }
+    }
+    function assignControl(col, item) {
+      if (currentRole !== 'guidance') return '';
+      const who = String(item.assignedTo || ''), mine = who === currentUserEmail;
+      const label = mine ? 'Assigned to you · release' : who ? 'Assigned to ' + _esc(who.split('@')[0]) + ' · take over' : 'Assign to me';
+      return '<button onclick="assignItem(\'' + col + '\',\'' + item.id + '\')" class="assign-btn' + (mine ? ' mine' : who ? ' other' : '') + '"><i data-lucide="' + (who ? 'user-check' : 'user-plus') + '" style="width:12px;height:12px"></i>' + label + '</button>';
+    }
+
+    // ── COUNSELOR FILTERS ──
+    let staffFilter = { risk: 'all', needsReply: false, mine: false, grade: '', q: '' };
+    function needsReply(item, kind) {
+      if (kind === 'c' && item.status !== 'Pending') return false;
+      const last = (item.chatMessages || []).filter(m => !m.isSystem).pop();
+      if (last) return last.role !== 'guidance';
+      return !item.guidanceMessage;
+    }
+    function applyStaffFilter(list, kind) {
+      if (currentRole !== 'guidance') return list;
+      const f = staffFilter, q = (kind === 'c' ? f.q : '').trim().toLowerCase();
+      return list.filter(i =>
+        (f.risk === 'all' || (f.risk === 'high' ? i.riskLevel === 'High' : (i.riskLevel === 'High' || i.riskLevel === 'Medium'))) &&
+        (!f.needsReply || needsReply(i, kind)) &&
+        (!f.mine || i.assignedTo === currentUserEmail) &&
+        (!f.follow || (i.followUpAt && dayStart(i.followUpAt) <= dayStart(Date.now()))) &&
+        (kind !== 'c' || !f.grade || i.gradeLevel === f.grade) &&
+        (!q || ((i.reason || '') + ' ' + (i.description || '') + ' ' + (i.author || '')).toLowerCase().includes(q)));
+    }
+    function filterActive(kind) { const f = staffFilter; return f.risk !== 'all' || f.needsReply || f.mine || f.follow || (kind === 'c' && (f.grade || f.q)); }
+    function staffFilterBar(kind, shown, total) {
+      if (currentRole !== 'guidance') return '';
+      const f = staffFilter, c = config;
+      const chip = (on, label, js) => '<button aria-pressed="' + on + '" onclick="' + js + ';render()" class="filter-chip' + (on ? ' on' : '') + '">' + label + '</button>';
+      return '<div data-key="filters-' + kind + '" class="filter-bar">' +
+        (kind === 'c' ? '<div class="flex items-center gap-2 px-3 py-2 rounded-lg" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '22;flex:1 1 220px"><i data-lucide="search" style="width:16px;height:16px;color:' + c.text_color + '88"></i><input type="text" aria-label="Search consultations" placeholder="Search consultations…" value="' + _esc(f.q) + '" oninput="staffFilter.q=this.value;render()" autocomplete="off" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:' + c.text_color + ';font-size:14px" /></div>' : '') +
+        '<div class="filter-chips" role="group" aria-label="Filters">' +
+        chip(f.risk === 'all' && !f.needsReply && !f.mine && !f.grade && !f.follow, 'All', "staffFilter={risk:'all',needsReply:false,mine:false,grade:'',q:staffFilter.q}") +
+        chip(f.risk === 'high', 'High risk', "staffFilter.risk=staffFilter.risk==='high'?'all':'high'") +
+        chip(f.risk === 'attention', 'High + Medium', "staffFilter.risk=staffFilter.risk==='attention'?'all':'attention'") +
+        chip(f.needsReply, 'Needs reply', 'staffFilter.needsReply=!staffFilter.needsReply') +
+        chip(f.mine, 'Assigned to me', 'staffFilter.mine=!staffFilter.mine') +
+        chip(!!f.follow, 'Follow-up due', 'staffFilter.follow=!staffFilter.follow') +
+        (kind === 'c' ? '<select aria-label="Grade level" onchange="staffFilter.grade=this.value;render()" class="filter-chip' + (f.grade ? ' on' : '') + '">' + ['', 'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'].map(g => '<option value="' + g + '"' + (f.grade === g ? ' selected' : '') + '>' + (g || 'Any grade') + '</option>').join('') + '</select>' : '') +
+        '</div>' + (filterActive(kind) ? '<div class="text-xs" style="flex-basis:100%;color:' + c.text_color + '99">Showing ' + shown + ' of ' + total + '</div>' : '') + '</div>';
+    }
+
+    // ── WAITING TOO LONG ── checked every minute while a counselor has the app open
+    const _overdueTold = new Set(); let _overdueTimer = null;
+    function overdueItems() {
+      if (currentRole !== 'guidance') return [];
+      const now = Date.now(), out = [];
+      const check = (i, kind) => { const lim = OVERDUE_MIN[i.riskLevel]; if (lim && needsReply(i, kind) && now - (i.timestamp || now) > lim * 60000) out.push({ item: i, kind }); };
+      postings.forEach(p => check(p, 'p')); consultationPostings.forEach(c => check(c, 'c'));
+      return out;
+    }
+    function overdueBanner() {
+      const od = overdueItems(); if (!od.length) return '';
+      const high = od.filter(o => o.item.riskLevel === 'High').length;
+      return '<div data-key="overdue" class="overdue-banner" role="alert"><i data-lucide="clock" style="width:18px;height:18px"></i><span><strong>' + od.length + ' ' + (od.length === 1 ? 'item has' : 'items have') + ' waited too long for a reply</strong>' +
+        (high ? ' — ' + high + ' high-risk (over ' + OVERDUE_MIN.High + ' min)' : '') + '.</span><button onclick="staffFilter={risk:\'attention\',needsReply:true,mine:false,grade:\'\',q:\'\'};goTo(\'' + (od.some(o => o.kind === 'c') ? 'Consultations' : 'Postings') + '\')">Review</button></div>';
+    }
+    function startOverdueWatch() {
+      clearInterval(_overdueTimer);
+      if (currentRole !== 'guidance') return;
+      _overdueTimer = setInterval(() => {
+        const fresh = overdueItems().filter(o => !_overdueTold.has(o.kind + o.item.id));
+        if (!fresh.length) return;
+        fresh.forEach(o => _overdueTold.add(o.kind + o.item.id));
+        const msg = fresh.length + (fresh.length === 1 ? ' item is' : ' items are') + ' still waiting for a reply';
+        toast(msg, 'error');
+        try { if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('QHsafety — reply needed', { body: msg }); } catch (e) {}
+        render();
+      }, 60000);
+    }
+
+    // ── CASE HISTORY ── everything one student has sent, on a single timeline
+    function openHistory(kind, id) {
+      if (currentRole !== 'guidance') return;
+      const src = (kind === 'p' ? postings : consultationPostings).find(x => String(x.id) === String(id)); if (!src) return;
+      const who = src.authorId;
+      const rows = [];
+      postings.filter(p => p.authorId === who).forEach(p => rows.push({ t: p.timestamp, type: 'Posting', title: p.title, body: p.content, risk: p.riskLevel, extra: p.guidanceMessage ? 'Guidance reply: ' + p.guidanceMessage : '' }));
+      consultationPostings.filter(c => c.authorId === who).forEach(c => rows.push({ t: c.timestamp, type: 'Consultation', title: c.reason, body: c.description, risk: c.riskLevel,
+        extra: [c.status === 'Done' ? 'Resolved' : 'Pending', c.gradeLevel, c.referredTo ? 'Referred to ' + c.referredTo : '', c.guidanceNote ? 'Note: ' + c.guidanceNote : '', c.sessionRating ? 'Rated ' + c.sessionRating + '/5' : ''].filter(Boolean).join(' · ') }));
+      rows.sort((a, b) => (b.t || 0) - (a.t || 0));
+      const riskCol = (r) => r === 'High' ? '#d32f2f' : r === 'Medium' ? '#e65100' : r === 'Low-Medium' ? '#8d6e00' : '#2e7d32';
+      const name = who.startsWith('anon_') ? 'Anonymous student (same device)' : who;
+      closeSheet('qh-history');
+      const el = document.createElement('div');
+      el.id = 'qh-history'; el.className = 'qh-sheet-wrap'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'qh-history-title');
+      el.innerHTML = '<div class="qh-sheet wide"><div class="qh-sheet-head"><h2 id="qh-history-title">Case history</h2><button class="qh-sheet-x" aria-label="Close" onclick="closeSheet(\'qh-history\')">' + iconSvg('x', ' style="width:18px;height:18px"') + '</button></div>' +
+        '<p class="qh-sheet-lead" style="overflow-wrap:anywhere"><strong>' + _esc(name) + '</strong> — ' + rows.length + (rows.length === 1 ? ' item' : ' items') + ', ' + rows.filter(r => r.risk === 'High' || r.risk === 'Medium').length + ' flagged Medium or High. Covers the most recent 150 postings and consultations.</p>' +
+        '<div class="qh-timeline">' + rows.map(r => '<div class="qh-tl-row"><div class="qh-tl-dot" style="background:' + riskCol(r.risk) + '"></div><div><div class="qh-tl-meta">' + (r.t ? new Date(r.t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '') + ' · ' + r.type + ' · ' + _esc(r.risk) + ' risk</div><div class="qh-tl-title">' + _esc(r.title) + '</div><div class="qh-tl-body">' + _esc(r.body) + '</div>' + (r.extra ? '<div class="qh-tl-extra">' + _esc(r.extra) + '</div>' : '') + '</div></div>').join('') + '</div>' +
+        '<button class="qh-sheet-close" onclick="closeSheet(\'qh-history\')">Close</button></div>';
+      el.addEventListener('click', (e) => { if (e.target === el) closeSheet('qh-history'); });
+      document.body.appendChild(el); requestAnimationFrame(() => el.classList.add('open'));
+      const x = el.querySelector('.qh-sheet-x'); if (x) x.focus();
+    }
+    function historyLink(kind, item) {
+      if (currentRole !== 'guidance') return _esc(item.author);
+      return '<button class="link-btn" onclick="openHistory(\'' + kind + '\',\'' + item.id + '\')" title="See everything this student has sent">' + _esc(item.studentEmail || item.author) + '</button>';
+    }
+
+    // ── MONTHLY REPORT ──
+    let reportMonth = new Date().toISOString().slice(0, 7), reportCache = {};
+    function loadReport(month) {
+      if (reportCache[month]) return;
+      reportCache[month] = { loading: true };
+      const [y, m] = month.split('-').map(Number);
+      const start = new Date(y, m - 1, 1).getTime(), end = new Date(y, m, 1).getTime();
+      const grab = (col, kind) => db.collection(col).where('timestamp', '>=', start).where('timestamp', '<', end).get().then(s => { const out = []; s.forEach(d => { const x = cleanDoc(d.data(), kind); if (x) out.push(x); }); return out; });
+      Promise.all([grab('postings', 'posting'), grab('consultations', 'consultation')])
+        .then(([p, c]) => { reportCache[month] = { postings: p, consultations: c }; })
+        .catch(e => { reportCache[month] = { error: (e && e.message) || 'Could not load' }; })
+        .then(render);
+    }
+    function firstReplyMinutes(i) {
+      let t = Number(i.firstReplyAt) || 0;
+      if (!t) { const m = (i.chatMessages || []).find(x => x.role === 'guidance' && !x.isSystem); t = (m && Number(m.ts)) || Number(i.guidanceMessageTs) || 0; }
+      return t && i.timestamp ? Math.max(0, (t - i.timestamp) / 60000) : null;
+    }
+    function reportStats(month) {
+      const d = reportCache[month]; if (!d || d.loading || d.error) return null;
+      const all = d.postings.map(p => ({ ...p, _k: 'Posting' })).concat(d.consultations.map(c => ({ ...c, _k: 'Consultation' })));
+      const count = (arr, fn) => { const o = {}; arr.forEach(x => { const k = fn(x); if (k) o[k] = (o[k] || 0) + 1; }); return o; };
+      const replies = all.map(firstReplyMinutes).filter(v => v !== null).sort((a, b) => a - b);
+      const reasons = {}; all.forEach(i => (i.reasons || []).forEach(r => { const k = r.replace(/\s*\(A4\)/, ''); reasons[k] = (reasons[k] || 0) + 1; }));
+      return { all, total: all.length, postings: d.postings.length, consultations: d.consultations.length,
+        risk: count(all, x => x.riskLevel), grade: count(d.consultations, c => c.gradeLevel), reasons,
+        resolved: d.consultations.filter(c => c.status === 'Done').length,
+        unanswered: all.filter(i => firstReplyMinutes(i) === null && !hasCounselorReply(i)).length,
+        medianReply: replies.length ? replies[Math.floor(replies.length / 2)] : null, replied: replies.length };
+    }
+    function fmtDuration(min) { if (min === null) return '—'; if (min < 60) return Math.round(min) + ' min'; if (min < 1440) return (min / 60).toFixed(1) + ' h'; return (min / 1440).toFixed(1) + ' days'; }
+    function exportReportCsv() {
+      const s = reportStats(reportMonth); if (!s) return;
+      const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""').replace(/^([=+\-@])/, "'$1") + '"';
+      const rows = [['Date', 'Type', 'Risk level', 'AI score', 'Priority', 'Grade', 'Status', 'Categories', 'First reply (minutes)', 'Assigned to']];
+      s.all.sort((a, b) => a.timestamp - b.timestamp).forEach(i => { const fr = firstReplyMinutes(i); rows.push([new Date(i.timestamp).toISOString().slice(0, 10), i._k, i.riskLevel, i.aiScore, i.priority, i.gradeLevel || '', i._k === 'Consultation' ? i.status : '', (i.reasons || []).join('; '), fr === null ? '' : Math.round(fr), i.assignedTo || '']); });
+      const blob = new Blob(['\ufeff' + rows.map(r => r.map(q).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'qhsafety-report-' + reportMonth + '.csv';
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast('Report downloaded (no names or message text included)', 'success');
+    }
+    function reportBars(title, obj, order, status) {
+      const c = config, keys = (order || Object.keys(obj).sort((a, b) => obj[b] - obj[a])).filter(k => obj[k]).slice(0, 8);
+      if (!keys.length) return '';
+      const max = Math.max.apply(null, keys.map(k => obj[k]));
+      const statusCol = { High: '#d32f2f', Medium: '#e65100', 'Low-Medium': '#b28900', Low: '#2e7d32' };
+      return '<div class="p-6 rounded-xl" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><h3 class="font-bold mb-4" style="color:' + c.text_color + '">' + title + '</h3><div class="rep-bars">' +
+        keys.map(k => '<div class="rep-row" title="' + _esc(k) + ': ' + obj[k] + '"><span class="rep-label" style="color:' + c.text_color + 'cc">' + _esc(k) + '</span><span class="rep-track"><span class="rep-fill" style="width:' + Math.max(2, obj[k] / max * 100) + '%;background:' + (status ? statusCol[k] : (darkMode ? '#80deea' : '#2c3e50')) + '"></span></span><span class="rep-val" style="color:' + c.text_color + '">' + obj[k] + '</span></div>').join('') + '</div></div>';
+    }
+    function renderReports(fs) {
+      const c = config; loadReport(reportMonth);
+      const d = reportCache[reportMonth], s = reportStats(reportMonth);
+      const tile = (label, value, sub) => '<div class="p-5 rounded-xl" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><div class="text-xs font-semibold" style="color:' + c.text_color + '99">' + label + '</div><div class="font-bold" style="font-size:28px;line-height:1.2;color:' + c.text_color + '">' + value + '</div>' + (sub ? '<div class="text-xs mt-1" style="color:' + c.text_color + '88">' + sub + '</div>' : '') + '</div>';
+      return '<div class="max-w-4xl"><div class="flex items-center justify-between flex-wrap gap-3 mb-6"><h1 class="font-bold hidden md:block" style="font-size:' + fs * 1.4 + 'px;color:' + c.text_color + '">Monthly report</h1>' +
+        '<div class="flex gap-2 items-center flex-wrap"><input type="month" aria-label="Month" value="' + _esc(reportMonth) + '" max="' + new Date().toISOString().slice(0, 7) + '" onchange="if(this.value){reportMonth=this.value;render()}" style="padding:8px 10px;border:1px solid ' + c.text_color + '22;border-radius:8px;background:' + c.surface_color + ';color:' + c.text_color + ';font-size:14px" />' +
+        (s && s.total ? '<button onclick="exportReportCsv()" class="rep-btn" style="color:' + c.text_color + ';border-color:' + c.text_color + '33"><i data-lucide="download" style="width:14px;height:14px"></i>CSV</button><button onclick="window.print()" class="rep-btn" style="color:' + c.text_color + ';border-color:' + c.text_color + '33"><i data-lucide="printer" style="width:14px;height:14px"></i>Print</button>' : '') + '</div></div>' +
+        (!d || d.loading ? '<p style="color:' + c.text_color + '99">' + tr('loading') + '</p>' : d.error ? '<div class="p-4 rounded-lg text-sm" role="alert" style="background:#fdecea;color:#b71c1c">Could not load this month: ' + _esc(d.error) + '</div>' :
+        !s.total ? '<div class="p-8 rounded-xl text-center text-sm" style="background:' + c.surface_color + ';border:1px dashed ' + c.text_color + '33;color:' + c.text_color + '99">Nothing was submitted in this month.</div>' :
+        '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 rep-tiles">' + tile('Submissions', s.total, s.postings + ' postings · ' + s.consultations + ' consultations') + tile('Flagged Medium or High', (s.risk.High || 0) + (s.risk.Medium || 0), (s.risk.High || 0) + ' high') + tile('Typical first reply', fmtDuration(s.medianReply), 'median of ' + s.replied + ' replied') + tile('Still unanswered', s.unanswered, s.resolved + ' consultations resolved') + '</div>' +
+        '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + reportBars('By risk level', s.risk, ['High', 'Medium', 'Low-Medium', 'Low'], true) + reportBars('By grade (consultations)', s.grade, ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12']) + '</div>' +
+        '<div class="mt-4">' + reportBars('Most common concerns', s.reasons) + '</div>' +
+        '<p class="text-xs mt-4" style="color:' + c.text_color + '88">Counts only. The CSV has one row per submission with dates, levels and categories — no names and no message text.</p>') + '</div>';
+    }
+
+    // ── STORAGE PAGE (admin) ──
+    function renderStorage(fs) {
+      const c = config, st = storageStats;
+      const levelCol = { safe: '#2e7d32', caution: '#b28900', warning: '#e65100', critical: '#d32f2f' };
+      return '<div class="max-w-3xl"><div class="flex items-center justify-between flex-wrap gap-3 mb-6"><h1 class="font-bold hidden md:block" style="font-size:' + fs * 1.4 + 'px;color:' + c.text_color + '">Storage</h1>' +
+        '<button onclick="scanFirebaseStorage()" ' + (storageLoading ? 'disabled' : '') + ' class="px-5 py-2.5 rounded-lg font-semibold text-sm btn-row" style="background:' + c.primary_action_color + ';color:#2c3e50">' + (storageLoading ? spinner + 'Scanning…' : '<i data-lucide="hard-drive" style="width:16px;height:16px"></i>' + (st ? 'Scan again' : 'Scan now')) + '</button></div>' +
+        '<p class="text-sm mb-6" style="color:' + c.text_color + '99">Estimates how much of the free Firestore allowance (1 GB) the app is using. A scan reads every document once, so run it occasionally, not daily.</p>' +
+        (!st ? '' : st.error ? '<div class="p-4 rounded-lg text-sm" role="alert" style="background:#fdecea;color:#b71c1c">Scan failed: ' + _esc(st.error) + '</div>' :
+        '<div class="p-6 rounded-xl mb-4" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><div class="flex items-center justify-between mb-2"><span class="font-bold" style="color:' + c.text_color + '">' + formatBytes(st.totalBytes) + ' used</span><span class="text-sm font-semibold" style="color:' + levelCol[st.level] + '">' + st.totalPct.toFixed(2) + '% · ' + st.level + '</span></div><div class="rep-track" style="height:10px"><span class="rep-fill" style="width:' + Math.max(1, Math.min(100, st.totalPct)) + '%;background:' + levelCol[st.level] + '"></span></div><div class="text-xs mt-2" style="color:' + c.text_color + '88">Scanned ' + new Date(st.scannedAt).toLocaleString() + '</div></div>' +
+        '<div class="space-y-2">' + st.results.map(r => '<div class="p-4 rounded-xl flex items-center justify-between gap-3 flex-wrap" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><div><div class="font-semibold" style="color:' + c.text_color + '">' + _esc(r.label) + '</div><div class="text-xs" style="color:' + c.text_color + '88">' + (r.skipped ? 'Could not be read' : r.docCount + ' documents' + (r.attachmentCount ? ' · ' + r.attachmentCount + ' attachments (' + formatBytes(r.attachmentBytes) + ')' : '')) + '</div></div><div class="font-bold" style="color:' + c.text_color + '">' + formatBytes(r.bytes) + '</div></div>').join('') + '</div>') + '</div>';
+    }
+
+    // ── AUTO-LOGOUT WHEN IDLE ── shared computers are common; a session left open exposes private posts
+    let _lastActive = Date.now(), _idleWarned = false;
+    ['pointerdown', 'keydown', 'scroll', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { _lastActive = Date.now(); }, { capture: true, passive: true }));
+    function stayActive() { _lastActive = Date.now(); _idleWarned = false; closeModal(); }
+    setInterval(() => {
+      if (!isAuthenticated) { _idleWarned = false; return; }
+      const limit = (IDLE_LIMIT_MIN[currentRole] || 15) * 60000, idle = Date.now() - _lastActive;
+      if (idle >= limit) {
+        _idleWarned = false; closeModal(); closeSheet('qh-history');
+        logout(); loginError = tr('idleOut'); render();
+      } else if (idle >= limit - 60000 && !_idleWarned) {
+        _idleWarned = true;
+        _openModal(tr('idleTitle'), tr('idleBody'), 'info', { buttons: '<button class="qh-modal-btn qh-modal-btn-success" data-autofocus onclick="stayActive()">' + tr('idleStay') + '</button>' });
+      }
+    }, 5000);
+
+    // ── LIGHTER ATTACHMENTS ── photos are resized in the browser before they are stored
+    const ATTACH_TARGET_BYTES = 230 * 1024;      // per stored image (a Firestore document cannot exceed 1 MB in total)
+    const ATTACH_DOC_MAX_BYTES = 450 * 1024;     // PDFs / Word files cannot be shrunk, so they must already be small
+    const ATTACH_IMAGE_INPUT_MAX = 12 * 1024 * 1024;
+    function readAsDataURL(file) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result || '')); r.onerror = () => rej(new Error('Could not read that file.')); r.readAsDataURL(file); }); }
+    async function compressImage(file) {
+      const url = URL.createObjectURL(file);
+      try {
+        const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That image could not be opened.')); i.src = url; });
+        let side = 1280, quality = 0.82, out = '';
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const scale = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+          const cv = document.createElement('canvas');
+          cv.width = Math.max(1, Math.round(img.naturalWidth * scale)); cv.height = Math.max(1, Math.round(img.naturalHeight * scale));
+          const ctx = cv.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(img, 0, 0, cv.width, cv.height);
+          out = cv.toDataURL('image/jpeg', quality);
+          if (out.length * 0.75 <= ATTACH_TARGET_BYTES) break;
+          if (quality > 0.6) quality -= 0.12; else side = Math.round(side * 0.75);
+        }
+        return out;
+      } finally { URL.revokeObjectURL(url); }
+    }
+
+    // ═══════════════════════════ FEATURES ADDED IN v10 ═══════════════════════════
+
+    // ── Edit these for your school ──
+    const SCHOOL_HOURS = { days: [1, 2, 3, 4, 5], open: 7, close: 17, timeZone: 'Asia/Manila',
+      label: { en: 'Monday to Friday, 7 AM – 5 PM', tl: 'Lunes hanggang Biyernes, 7 AM – 5 PM' } };
+    const DEFAULT_TEMPLATES = [
+      { title: 'First reply — serious concern', text: 'Thank you for trusting us with this. I have read your message and I want to talk with you today. Are you safe right now? Please come to the Guidance Office as soon as you can, or reply here and I will come to you.' },
+      { title: 'First reply — general', text: 'Thank you for reaching out. I have read your message and I am here to help. Can you tell me a little more about what has been happening?' },
+      { title: 'Set a time to talk', text: 'I would like to talk with you in person. When are you free today or tomorrow? You can also pick one of my open times in this consultation.' },
+      { title: 'Report about a friend', text: 'Thank you for looking out for your friend — telling us was the right thing to do. We will reach out to them carefully and we will not say who told us.' },
+      { title: 'Checking in', text: 'Hi, I am checking in to see how you have been since we last talked. How are things going?' },
+    ];
+
+    Object.assign(T.en, {
+      library:'Library', libIntro:'Short guides you can read any time. They are general advice, not a replacement for talking to someone.',
+      libTalk:'Want to talk to a person?', announcements:'Announcements', noAnnouncements:'No announcements yet.',
+      afterHours:'Counselors reply during school hours', afterHoursBody:'It is outside school hours now, so a reply may come on the next school day. If this cannot wait, use Get help now.',
+      moodTitle:'How are you today?', moodSaved:'Saved for today', moodPrivate:'Only you can see this. It stays on this device.',
+      moodLow:'It looks like the last few days have been hard. You do not have to carry it alone.', moodAsk:'Request a consultation',
+      pickTime:'Pick a time to meet', noSlots:'No open times right now — message the counselor in the chat.', booked:'Time booked', slotTaken:'That time was just taken. Please pick another.',
+      install:'Install the app', installBody:'Add QHsafety to your home screen so it opens like an app.', installBtn:'Install', installIos:'On iPhone: tap the Share button, then "Add to Home Screen".', installed:'QHsafety is installed on this device.',
+    });
+    Object.assign(T.tl, {
+      library:'Aklatan', libIntro:'Maiikling gabay na mababasa mo anumang oras. Pangkalahatang payo ito, hindi kapalit ng pakikipag-usap sa tao.',
+      libTalk:'Gusto mo bang makipag-usap sa tao?', announcements:'Mga Anunsyo', noAnnouncements:'Wala pang anunsyo.',
+      afterHours:'Sumasagot ang mga counselor tuwing oras ng klase', afterHoursBody:'Tapos na ang oras ng klase ngayon, kaya maaaring sa susunod na araw ng pasok ka masagot. Kung hindi ito makapaghihintay, pindutin ang Humingi ng tulong ngayon.',
+      moodTitle:'Kumusta ka ngayon?', moodSaved:'Na-save para sa araw na ito', moodPrivate:'Ikaw lang ang nakakakita nito. Nasa device na ito lang.',
+      moodLow:'Mukhang mahirap ang mga nakaraang araw. Hindi mo kailangang mag-isa.', moodAsk:'Humiling ng konsultasyon',
+      pickTime:'Pumili ng oras ng pagkikita', noSlots:'Walang bakanteng oras ngayon — mag-mensahe sa counselor sa chat.', booked:'Na-book na ang oras', slotTaken:'May nauna na sa oras na iyon. Pumili ng iba.',
+      install:'I-install ang app', installBody:'Idagdag ang QHsafety sa home screen para bumukas na parang app.', installBtn:'I-install', installIos:'Sa iPhone: pindutin ang Share, tapos "Add to Home Screen".', installed:'Naka-install na ang QHsafety sa device na ito.',
+    });
+
+    // ── AFTER-HOURS NOTICE ──
+    function isAfterHours() {
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', { timeZone: SCHOOL_HOURS.timeZone, weekday: 'short', hour: 'numeric', hour12: false }).formatToParts(new Date());
+        const wd = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[parts.find(p => p.type === 'weekday').value];
+        const h = Number(parts.find(p => p.type === 'hour').value) % 24;
+        return !(SCHOOL_HOURS.days.includes(wd) && h >= SCHOOL_HOURS.open && h < SCHOOL_HOURS.close);
+      } catch (e) { return false; }
+    }
+    function afterHoursNote() {
+      if (currentRole !== 'student' || !isAfterHours()) return '';
+      return '<div class="after-hours" role="note"><i data-lucide="clock" style="width:16px;height:16px"></i><div><strong>' + tr('afterHours') + ' (' + (SCHOOL_HOURS.label[appLang] || SCHOOL_HOURS.label.en) + ').</strong> ' + tr('afterHoursBody') + ' <button class="link-btn" onclick="showHelp()">' + tr('getHelp') + '</button></div></div>';
+    }
+
+    // ── FOLLOW-UP REMINDERS ──
+    function dayStart(ts) { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    async function setFollowUp(col, id, days) {
+      days = Number(days);
+      const del = firebase.firestore.FieldValue.delete();
+      try {
+        await db.collection(col).doc(String(id)).update(days > 0 ? { followUpAt: dayStart(Date.now() + days * 86400000), followUpBy: currentUserEmail } : { followUpAt: del, followUpBy: del });
+        toast(days > 0 ? 'Follow-up set' : 'Follow-up cleared', 'success');
+      } catch (e) { showModal('Error', _esc(e.message), 'error'); }
+    }
+    function followLabel(ts) {
+      const diff = Math.round((dayStart(ts) - dayStart(Date.now())) / 86400000);
+      return diff < 0 ? 'Follow-up overdue' : diff === 0 ? 'Follow up today' : diff === 1 ? 'Follow up tomorrow' : 'Follow up ' + new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+    function followControl(col, item) {
+      if (currentRole !== 'guidance') return '';
+      const has = Number(item.followUpAt) > 0, due = has && dayStart(item.followUpAt) <= dayStart(Date.now());
+      return '<select aria-label="Follow-up reminder" class="assign-btn' + (due ? ' due' : has ? ' other' : '') + '" onchange="setFollowUp(\'' + col + '\',\'' + item.id + '\',this.value)">' +
+        '<option value="" selected>' + (has ? followLabel(item.followUpAt) : 'Remind me to follow up') + '</option><option value="1">Tomorrow</option><option value="3">In 3 days</option><option value="7">In a week</option><option value="14">In 2 weeks</option>' + (has ? '<option value="0">Clear reminder</option>' : '') + '</select>';
+    }
+    function followUpsDue() {
+      if (currentRole !== 'guidance') return [];
+      const today = dayStart(Date.now()), out = [];
+      postings.forEach(p => { if (p.followUpAt && dayStart(p.followUpAt) <= today) out.push({ item: p, col: 'postings', page: 'Postings', title: p.title }); });
+      consultationPostings.forEach(c => { if (c.followUpAt && dayStart(c.followUpAt) <= today) out.push({ item: c, col: 'consultations', page: 'Consultations', title: c.reason }); });
+      return out.sort((a, b) => a.item.followUpAt - b.item.followUpAt);
+    }
+    function followUpPanel() {
+      const due = followUpsDue(); if (!due.length) return '';
+      const c = config;
+      return '<div data-key="followups" class="p-6 rounded-xl mb-6" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><div class="flex items-center gap-2 mb-3"><i data-lucide="calendar-clock" style="width:18px;height:18px;color:' + c.text_color + '"></i><h3 class="font-bold" style="color:' + c.text_color + '">Follow-ups due (' + due.length + ')</h3></div><div class="space-y-2">' +
+        due.map(d => '<div class="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg" style="background:' + c.text_color + '08"><div style="min-width:0;flex:1 1 180px"><div class="font-semibold text-sm" style="color:' + c.text_color + ';overflow-wrap:anywhere">' + _esc(d.title) + '</div><div class="text-xs" style="color:' + c.text_color + '99">' + _esc(d.item.author) + ' · ' + followLabel(d.item.followUpAt) + '</div></div><div class="flex gap-2"><button class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:' + c.text_color + '14;color:' + c.text_color + '" onclick="staffFilter={risk:\'all\',needsReply:false,mine:false,grade:\'\',q:\'\',follow:true};goTo(\'' + d.page + '\')">Open</button><button class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:' + c.secondary_action_color + ';color:#2c3e50" onclick="setFollowUp(\'' + d.col + '\',\'' + d.item.id + '\',0)">Done</button></div></div>').join('') + '</div></div>';
+    }
+
+    // ── SAVED REPLIES ── shared by all counselors (stored in Firestore under counselors/_templates)
+    let replyTemplates = null;
+    function templateList() { return replyTemplates && replyTemplates.length ? replyTemplates : DEFAULT_TEMPLATES; }
+    function templatePicker(kind, id) {
+      if (currentRole !== 'guidance') return '';
+      return '<select aria-label="Saved replies" class="assign-btn" style="max-width:100%" onchange="useTemplate(\'' + kind + '\',\'' + id + '\',this.value);this.selectedIndex=0"><option value="" selected>Saved replies…</option>' +
+        templateList().map((t, i) => '<option value="' + i + '">' + _esc(t.title) + '</option>').join('') + '</select>';
+    }
+    function useTemplate(kind, id, idx) {
+      const t = templateList()[Number(idx)]; if (!t || idx === '') return;
+      const store = kind === 'p' ? guidanceMessageDraft : consultationChatDraft;
+      const el = document.getElementById((kind === 'p' ? 'gmsg_' : 'consultChat_') + id);
+      const cur = (el && el.value) || store[id] || '';
+      const text = (cur.trim() ? cur.trim() + ' ' : '') + t.text;
+      store[id] = text.slice(0, kind === 'p' ? 2000 : 1000);
+      if (el) { el.value = store[id]; el.focus(); }
+    }
+    let templatesEditing = null;   // working copy while the Settings editor is open
+    function editTemplates() { templatesEditing = templateList().map(t => ({ title: t.title, text: t.text })); render(); }
+    function readTemplateInputs() {
+      if (!templatesEditing) return;
+      templatesEditing = templatesEditing.map((t, i) => ({ title: (document.getElementById('tplTitle_' + i) || {}).value || '', text: (document.getElementById('tplText_' + i) || {}).value || '' }));
+    }
+    async function saveTemplates() {
+      readTemplateInputs();
+      const items = templatesEditing.map(t => ({ title: t.title.trim().slice(0, 60), text: t.text.trim().slice(0, 900) })).filter(t => t.title && t.text).slice(0, 20);
+      if (items.some(t => containsProfanity(t.text))) { showModal('Please rephrase', LANGUAGE_REFUSAL, 'error'); return; }
+      try {
+        await db.collection('counselors').doc('_templates').set({ items, updatedAt: Date.now(), updatedBy: currentUserEmail });
+        replyTemplates = items; templatesEditing = null; render(); toast('Saved replies updated', 'success');
+      } catch (e) { showModal('Error', _esc(e.message), 'error'); }
+    }
+    function templatesCard() {
+      if (currentRole !== 'guidance') return '';
+      const c = config, f = 'width:100%;padding:8px 10px;border:1px solid ' + c.text_color + '22;border-radius:8px;background:' + c.background_color + ';color:' + c.text_color + ';font-size:14px';
+      return '<div data-key="tpl-card" class="p-6 rounded-xl mb-6" style="background:' + c.surface_color + '"><div class="flex items-center gap-3 mb-2"><i data-lucide="message-square-plus" style="width:20px;height:20px;color:' + c.text_color + '"></i><h3 class="font-bold" style="color:' + c.text_color + '">Saved replies</h3></div>' +
+        '<p class="text-sm mb-4" style="color:' + c.text_color + '99">Ready-made first replies, shared by all counselors. Pick one from "Saved replies…" under any reply box, then personalise it before sending.</p>' +
+        (!templatesEditing ? '<ul class="text-sm mb-4" style="color:' + c.text_color + 'cc;list-style:disc;padding-left:18px;line-height:1.8">' + templateList().map(t => '<li>' + _esc(t.title) + '</li>').join('') + '</ul><button onclick="editTemplates()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:' + c.text_color + '14;color:' + c.text_color + '">Edit saved replies</button>' :
+        templatesEditing.map((t, i) => '<div class="mb-3 p-3 rounded-lg" style="background:' + c.text_color + '08"><input data-keep id="tplTitle_' + i + '" aria-label="Title" maxlength="60" placeholder="Title" value="' + _esc(t.title) + '" style="' + f + ';font-weight:600;margin-bottom:6px" /><textarea data-keep id="tplText_' + i + '" aria-label="Reply text" maxlength="900" rows="3" placeholder="Reply text" style="' + f + ';resize:vertical">' + _esc(t.text) + '</textarea><button class="btn-danger-ghost" style="margin-top:6px" onclick="readTemplateInputs();templatesEditing.splice(' + i + ',1);render()">Remove</button></div>').join('') +
+        '<div class="flex gap-2 flex-wrap"><button onclick="readTemplateInputs();templatesEditing.push({title:\'\',text:\'\'});render()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:' + c.text_color + '14;color:' + c.text_color + '">Add a reply</button><button onclick="saveTemplates()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:' + c.primary_action_color + ';color:#2c3e50">Save</button><button onclick="templatesEditing=null;render()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:transparent;color:' + c.text_color + 'aa;border:1px solid ' + c.text_color + '22">Cancel</button></div>') + '</div>';
+    }
+
+    // ── INSTALL AS AN APP ──
+    let _installEvt = null;
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _installEvt = e; if (isAuthenticated) scheduleRender(); });
+    window.addEventListener('appinstalled', () => { _installEvt = null; toast('QHsafety installed', 'success'); scheduleRender(); });
+    function isStandalone() { try { return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true; } catch (e) { return false; } }
+    async function installApp() { if (!_installEvt) return; _installEvt.prompt(); try { await _installEvt.userChoice; } catch (e) {} _installEvt = null; render(); }
+    function installCard() {
+      const c = config, ios = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+      if (!isStandalone() && !_installEvt && !ios) return '';
+      return '<div data-key="install-card" class="p-6 rounded-xl mb-6" style="background:' + c.surface_color + '"><div class="flex items-center gap-3 mb-2"><i data-lucide="smartphone" style="width:20px;height:20px;color:' + c.text_color + '"></i><h3 class="font-bold" style="color:' + c.text_color + '">' + tr('install') + '</h3></div>' +
+        (isStandalone() ? '<p class="text-sm" style="color:' + c.text_color + '99">' + tr('installed') + '</p>' :
+          '<p class="text-sm mb-4" style="color:' + c.text_color + '99">' + tr('installBody') + (ios && !_installEvt ? ' ' + tr('installIos') : '') + '</p>' + (_installEvt ? '<button onclick="installApp()" class="px-5 py-2.5 rounded-lg font-semibold text-sm" style="background:' + c.primary_action_color + ';color:#2c3e50">' + tr('installBtn') + '</button>' : '')) + '</div>';
+    }
+
+    // ── SELF-HELP LIBRARY ── general guidance; have your counselors review and edit before launch
+    const LIBRARY = [
+      { id: 'stress', icon: 'book-open', title: { en: 'When school feels like too much', tl: 'Kapag sobra na ang bigat ng pag-aaral' },
+        points: { en: ['Write down everything that is due, then pick only the next one. A list you can see is lighter than a list in your head.', 'Work in short blocks — 25 minutes on, 5 minutes off. Stand up and drink water in the break.', 'Sleep is part of studying. Staying up all night makes the next day harder, not easier.', 'Tell a teacher early if you are falling behind. Asking for more time before a deadline goes better than explaining after it.', 'If the worry will not switch off for days, talk to a counselor. That is what this app is for.'],
+                  tl: ['Isulat lahat ng dapat ipasa, tapos piliin lang ang susunod. Mas magaan ang listahang nakikita kaysa nasa isip lang.', 'Mag-aral nang maiikling bahagi — 25 minuto, pahinga ng 5. Tumayo at uminom ng tubig sa pahinga.', 'Bahagi ng pag-aaral ang tulog. Mas hihirap ang susunod na araw kapag nagpuyat ka buong gabi.', 'Sabihin agad sa guro kung nahuhuli ka na. Mas maayos humingi ng dagdag na oras bago ang deadline kaysa magpaliwanag pagkatapos.', 'Kung ilang araw nang hindi nawawala ang pag-aalala, makipag-usap sa counselor. Para doon ang app na ito.'] } },
+      { id: 'bullying', icon: 'shield', title: { en: 'If someone is bullying you', tl: 'Kung may nambu-bully sa iyo' },
+        points: { en: ['It is not your fault, and you do not have to handle it alone.', 'Keep proof if it is online: screenshots with dates. Do not reply in anger — save it and report it.', 'Tell an adult you trust: a teacher, a counselor, a parent. You can post here, even without your name.', 'Stay near friends or staff in the places where it usually happens.', 'If anyone hurts you physically or threatens you, report it the same day.'],
+                  tl: ['Hindi mo ito kasalanan, at hindi mo kailangang harapin nang mag-isa.', 'Mag-ipon ng patunay kung online: mga screenshot na may petsa. Huwag sumagot nang galit — i-save at i-report.', 'Sabihin sa nakatatandang pinagkakatiwalaan mo: guro, counselor, magulang. Puwede kang mag-post dito kahit walang pangalan.', 'Manatiling malapit sa mga kaibigan o guro sa mga lugar na madalas itong mangyari.', 'Kung may nanakit o nagbanta sa iyo, i-report sa mismong araw na iyon.'] } },
+      { id: 'friend', icon: 'heart', title: { en: 'When you are worried about a friend', tl: 'Kapag nag-aalala ka sa kaibigan' },
+        points: { en: ['Ask them directly and kindly: "You have not seemed okay lately. What is going on?"', 'Listen more than you talk. You do not need to fix it.', 'If they talk about hurting themselves or not wanting to live, take it seriously every time.', 'Do not promise to keep it secret. Say: "I care about you too much to keep this to myself."', 'Tell a counselor today — use "About someone else" when you post. You will not get them in trouble.'],
+                  tl: ['Tanungin sila nang direkta at may malasakit: "Parang hindi ka okay nitong mga araw. Ano ang nangyayari?"', 'Mas makinig kaysa magsalita. Hindi mo kailangang ayusin ito.', 'Kung nabanggit nilang sasaktan ang sarili o ayaw nang mabuhay, seryosohin ito palagi.', 'Huwag mangakong ililihim mo ito. Sabihin: "Masyado kitang mahal para sarilinin ko lang ito."', 'Sabihin sa counselor ngayong araw — piliin ang "Tungkol sa ibang tao" kapag nag-post. Hindi mo sila ipapahamak.'] } },
+      { id: 'sad', icon: 'smile', title: { en: 'When you feel low for days', tl: 'Kapag ilang araw ka nang malungkot' },
+        points: { en: ['Feeling sad, empty or tired for a long time is common, and it can get better with support.', 'Keep the basics going even when you do not feel like it: eat, sleep, step outside for a few minutes.', 'Tell one person how you really are. Saying it out loud often makes it smaller.', 'Notice what helps even a little — music, a walk, a friend — and do more of that.', 'If you ever think about hurting yourself or ending your life, tell someone now and use Get help now. You deserve help.'],
+                  tl: ['Karaniwan ang matagal na lungkot, pagkahungkag o pagod, at puwede itong gumaan kapag may suporta.', 'Ituloy ang mga pangunahing bagay kahit wala kang gana: kumain, matulog, lumabas kahit ilang minuto.', 'Sabihin sa isang tao ang totoo mong nararamdaman. Madalas lumiliit ito kapag nasabi nang malakas.', 'Pansinin ang nakakatulong kahit kaunti — musika, paglalakad, kaibigan — at dagdagan pa iyon.', 'Kung maisip mong saktan ang sarili o tapusin ang buhay mo, sabihin agad sa iba at pindutin ang Humingi ng tulong ngayon. Karapat-dapat kang tulungan.'] } },
+      { id: 'home', icon: 'users', title: { en: 'When things are hard at home', tl: 'Kapag mahirap ang sitwasyon sa bahay' },
+        points: { en: ['Arguments, money problems or a parent working far away can weigh on you. It is okay to say it is hard.', 'Find one steady adult outside the house: a relative, a teacher, a counselor.', 'If you are being hurt, touched in a way that feels wrong, or you are afraid to go home, tell a counselor. It is never your fault.', 'You can call the Makabata Helpline (1383) about any harm to a child, including yourself.', 'If you are in danger right now, call 911.'],
+                  tl: ['Mabigat ang away, problema sa pera o magulang na nasa malayo. Ayos lang sabihing mahirap.', 'Humanap ng isang maaasahang nakatatanda sa labas ng bahay: kamag-anak, guro, counselor.', 'Kung sinasaktan ka, hinahawakan sa paraang mali ang pakiramdam, o takot kang umuwi, sabihin sa counselor. Hindi mo ito kasalanan kailanman.', 'Puwede kang tumawag sa Makabata Helpline (1383) tungkol sa anumang pananakit sa bata, kasama ka.', 'Kung nasa panganib ka ngayon, tumawag sa 911.'] } },
+      { id: 'online', icon: 'lock', title: { en: 'Staying safe online', tl: 'Pag-iingat online' },
+        points: { en: ['Never send photos of your body to anyone, even someone you trust. Once sent, you cannot take them back.', 'If someone threatens to share your photos or asks for money, do not pay and do not send more. Screenshot, block, and tell an adult.', 'This is a crime against you. You will not be in trouble for reporting it.', 'Keep accounts private and do not share passwords, even with friends.', 'If an adult you met online asks to meet or to keep secrets, tell a counselor.'],
+                  tl: ['Huwag magpadala ng litrato ng iyong katawan kahit kanino, kahit pinagkakatiwalaan mo. Hindi na ito mababawi kapag naipadala.', 'Kung may nagbabantang ikalat ang litrato mo o humihingi ng pera, huwag magbayad at huwag nang magpadala. Mag-screenshot, i-block, at sabihin sa nakatatanda.', 'Krimen ito laban sa iyo. Hindi ka mapapahamak sa pagre-report.', 'Gawing private ang mga account at huwag ibigay ang password, kahit sa kaibigan.', 'Kung may nakatatandang nakilala mo online na gustong makipagkita o maglihim, sabihin sa counselor.'] } },
+    ];
+    function renderLibrary(fs) {
+      const c = config, L = (o) => o[appLang] || o.en;
+      return '<div class="max-w-3xl"><p class="mb-6 text-sm" style="color:' + c.text_color + '99">' + tr('libIntro') + '</p><div class="space-y-2">' +
+        LIBRARY.map(a => '<details data-key="lib-' + a.id + '" class="lib-item" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><summary><span class="lib-icon" style="background:' + c.primary_action_color + '33;color:' + c.text_color + '"><i data-lucide="' + a.icon + '" style="width:18px;height:18px"></i></span><span style="flex:1;font-weight:700;color:' + c.text_color + '">' + _esc(L(a.title)) + '</span><i data-lucide="chevron-down" class="lib-chev" style="width:18px;height:18px;color:' + c.text_color + '88"></i></summary><ul style="color:' + c.text_color + 'cc">' + L(a.points).map(p => '<li>' + _esc(p) + '</li>').join('') + '</ul></details>').join('') +
+        '</div><div class="p-6 rounded-xl mt-6" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><h3 class="font-bold mb-3" style="color:' + c.text_color + '">' + tr('libTalk') + '</h3><div class="flex gap-2 flex-wrap"><button onclick="showConsultationForm=true;goTo(\'Consultations\')" class="px-5 py-2.5 rounded-lg font-semibold text-sm" style="background:' + c.primary_action_color + ';color:#2c3e50">' + tr('newConsultation') + '</button><button onclick="showHelp()" class="px-5 py-2.5 rounded-lg font-semibold text-sm" style="background:transparent;color:' + c.text_color + ';border:1px solid ' + c.text_color + '33">' + tr('getHelp') + '</button></div></div></div>';
+    }
+
+    // ── MOOD CHECK-IN ── private: kept in this browser only, never sent anywhere
+    function todayKey(offset) { const d = new Date(Date.now() - (offset || 0) * 86400000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+    function moodLog() { try { return JSON.parse(localStorage.getItem('qh_mood_' + currentUserEmail)) || {}; } catch (e) { return {}; } }
+    function setMood(n) {
+      const log = moodLog(); log[todayKey()] = n;
+      Object.keys(log).sort().slice(0, -60).forEach(k => delete log[k]);
+      try { localStorage.setItem('qh_mood_' + currentUserEmail, JSON.stringify(log)); } catch (e) {}
+      render();
+    }
+    function moodCard() {
+      if (currentRole !== 'student') return '';
+      const c = config, log = moodLog(), today = log[todayKey()] || 0, faces = ['😞', '😕', '😐', '🙂', '😊'], names = trList('moods');
+      const lowRun = [0, 1, 2].every(i => log[todayKey(i)] && log[todayKey(i)] <= 2);
+      return '<div data-key="mood-card" class="p-6 rounded-xl mb-6" style="background:' + c.surface_color + '"><h3 class="font-bold mb-3" style="color:' + c.text_color + '">' + tr('moodTitle') + '</h3>' +
+        '<div style="display:flex;justify-content:space-between;max-width:320px">' + faces.map((f, i) => '<button onclick="setMood(' + (i + 1) + ')" aria-label="' + _esc(names[i] || '') + '" aria-pressed="' + (today === i + 1) + '" style="font-size:28px;line-height:1;padding:8px;border-radius:12px;background:' + (today === i + 1 ? c.primary_action_color + '55' : 'transparent') + ';opacity:' + (!today || today === i + 1 ? '1' : '.45') + '">' + f + '</button>').join('') + '</div>' +
+        '<div class="mood-strip" aria-hidden="true">' + [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map(i => { const v = log[todayKey(i)]; return '<span title="' + todayKey(i) + '" style="height:' + (v ? 6 + v * 5 : 4) + 'px;background:' + (v ? (v <= 2 ? '#90a4ae' : v === 3 ? '#80deea' : '#fbc02d') : c.text_color + '22') + '"></span>'; }).join('') + '</div>' +
+        '<p class="text-xs mt-2" style="color:' + c.text_color + '88">' + (today ? tr('moodSaved') + ' · ' : '') + tr('moodPrivate') + '</p>' +
+        (lowRun ? '<div class="mt-4 p-3 rounded-lg text-sm" style="background:#e3f2fd;color:#0d47a1">' + tr('moodLow') + ' <button class="link-btn" style="font-weight:700" onclick="showConsultationForm=true;goTo(\'Consultations\')">' + tr('moodAsk') + '</button> · <button class="link-btn" style="font-weight:700" onclick="showHelp()">' + tr('getHelp') + '</button></div>' : '') + '</div>';
+    }
+
+    // ── APPOINTMENT SLOTS ── counselors publish open times; students book one from their consultation
+    let slots = [], slotDraft = { date: '', time: '' };
+    function slotLabel(ts) { return new Date(ts).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+    async function addSlot() {
+      const d = slotDraft; if (!d.date || !d.time) { showModal('Missing info', 'Pick a date and a time.', 'error'); return; }
+      const start = new Date(d.date + 'T' + d.time).getTime();
+      if (isNaN(start) || start < Date.now()) { showModal('Check the time', 'Choose a time in the future.', 'error'); return; }
+      if (slots.some(s => s.counselor === currentUserEmail && s.start === start)) { showModal('Already listed', 'You already have that time open.', 'info'); return; }
+      const id = newDocId();
+      try { await db.collection('slots').doc(String(id)).set({ id, start, date: d.date, time: d.time, counselor: currentUserEmail, takenBy: '', consultId: '', createdAt: Date.now() }); slotDraft = { date: d.date, time: '' }; render(); toast('Open time added', 'success'); }
+      catch (e) { showModal('Error', _esc(e.message), 'error'); }
+    }
+    async function removeSlot(id) { try { await db.collection('slots').doc(String(id)).delete(); toast('Removed'); } catch (e) { showModal('Error', _esc(e.message), 'error'); } }
+    function openSlots() { const now = Date.now(); return slots.filter(s => !s.takenBy && s.start > now).sort((a, b) => a.start - b.start); }
+    async function bookSlot(consultId, slotId) {
+      const consult = consultationPostings.find(c => String(c.id) === String(consultId)); if (!consult) return;
+      const ref = db.collection('slots').doc(String(slotId));
+      try {
+        const slot = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists || snap.data().takenBy) throw new Error('taken');
+          tx.update(ref, { takenBy: currentUserEmail, consultId: String(consultId), takenAt: Date.now() });
+          return snap.data();
+        });
+        const sysMsg = { sender: currentUserEmail, role: 'guidance', isSystem: true, text: '📅 <strong>Time booked:</strong> ' + _esc(slotLabel(slot.start)) + ' with the guidance counselor.', time: nowTime(), ts: Date.now() };
+        await db.collection('consultations').doc(String(consultId)).update({ meetDate: slot.date, meetTime: slot.time, meetDateTime: slot.date + 'T' + slot.time, meetScheduledBy: slot.counselor, meetScheduledAt: Date.now(), slotId: String(slotId), assignedTo: consult.assignedTo || slot.counselor, chatMessages: arrayUnion(sysMsg) });
+        toast(tr('booked'), 'success');
+      } catch (e) { if (e && e.message === 'taken') showModal(tr('pickTime'), tr('slotTaken'), 'warning'); else showModal('Error', _esc((e && e.message) || 'Could not book'), 'error'); }
+    }
+    function slotPicker(c) {
+      if (currentRole !== 'student' || c.status !== 'Pending' || c.meetDateTime) return '';
+      const open = openSlots().slice(0, 6), cf = config;
+      return '<div class="mb-3 p-3 rounded-xl" style="background:' + cf.text_color + '07;border:1px solid ' + cf.text_color + '11"><div class="text-xs font-bold mb-2" style="color:' + cf.text_color + 'aa">' + tr('pickTime') + '</div>' +
+        (open.length ? '<div class="flex gap-2 flex-wrap">' + open.map(s => '<button class="slot-btn" style="color:' + cf.text_color + ';border-color:' + cf.text_color + '33" onclick="bookSlot(\'' + c.id + '\',\'' + s.id + '\')"><i data-lucide="calendar-plus" style="width:13px;height:13px"></i>' + _esc(slotLabel(s.start)) + '</button>').join('') + '</div>' : '<div class="text-xs" style="color:' + cf.text_color + '88">' + tr('noSlots') + '</div>') + '</div>';
+    }
+    function slotPanel() {
+      if (currentRole !== 'guidance') return '';
+      const c = config, mine = slots.filter(s => s.counselor === currentUserEmail && s.start > Date.now() - 3600000).sort((a, b) => a.start - b.start);
+      const f = 'padding:8px;border:1px solid ' + c.text_color + '22;border-radius:8px;background:' + c.background_color + ';color:' + c.text_color + ';font-size:13px';
+      return '<details data-key="slot-panel" class="lib-item mb-4" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11"><summary><span class="lib-icon" style="background:' + c.secondary_action_color + '44;color:' + c.text_color + '"><i data-lucide="calendar-plus" style="width:18px;height:18px"></i></span><span style="flex:1;font-weight:700;color:' + c.text_color + '">My open times <span style="font-weight:500;color:' + c.text_color + '88">(' + mine.filter(s => !s.takenBy).length + ' open, ' + mine.filter(s => s.takenBy).length + ' booked)</span></span><i data-lucide="chevron-down" class="lib-chev" style="width:18px;height:18px;color:' + c.text_color + '88"></i></summary><div style="padding:0 16px 16px">' +
+        '<p class="text-xs mb-3" style="color:' + c.text_color + '99">Students with a pending consultation can book any open time. Booking fills in the meeting on their consultation.</p>' +
+        '<div class="flex gap-2 flex-wrap mb-3"><input type="date" aria-label="Date" value="' + _esc(slotDraft.date) + '" min="' + todayKey() + '" oninput="slotDraft.date=this.value" style="' + f + '" /><input type="time" aria-label="Time" value="' + _esc(slotDraft.time) + '" oninput="slotDraft.time=this.value" style="' + f + '" /><button onclick="addSlot()" class="px-4 py-2 rounded-lg font-semibold text-sm" style="background:' + c.primary_action_color + ';color:#2c3e50">Add time</button></div>' +
+        (mine.length ? '<div class="space-y-2">' + mine.map(s => '<div class="flex items-center justify-between gap-2 p-2 rounded-lg text-sm" style="background:' + c.text_color + '08;color:' + c.text_color + '"><span>' + _esc(slotLabel(s.start)) + (s.takenBy ? ' — <strong>booked</strong> by ' + _esc(String(s.takenBy).startsWith('anon_') ? 'an anonymous student' : s.takenBy) : '') + '</span><button class="btn-danger-ghost" onclick="removeSlot(\'' + s.id + '\')">Remove</button></div>').join('') + '</div>' : '<div class="text-xs" style="color:' + c.text_color + '88">No open times yet.</div>') + '</div></details>';
+    }
+
+    // ── ANNOUNCEMENTS BOARD ──
+    let announcements = [];
+    async function deleteAnnouncement(id) {
+      const ok = await confirmModal('Delete announcement', 'Remove this announcement from the board? Students will no longer see it.', 'warning'); if (!ok) return;
+      try { await db.collection('announcements').doc(String(id)).delete(); toast('Announcement removed'); } catch (e) { showModal('Error', _esc(e.message), 'error'); }
+    }
+    function announcementsBoard() {
+      const c = config; if (currentRole === 'admin') return '';
+      return '<div data-key="ann-board" class="p-6 rounded-xl mt-6" style="background:' + c.surface_color + '"><div class="flex items-center gap-2 mb-3"><i data-lucide="megaphone" style="width:18px;height:18px;color:' + c.text_color + '"></i><h3 class="font-bold" style="color:' + c.text_color + '">' + tr('announcements') + '</h3></div>' +
+        (announcements.length ? '<div class="space-y-2">' + announcements.slice(0, 10).map(a => '<div class="p-3 rounded-lg" style="background:' + c.text_color + '08"><div class="flex items-start justify-between gap-3"><div style="min-width:0"><div class="font-semibold" style="color:' + c.text_color + ';overflow-wrap:anywhere">' + _esc(a.title) + '</div><div class="text-sm mt-1" style="color:' + c.text_color + 'cc;white-space:pre-wrap;overflow-wrap:anywhere">' + _esc(a.message) + '</div><div class="text-xs mt-2" style="color:' + c.text_color + '88">' + (a.timestamp ? new Date(a.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '') + '</div></div>' + (currentRole === 'guidance' ? '<button class="btn-danger-ghost" onclick="deleteAnnouncement(\'' + _esc(a.id) + '\')">' + tr('delete') + '</button>' : '') + '</div></div>').join('') + '</div>' : '<p class="text-sm" style="color:' + c.text_color + '88">' + tr('noAnnouncements') + '</p>') + '</div>';
+    }
+
+    // extra live data for the features above
+    function loadExtras() {
+      const onErr = (n) => (e) => console.warn('[QHsafety] listener ' + n + ':', e && e.code);
+      firestoreUnsubscribes.push(
+        db.collection('slots').where('start', '>=', Date.now() - 3600000).orderBy('start').limit(120).onSnapshot(s => { const out = []; s.forEach(d => { const x = d.data(); if (x && /^\d{1,20}$/.test(String(x.id)) && Number(x.start) > 0) out.push({ id: String(x.id), start: Number(x.start), date: String(x.date || ''), time: String(x.time || ''), counselor: String(x.counselor || ''), takenBy: String(x.takenBy || '') }); }); slots = out; scheduleRender(); }, onErr('slots')),
+        db.collection('announcements').orderBy('timestamp', 'desc').limit(20).onSnapshot(s => { const out = []; s.forEach(d => { const x = d.data(); if (x && /^\d{1,20}$/.test(String(x.id))) out.push({ id: String(x.id), title: String(x.title || ''), message: String(x.message || ''), timestamp: Number(x.timestamp) || 0 }); }); announcements = out; scheduleRender(); }, onErr('announcements'))
+      );
+      if (currentRole === 'guidance') firestoreUnsubscribes.push(
+        db.collection('counselors').onSnapshot(s => { s.forEach(d => { if (d.id === '_templates') { const it = (d.data() || {}).items; replyTemplates = Array.isArray(it) ? it.filter(t => t && t.title && t.text).map(t => ({ title: String(t.title), text: String(t.text) })) : null; } }); scheduleRender(); }, onErr('templates')));
+    }
+
+    // ── FILIPINO FOR THE STAFF SCREENS ── exact-phrase dictionary applied to the page before it is shown
+    const TL_UI = {
+      'Assign to me':'I-assign sa akin','Assigned to you · release':'Naka-assign sa iyo · bitawan','All':'Lahat','High risk':'Mataas na panganib','High + Medium':'Mataas + Katamtaman','Needs reply':'Kailangan ng sagot','Assigned to me':'Naka-assign sa akin','Follow-up due':'May follow-up','Any grade':'Kahit anong baitang',
+      'Remind me to follow up':'Paalalahanan akong mag-follow up','Tomorrow':'Bukas','In 3 days':'Sa loob ng 3 araw','In a week':'Sa isang linggo','In 2 weeks':'Sa 2 linggo','Clear reminder':'Alisin ang paalala','Follow up today':'Mag-follow up ngayon','Follow up tomorrow':'Mag-follow up bukas','Follow-up overdue':'Lampas na ang follow-up',
+      'Saved replies…':'Mga naka-save na sagot…','Saved replies':'Mga naka-save na sagot','Edit saved replies':'I-edit ang mga sagot','Add a reply':'Magdagdag ng sagot','Save':'I-save','Cancel':'Kanselahin','Remove':'Alisin','Open':'Buksan','Done':'Tapos','Review':'Suriin',
+      'Private Guidance Note':'Pribadong tala ng Guidance','Save note':'I-save ang tala','Refer Student':'I-refer ang estudyante','Session History':'Kasaysayan ng session','Send reminder':'Magpadala ng paalala','Confirm and notify student':'Kumpirmahin at abisuhan ang estudyante',
+      'Schedule Google Meet':'Mag-iskedyul ng Google Meet','Schedule Phone Call':'Mag-iskedyul ng tawag','Reschedule Meeting':'Baguhin ang iskedyul','Reschedule Call':'Baguhin ang iskedyul ng tawag','Scheduled meeting':'Nakaiskedyul na pagkikita','Scheduled phone call':'Nakaiskedyul na tawag',
+      '🚨 Mark Urgent':'🚨 Markahang apurahan','🔕 Unmark Urgent':'🔕 Alisin ang apurahan','URGENT':'APURAHAN','Pending':'Nakabinbin','Confirmed':'Kumpirmado','⏳ Pending':'⏳ Nakabinbin','✅ Confirmed':'✅ Kumpirmado','🎉 Done':'🎉 Tapos',
+      'Monthly report':'Buwanang ulat','Submissions':'Mga isinumite','Flagged Medium or High':'Na-flag na Katamtaman o Mataas','Typical first reply':'Karaniwang unang sagot','Still unanswered':'Wala pang sagot','By risk level':'Ayon sa antas ng panganib','By grade (consultations)':'Ayon sa baitang (konsultasyon)','Most common concerns':'Pinakakaraniwang alalahanin','Print':'I-print',
+      'Send announcement to students':'Magpadala ng anunsyo sa mga estudyante','Push notification delivered to all subscribed students':'Push notification para sa lahat ng naka-subscribe na estudyante','Send to all students':'Ipadala sa lahat ng estudyante',
+      'Follow-ups due':'Mga follow-up ngayon','My open times':'Mga bakante kong oras','Add time':'Idagdag','No open times yet.':'Wala pang bakanteng oras.','Case history':'Kasaysayan ng kaso','Close':'Isara',
+      'User Management':'Pamamahala ng user','System Logs':'Mga log ng system','Push Notifications':'Mga push notification','Enable Push Notifications':'I-on ang push notification','Storage':'Storage','Scan now':'I-scan ngayon','Scan again':'I-scan muli',
+      'Nothing matches these filters.':'Walang tumutugma sa mga filter na ito.','Reply to student...':'Sumagot sa estudyante...','Type a message for the student...':'Mag-type ng mensahe para sa estudyante...','Search consultations…':'Maghanap ng konsultasyon…',
+      'Internal notes — not visible to student...':'Panloob na tala — hindi nakikita ng estudyante...','Create New Admin':'Gumawa ng bagong Admin','Create New Guidance Counselor':'Gumawa ng bagong Guidance Counselor','Create Admin Account':'Gumawa ng Admin account','Create Guidance Account':'Gumawa ng Guidance account',
+      'Guidance Office':'Guidance Office','Student Portal':'Portal ng Estudyante','Admin Panel':'Panel ng Admin','Counselor':'Counselor','Student':'Estudyante','Administrator':'Administrator',
+    };
+    function translateTree(root) {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      let n; while ((n = w.nextNode())) { const raw = n.nodeValue, key = raw.trim(); if (key && TL_UI[key]) n.nodeValue = raw.replace(key, TL_UI[key]); }
+      root.querySelectorAll('[placeholder],[aria-label]').forEach(el => { ['placeholder', 'aria-label'].forEach(a => { const v = el.getAttribute(a); if (v && TL_UI[v]) el.setAttribute(a, TL_UI[v]); }); });
+    }
+
     function renderDashboard() {
       const fs=config.font_size||16;
       let items,icons,itemKeys;
-      if(currentRole==='admin'){items=['Dashboard','Users','Feedback','Logs','Settings'];icons=['layout-dashboard','users','message-circle','file-text','settings'];itemKeys=['dashboard','users','feedback','logs','settings'];}
-      else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','message-circle','settings'];itemKeys=['dashboard','postings','consultations','feedback','settings'];}
-      else{items=['Dashboard','Postings','Consultations','Problems','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','feedback','settings'];}
+      if(currentRole==='admin'){items=['Dashboard','Users','Reports','Feedback','Logs','Storage','Settings'];icons=['layout-dashboard','users','bar-chart-3','message-circle','file-text','hard-drive','settings'];itemKeys=['dashboard','users','reports','feedback','logs','storagePage','settings'];}
+      else if(currentRole==='student'){items=['Dashboard','Postings','Consultations','Library','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','book-open','message-circle','settings'];itemKeys=['dashboard','postings','consultations','library','feedback','settings'];}
+      else{items=['Dashboard','Postings','Consultations','Problems','Reports','Feedback','Settings'];icons=['layout-dashboard','megaphone','users','alert-triangle','bar-chart-3','message-circle','settings'];itemKeys=['dashboard','postings','consultations','problems','reports','feedback','settings'];}
+      if(!items.includes(activeSidebarItem)) activeSidebarItem='Dashboard';
       const bottomItems=items,bottomIcons=icons,bottomKeys=itemKeys;
       return `
 <div data-key="dash" class="screen" style="position:relative;width:100%;overflow:hidden;display:flex;flex-direction:column">
   <div class="drawer-overlay ${mobileDrawerOpen?'open':''}" onclick="mobileDrawerOpen=false;render()"></div>
   <div class="drawer-panel ${mobileDrawerOpen?'open':''}">
     <div class="p-5 pb-2 flex items-center justify-between" style="border-bottom:1px solid #ffffff11">
-      <div><span class="font-bold" style="font-size:${fs*1.2}px;color:#ffee58">QHsafety</span><div class="mt-1 text-xs" style="color:#ffffff99">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
+      <div>${logoLockup(28,true)}<div class="mt-1 text-xs" style="color:#ffffff99">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div></div>
       <button onclick="mobileDrawerOpen=false;render()" aria-label="Close menu" style="background:none;border:none;color:#ffffffaa;cursor:pointer;padding:8px"><i data-lucide="x" style="width:20px;height:20px"></i></button>
     </div>
     <div class="p-3 mx-3 mt-4 rounded-xl flex items-center gap-3" style="background:#ffffff11">
       <div class="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm" style="background:${isAnonymous?'#90a4ae':'#ffee58'};color:#2c3e50">${isAnonymous?'?':_esc((currentUserEmail||'?')[0].toUpperCase())}</div>
       <div><div class="text-xs font-semibold" style="color:#fff;overflow-wrap:anywhere">${isAnonymous?'Anonymous User':_esc(currentUserEmail)}</div><div class="text-xs" style="color:#ffffff66">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div></div>
     </div>
-    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i>${tr(itemKeys[i])}</button>`).join('')}</nav>
+    <nav class="mt-4 flex-1 overflow-auto">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm" style="color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'};border-left:3px solid ${activeSidebarItem===item?'#ffee58':'transparent'};background:${activeSidebarItem===item?'rgba(255,238,88,0.1)':'none'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px"></i><span style="flex:1">${tr(itemKeys[i])}</span>${navBadge(item)}</button>`).join('')}</nav>
+    <button onclick="mobileDrawerOpen=false;render();showHelp()" class="help-btn" style="margin:0 16px 12px"><i data-lucide="life-buoy" style="width:16px;height:16px"></i>${tr('getHelp')}</button>
     <button onclick="logout()" class="flex items-center gap-2 px-5 py-4 text-sm w-full" style="background:none;border:none;cursor:pointer;color:#ffffff66;border-top:1px solid #ffffff11"><i data-lucide="log-out" style="width:16px;height:16px"></i>${tr('logout')}</button>
   </div>
   <div class="flex" style="flex:1;overflow:hidden;background-color:${config.background_color}">
     <aside class="desktop-sidebar">
       <div class="desktop-sidebar-logo">
         <div style="display:flex;align-items:center;justify-content:space-between">
-          <span class="mono font-bold" style="font-size:${fs*1.25}px;color:${config.primary_action_color}">QH<span style="color:#fff">safety</span></span>
+          ${logoLockup(30,true)}
           ${currentRole==='guidance'?`<button onclick="enablePushNotifications()" title="Enable push notifications" style="background:none;border:none;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center;position:relative;opacity:0.7;transition:opacity 0.2s" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"><i data-lucide="bell" style="width:18px;height:18px;color:#fff"></i><span id="desk-notif-dot" data-live style="display:none;position:absolute;top:2px;right:2px;width:7px;height:7px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span></button>`:''}
         </div>
         <div class="mt-1 text-xs font-medium" style="color:#ffffff55">${currentRole==='admin'?'Admin Panel':currentRole==='student'?'Student Portal':'Guidance Office'}</div>
@@ -2225,7 +2968,8 @@ function renderConsultChatMsg(m, c) {
           <div style="font-size:11px;color:#ffffff55">${currentRole==='admin'?'Administrator':currentRole==='student'?'Student':'Counselor'}${isAnonymous?' · Anonymous':''}</div>
         </div>
       </div>
-      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span>${tr(itemKeys[i])}</span></button>`).join('')}</nav>
+      <nav class="desktop-sidebar-nav">${items.map((item,i)=>`<button onclick="goTo('${item}')" ${activeSidebarItem===item?'aria-current="page"':''} class="sidebar-item w-full text-left flex items-center gap-3 px-5 py-3 text-sm ${activeSidebarItem===item?'active':''}" style="background:none;border:none;cursor:pointer;color:${activeSidebarItem===item?'#ffee58':'#ffffffaa'}"><i data-lucide="${icons[i]}" style="width:18px;height:18px;flex-shrink:0"></i><span style="flex:1">${tr(itemKeys[i])}</span>${navBadge(item)}</button>`).join('')}</nav>
+      <button onclick="showHelp()" class="help-btn" style="margin:0 12px 12px"><i data-lucide="life-buoy" style="width:16px;height:16px"></i>${tr('getHelp')}</button>
       <div class="desktop-sidebar-footer">
         <button onclick="logout()" class="sidebar-item w-full flex items-center gap-3 px-5 py-3 text-sm" style="background:none;border:none;cursor:pointer;color:#ffffff55"><i data-lucide="log-out" style="width:16px;height:16px;flex-shrink:0"></i><span>${tr('logout')}</span></button>
       </div>
@@ -2233,8 +2977,9 @@ function renderConsultChatMsg(m, c) {
     <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0">
       <div class="mobile-topbar">
         <button onclick="mobileDrawerOpen=true;render()" aria-label="Open menu" style="background:none;border:none;color:#fff;cursor:pointer;padding:8px;margin:-4px;display:flex;align-items:center"><i data-lucide="menu" style="width:24px;height:24px"></i></button>
-        <span class="font-bold" style="color:#ffee58;font-size:${fs*1.1}px">QHsafety</span>
-        <div style="display:flex;align-items:center;gap:8px">
+        ${logoLockup(26,true)}
+        <div style="display:flex;align-items:center;gap:4px">
+          <button onclick="showHelp()" aria-label="${tr('getHelp')}" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;color:#ffee58"><i data-lucide="life-buoy" style="width:22px;height:22px"></i></button>
           <button id="mob-notif-btn" onclick="enablePushNotifications()" title="Enable push notifications" aria-label="Notifications" style="background:none;border:none;cursor:pointer;padding:8px;display:flex;align-items:center;justify-content:center;position:relative">
             <i data-lucide="bell" style="width:22px;height:22px;color:#fff"></i>
             <span id="mob-notif-dot" data-live style="display:none;position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#66bb6a;border:1.5px solid #2c3e50"></span>
@@ -2255,13 +3000,16 @@ function renderConsultChatMsg(m, c) {
       </main>
     </div>
   </div>
-  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" ${activeSidebarItem===item?'aria-current="page"':''} onclick="goTo('${item}')"><i data-lucide="${bottomIcons[i]}"></i><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
+  <nav class="mobile-bottom-nav">${bottomItems.map((item,i)=>`<button class="${activeSidebarItem===item?'active':''}" ${activeSidebarItem===item?'aria-current="page"':''} onclick="goTo('${item}')"><span style="position:relative;display:flex"><i data-lucide="${bottomIcons[i]}"></i>${navBadge(item)}</span><span>${tr(bottomKeys[i])}</span></button>`).join('')}</nav>
 </div>`;
     }
 
     function getDashboardContent(fs) {
       const myEmail=currentUserEmail; // always use currentUserEmail (works for both auth and anon)
       const isGuidance=currentRole==='guidance';
+      if(activeSidebarItem==='Reports'&&(isGuidance||currentRole==='admin')) return renderReports(fs);
+      if(activeSidebarItem==='Storage'&&currentRole==='admin') return renderStorage(fs);
+      if(activeSidebarItem==='Library'&&currentRole==='student') return renderLibrary(fs);
 
       // ── POSTINGS ──
       // ── POSTINGS ──
@@ -2286,7 +3034,7 @@ if(activeSidebarItem==='Postings') {
   }
 
   // DOM filtering handles search visually - always render all posts
-  const filtered = visiblePostings;
+  const filtered = applyStaffFilter(visiblePostings, 'p');
 
   return `
   <div class="max-w-3xl">
@@ -2303,6 +3051,8 @@ if(activeSidebarItem==='Postings') {
       </button>
     </div>` : ''}
 
+  ${overdueBanner()}
+  ${staffFilterBar('p', filtered.length, visiblePostings.length)}
   <div class="mb-6">
     <div class="flex items-center gap-2 px-4 py-3 rounded-lg" 
          style="background:${config.surface_color};border:1px solid ${config.text_color}22">
@@ -2319,7 +3069,12 @@ if(activeSidebarItem==='Postings') {
     <div class="p-3 rounded-lg mb-4 text-sm" style="background:#e3f2fd;border-left:4px solid #1565c0;color:#1a237e">
       ${tr('postGuide')}
     </div>
+    ${afterHoursNote()}
     <h3 class="font-bold mb-4" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('newPosting')}</h3>
+    <div class="flex gap-2 mb-3 p-1 rounded-lg" role="group" style="background:${config.text_color}0d">
+      ${[['me',tr('aboutMe')],['other',tr('aboutOther')]].map(o=>`<button aria-pressed="${postingAbout===o[0]}" onclick="postingAbout='${o[0]}';render()" class="flex-1 py-2 rounded-md font-semibold btn-row" style="font-size:13px;line-height:1.2;padding-left:6px;padding-right:6px;background:${postingAbout===o[0]?config.surface_color:'transparent'};color:${config.text_color};${postingAbout===o[0]?'box-shadow:0 1px 3px rgba(0,0,0,.12)':''}">${o[1]}</button>`).join('')}
+    </div>
+    ${postingAbout==='other'?`<input type="text" aria-label="${tr('aboutWho')}" placeholder="${tr('aboutWho')}" maxlength="80" value="${_esc(postingAboutWho)}" oninput="postingAboutWho=this.value" style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />`:''}
     <input type="text" id="postingTitleInput" placeholder="${tr('title')}" aria-label="${tr('title')}" maxlength="140" value="${_esc(postingTitle)}" 
            onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="postingTitle=this.value;onFieldInput()" 
            style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color}" />
@@ -2340,18 +3095,19 @@ if(activeSidebarItem==='Postings') {
     ${filtered.length === 0
       ? `<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:1px dashed ${config.text_color}33">
            <i data-lucide="megaphone" style="width:32px;height:32px;color:${config.text_color}55"></i>
-           <p class="mt-3 text-sm" style="color:${config.text_color}99">${dataLoaded.postings ? tr('noPostings') : tr('loading')}</p>
+           <p class="mt-3 text-sm" style="color:${config.text_color}99">${!dataLoaded.postings ? tr('loading') : visiblePostings.length ? 'Nothing matches these filters.' : tr('noPostings')}</p>
          </div>`
       : filtered.slice(0, postLimit).map(p => {
           const isPending = true; // Postings are always "active"
           const gc = getGlowClass(p, isPending);
 
           return keep('p'+p.id, `
-      <div data-key="p${p.id}" data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl ${gc}"
+      <div data-key="p${p.id}" ${isGuidance&&!p.seenAt?`data-unseen="postings:${p.id}"`:''} data-post-id="${_esc(p.id)}" data-search-text="${_esc(((p.title||'')+' '+(p.content||'')+' '+(p.author||'')).toLowerCase())}" class="p-6 rounded-xl ${gc}"
            style="background:${config.surface_color};border:1px solid ${config.text_color}11">
         <div class="flex items-start justify-between mb-3">
           <div class="flex-1">
-            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${_esc(p.title)}</h3>
+            <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${_esc(p.title)} ${newChip(p,'p')}</h3>
+            ${p.aboutOther?`<div class="mt-2"><span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:#e3f2fd;color:#0d47a1">${tr('aboutOther')}${p.aboutWho?': '+_esc(p.aboutWho):''}</span></div>`:''}
             
             ${currentRole==='guidance' ? `
             <div class="flex items-center gap-2 mt-2 flex-wrap">
@@ -2369,8 +3125,9 @@ if(activeSidebarItem==='Postings') {
             </div>` : ''}
 
             <div class="text-xs mt-2" style="color:${config.text_color}66">
-              ${p.author ? `${tr('by')}: ${_esc(p.author)}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
+              ${p.author ? `${tr('by')}: ${historyLink('p', p)}` : ''} • ${new Date(p.timestamp || Date.now()).toLocaleDateString()}
             </div>
+            <div class="flex gap-2 flex-wrap mt-2">${statusChip(p)}${assignControl('postings', p)}${followControl('postings', p)}</div>
           </div>
           
           ${canDelete(p, 'posting') ? `
@@ -2390,7 +3147,7 @@ if(activeSidebarItem==='Postings') {
 
         ${currentRole === 'guidance' ? `
         <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
-          <div class="text-xs font-bold mb-2" style="color:${config.text_color}88">${tr('guidanceReply')}</div>
+          <div class="flex items-center justify-between gap-2 flex-wrap mb-2"><div class="text-xs font-bold" style="color:${config.text_color}99">${tr('guidanceReply')}</div>${templatePicker('p', p.id)}</div>
           <div class="flex gap-2">
             <textarea id="gmsg_${p.id}" rows="2" placeholder="Type a message for the student..." aria-label="Message for the student" 
               oninput="guidanceMessageDraft['${p.id}']=this.value;onFieldInput()"
@@ -2404,7 +3161,7 @@ if(activeSidebarItem==='Postings') {
 
         <!-- Student/anyone chat thread on postings -->
         <div class="mt-3 pt-3" style="border-top:1px solid ${config.text_color}11">
-          <div class="text-xs font-bold mb-2" style="color:${config.text_color}99">Comments</div>
+          <div class="text-xs font-bold mb-2" style="color:${config.text_color}99">${tr('comments')}</div>
           ${(p.chatMessages && p.chatMessages.length) ? `
           <div id="postChatBox_${p.id}" class="chat-scroll" style="max-height:180px;margin-bottom:10px;padding-right:4px"><div class="chat-list">
             ${p.chatMessages.map(m=>`
@@ -2415,9 +3172,9 @@ if(activeSidebarItem==='Postings') {
                 <div style="font-size:10px;margin-top:2px;opacity:0.5;text-align:right">${_esc(m.time||'')}</div>
               </div>
             </div>`).join('')}
-          </div></div>` : `<p style="font-size:12px;color:${config.text_color}88;margin-bottom:8px">No comments yet.</p>`}
+          </div></div>` : `<p style="font-size:12px;color:${config.text_color}88;margin-bottom:8px">${tr('noComments')}</p>`}
           <div style="display:flex;gap:8px">
-            <input id="postChat_${p.id}" type="text" placeholder="Add a comment..." aria-label="Add a comment" maxlength="1000" value="${_esc(postingChatDraft[p.id]||'')}" 
+            <input id="postChat_${p.id}" type="text" placeholder="${tr('addComment')}" aria-label="${tr('addComment')}" maxlength="1000" value="${_esc(postingChatDraft[p.id]||'')}" 
               oninput="postingChatDraft['${p.id}']=this.value"
               onkeydown="if(event.key==='Enter'){event.preventDefault();sendPostingChat(${p.id})}"
               style="flex:1;padding:8px 12px;border:1px solid ${config.text_color}22;border-radius:20px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
@@ -2446,6 +3203,8 @@ if(activeSidebarItem==='Postings') {
               return(b.timestamp||0)-(a.timestamp||0);
             })
           :consultationPostings.filter(c=>c.authorId===myEmail||c.author===myEmail||c.studentEmail===myEmail);
+        const allConsultations=visibleConsultations;
+        visibleConsultations=applyStaffFilter(visibleConsultations,'c');
 
         return `
         <div class="max-w-3xl">
@@ -2458,57 +3217,58 @@ if(activeSidebarItem==='Postings') {
   <div data-key="consult-form" class="p-6 rounded-xl mb-8 fade-in" style="background:${config.surface_color};border:1px solid ${config.text_color}11;box-shadow:0 4px 24px rgba(0,0,0,0.07)">
     ${consultationError?`<div class="p-3 rounded-lg mb-4 text-sm" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a;text-align:center">${consultationError}</div>`:''}
     <div class="p-3 rounded-lg mb-5 text-sm" style="background:#e8f5e9;border-left:4px solid #2e7d32;color:#1b5e20">
-      <strong>Consultation guide:</strong> Describe your concern clearly. The guidance counselor will review and reply. Your request is confidential.
+      ${tr('cGuide')}
     </div>
-    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">New consultation request</h3>
+    ${afterHoursNote()}
+    <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('cNew')}</h3>
 
     <!-- Grade Level -->
     <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Grade level</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cGrade')}</label>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
         <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
-          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">Junior High School</div>
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">${tr('cJHS')}</div>
           ${[7,8,9,10].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#1565c0':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
         </div>
         <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
-          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#fce4ec;color:#c62828;text-transform:uppercase;letter-spacing:.05em">Senior High School</div>
+          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#fce4ec;color:#c62828;text-transform:uppercase;letter-spacing:.05em">${tr('cSHS')}</div>
           ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
         </div>
       </div>
-      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:${darkMode?'#a5d6a7':'#2e7d32'}">${_esc(consultationGradeLevel)} selected</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}55">Please select your grade level</div>`}
+      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:${darkMode?'#a5d6a7':'#2e7d32'}">${_esc(consultationGradeLevel)} ${tr('cSelected')}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}88">${tr('cPickGrade')}</div>`}
     </div>
 
     <!-- Reason + Priority -->
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Reason / topic</label>
-      <input type="text" id="consultReasonInput" placeholder="e.g. Academic stress, Family issue, Personal problem..." aria-label="Reason or topic" maxlength="140" value="${_esc(consultationReason||'')}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cReason')}</label>
+      <input type="text" id="consultReasonInput" placeholder="${tr('cReasonPh')}" aria-label="Reason or topic" maxlength="140" value="${_esc(consultationReason||'')}" onkeydown="if(event.key==='Enter'){event.preventDefault();}" oninput="consultationReason=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};font-size:14px" />
     </div>
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Priority level</label>
-      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" aria-pressed="${consultationPriority===p}" class="px-2 py-2 rounded-lg flex-1 text-sm font-semibold" style="text-align:center;white-space:nowrap;background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${p}</button>`).join('')}</div>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cPriority')}</label>
+      <div class="flex gap-2">${['Low','Medium','High'].map(p=>`<button onclick="consultationPriority='${p}';render()" aria-pressed="${consultationPriority===p}" class="px-2 py-2 rounded-lg flex-1 text-sm font-semibold" style="text-align:center;white-space:nowrap;background:${consultationPriority===p?(p==='High'?'#ef5350':p==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${consultationPriority===p?'#fff':config.text_color}">${p==='High'?'🔴':p==='Medium'?'🟠':'🟢'} ${tr(p.toLowerCase())}</button>`).join('')}</div>
     </div>
 
     <!-- How are you feeling (mood slider) -->
     <div class="mb-4 p-4 rounded-xl" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">How are you feeling right now?</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:10px">${tr('cFeel')}</label>
       <div style="display:flex;justify-content:space-between;margin-bottom:6px">
         ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="consultationMoodLevel=${i+1};render()" aria-label="${['Very sad','Sad','Neutral','Good','Great'][i]}" aria-pressed="${consultationMoodLevel===i+1}" style="font-size:24px;line-height:1;padding:6px;transform:scale(${consultationMoodLevel===i+1?'1.2':'1'});opacity:${consultationMoodLevel===i+1?'1':'0.45'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
       </div>
-      <div style="text-align:center;font-size:12px;font-weight:600;color:${config.text_color}88">${['Very Sad','Sad','Neutral','Good','Great'][consultationMoodLevel-1]}</div>
+      <div style="text-align:center;font-size:12px;font-weight:600;color:${config.text_color}88">${trList('moods')[consultationMoodLevel-1]}</div>
     </div>
 
     <!-- Contact Preference -->
     <div class="mb-4">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Preferred contact method</label>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cContact')}</label>
       <div class="flex gap-2 flex-wrap">
-        ${[{v:'chat',l:'💬 Chat',d:'In-app chat'},{v:'meet',l:'📹 Google Meet',d:'Video call'},{v:'facetoface',l:'🏫 Face to Face',d:'In person'},{v:'phone',l:'📱 Phone Call',d:'Call me'}].map(o=>`<button onclick="consultationContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${consultationContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${consultationContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
+        ${[{v:'chat',l:tr('cChat')},{v:'meet',l:tr('cMeet')},{v:'facetoface',l:tr('cFace')},{v:'phone',l:tr('cPhone')}].map(o=>`<button onclick="consultationContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${consultationContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${consultationContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
       </div>
     </div>
 
     <!-- Details textarea -->
     <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">Describe your concern</label>
-      <textarea id="consultDescTA" aria-label="Describe your concern" maxlength="1800" placeholder="Share as much or as little as you feel comfortable with. Everything is confidential." oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${_esc(consultationDescription||'')}</textarea>
+      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cDescribe')}</label>
+      <textarea id="consultDescTA" aria-label="Describe your concern" maxlength="1800" placeholder="${tr('cDescribePh')}" oninput="consultationDescription=this.value;onFieldInput()" style="width:100%;padding:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:120px;resize:vertical;font-size:14px">${_esc(consultationDescription||'')}</textarea>
     </div>
 
     <div class="flex gap-3">
@@ -2516,14 +3276,17 @@ if(activeSidebarItem==='Postings') {
       <button onclick="showConsultationForm=false;consultationReason='';consultationDescription='';consultationPriority='Medium';consultationGradeLevel='';consultationContactPref='chat';consultationMoodLevel=3;consultationError='';render()" class="px-6 py-3 rounded-lg font-semibold" style="background:${config.text_color}22;color:${config.text_color}">${tr('cancel')}</button>
     </div>
   </div>`:''}
+  ${overdueBanner()}
+  ${slotPanel()}
+  ${staffFilterBar('c', visibleConsultations.length, allConsultations.length)}
   <div data-key="consult-list" class="space-y-4">
     ${visibleConsultations.length===0
-      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:1px dashed ${config.text_color}33"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}55"></i><p class="mt-3 text-sm" style="color:${config.text_color}99">${dataLoaded.consultations ? tr('noConsultations') : tr('loading')}</p></div>`
+      ?`<div class="p-8 rounded-xl flex flex-col items-center" style="background:${config.surface_color};border:1px dashed ${config.text_color}33"><i data-lucide="calendar" style="width:32px;height:32px;color:${config.text_color}55"></i><p class="mt-3 text-sm" style="color:${config.text_color}99">${!dataLoaded.consultations ? tr('loading') : allConsultations.length ? 'Nothing matches these filters.' : tr('noConsultations')}</p></div>`
       :visibleConsultations.slice(0, consultLimit).map(c=>{
         const isPending=c.status==='Pending';
         const gc=getGlowClass(c,isPending);
         return keep('c'+c.id, `
-        <div data-key="c${c.id}" data-consult-id="${c.id}" class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
+        <div data-key="c${c.id}" ${isGuidance&&!c.seenAt?`data-unseen="consultations:${c.id}"`:''} data-consult-id="${c.id}" class="p-5 rounded-xl ${gc}" style="background:${config.surface_color};border:1px solid ${config.text_color}11">
 
           <!-- TOP: badges row -->
           <div class="flex flex-wrap gap-2 mb-3">
@@ -2542,9 +3305,10 @@ if(activeSidebarItem==='Postings') {
           <!-- Title + action buttons -->
           <div class="flex flex-col md:flex-row justify-between items-start gap-3 mb-3">
             <div class="flex-1">
-              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${_esc(c.reason)}</h3>
-              ${isGuidance?`<div class="text-xs mt-1 flex gap-3 flex-wrap" style="color:${config.text_color}99">
-                <span>${_esc(c.studentEmail||c.author)}</span>
+              <h3 class="font-bold" style="font-size:${fs*1.05}px;color:${config.text_color}">${_esc(c.reason)} ${newChip(c,'c')}</h3>
+              <div class="flex gap-2 flex-wrap mt-2">${statusChip(c)}${assignControl('consultations', c)}${followControl('consultations', c)}</div>
+              ${isGuidance?`<div class="text-xs mt-2 flex gap-3 flex-wrap" style="color:${config.text_color}99">
+                <span>${historyLink('c', c)}</span>
                 <span><strong style="color:${isPending?'#e65100':'#2e7d32'}">${_esc(c.status||'Pending')}</strong></span>
                 <span>${c.timestamp?new Date(c.timestamp).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):''}</span>
               </div>`:''}
@@ -2648,10 +3412,11 @@ if(activeSidebarItem==='Postings') {
           </div>
           `:''}
 
+          ${slotPicker(c)}
           <!-- STUDENT: Mood Update -->
           ${currentRole==='student'&&isPending?`
           <div class="mb-3 p-3 rounded-xl flex items-center gap-3 flex-wrap" style="background:${config.text_color}07;border:1px solid ${config.text_color}11">
-            <span class="text-xs font-bold" style="color:${config.text_color}88">Update your mood:</span>
+            <span class="text-xs font-bold" style="color:${config.text_color}aa">${tr('updateMood')}</span>
             ${['😞','😕','😐','🙂','😊'].map((e,i)=>`<button onclick="saveConsultMood('${c.id}',${i+1})" aria-label="${['Very sad','Sad','Neutral','Good','Great'][i]}" aria-pressed="${(c.studentMood||3)===i+1}" style="font-size:20px;line-height:1;padding:6px;transform:scale(${(c.studentMood||3)===i+1?'1.2':'1'});opacity:${(c.studentMood||3)===i+1?'1':'0.4'};background:none;border:none;cursor:pointer">${e}</button>`).join('')}
           </div>`:''}
 
@@ -2660,7 +3425,7 @@ if(activeSidebarItem==='Postings') {
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
               <div style="display:flex;align-items:center;gap:6px">
                 <i data-lucide="clipboard-check" style="width:13px;height:13px;color:${config.text_color}55"></i>
-                <span style="font-size:11px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Appointment Status</span>
+                <span style="font-size:11px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">${tr('apptStatus')}</span>
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
                 ${['Pending','Confirmed','Done'].map(s=>{
@@ -2698,19 +3463,21 @@ if(activeSidebarItem==='Postings') {
           <div style="border-top:1px solid ${config.text_color}11;padding-top:12px;margin-top:4px">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px">
               <i data-lucide="message-square" style="width:14px;height:14px;color:${config.text_color}55"></i>
-              <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">Consultation Chat</span>
+              <span style="font-size:12px;font-weight:700;color:${config.text_color}66;text-transform:uppercase;letter-spacing:.05em">${tr('chatTitle')}</span>
               
             </div>
             <div id="consultChatBox_${c.id}" class="chat-scroll" style="min-height:60px;max-height:260px;margin-bottom:10px;padding:8px;border-radius:10px;background:${config.background_color}"><div class="chat-list">
-              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,c)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'88">No messages yet. '+(isPending?'Start the conversation below.':'This consultation is resolved.')+'</div>'}
+              ${c.chatMessages&&c.chatMessages.length?c.chatMessages.map(m=>renderConsultChatMsg(m,c)).join(''):'<div style="text-align:center;padding:16px 0;font-size:12px;color:'+config.text_color+'88">'+tr('noMsgs')+' '+(isPending?tr('startBelow'):'')+'</div>'}
             </div></div>
+            ${typingLine(c)}
+            ${currentRole==='guidance'?`<div class="mb-2">${templatePicker('c', c.id)}</div>`:''}
             ${isPending||currentRole==='guidance'?`
             <div style="display:flex;flex-direction:column;gap:8px">
               <div style="display:flex;gap:8px">
                 <input id="consultChat_${c.id}" type="text" maxlength="1000" value="${_esc(consultationChatDraft[c.id]||'')}"
                   aria-label="${currentRole==='guidance'?'Reply to student':'Message the counselor'}"
-                  placeholder="${currentRole==='guidance'?'Reply to student...':'Message the counselor...'}"
-                  oninput="consultationChatDraft['${c.id}']=this.value"
+                  placeholder="${currentRole==='guidance'?'Reply to student...':tr('msgCounselor')}"
+                  oninput="consultationChatDraft['${c.id}']=this.value;noteTyping('${c.id}')"
                   onkeydown="if(event.key==='Enter'){event.preventDefault();sendConsultationChat('${c.id}')}"
                   style="flex:1;padding:9px 14px;border:1px solid ${config.text_color}22;border-radius:22px;background:${config.background_color};color:${config.text_color};font-size:13px;outline:none" />
                 <button onclick="sendConsultationChat('${c.id}')"
@@ -2731,7 +3498,7 @@ if(activeSidebarItem==='Postings') {
                     <i data-lucide="paperclip" style="width:13px;height:13px"></i> ${blockIcon} ${blockMsg}
                   </div>`:`
                   <label style="display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:1px dashed ${config.text_color}33;color:${config.text_color}77;background:${config.text_color}05">
-                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> Attach (max 1MB)
+                    <i data-lucide="paperclip" style="width:13px;height:13px"></i> ${tr('attach')}
                     <input id="attachInput_${c.id}" type="file" accept="image/*,.pdf,.doc,.docx" style="display:none" onchange="sendConsultAttachment('${c.id}')" />
                   </label>`}
                 <span style="font-size:11px;color:${storageBlocked?blockColor:config.text_color+'44'}">${(c.chatMessages||[]).filter(m=>m.isAttachment).length}/${ATTACH_MAX_PER_CONSULT} files used</span>`;
@@ -2744,7 +3511,7 @@ if(activeSidebarItem==='Postings') {
               </div>
             </div>`:`
             <div>
-              <p style="font-size:12px;color:${config.text_color}88;text-align:center;margin-bottom:10px">Chat closed — consultation resolved.</p>
+              <p style="font-size:12px;color:${config.text_color}88;text-align:center;margin-bottom:10px">${tr('chatClosed')}</p>
               <!-- Post-session rating (student only, if not yet rated) -->
               ${currentRole==='student'&&!c.sessionRating?`
               <div class="p-3 rounded-xl" style="background:#fff8e1;border:1px solid #ffecb355">
@@ -2856,6 +3623,7 @@ if(activeSidebarItem==='Postings') {
       // ── SETTINGS ──
       if(activeSidebarItem==='Settings') return `
 <div class="max-w-xl">
+  ${installCard()}${templatesCard()}
   <div class="p-6 rounded-xl mb-6" style="background:${config.surface_color}">
     <h3 class="font-bold mb-4" style="color:${config.text_color}">${tr('appearance')}</h3>
     <div class="flex items-center justify-between p-4 rounded-lg mb-3" style="background:${config.text_color}08">
@@ -2927,6 +3695,7 @@ if(activeSidebarItem==='Postings') {
         const totalCount=problemConsultations.length+problemPostings.length;
         return `
 <div class="max-w-3xl">
+  ${overdueBanner()}
   <div class="mb-6 p-4 rounded-xl flex items-center gap-3" style="background:${config.primary_action_color}22;border:1px solid ${config.primary_action_color}44">
     <i data-lucide="alert-triangle" style="width:20px;height:20px;color:#f57c00"></i>
     <span style="color:${config.text_color};font-weight:600">${totalCount} ${appLang==='tl'?'item':'item'}${totalCount!==1&&appLang!=='tl'?'s':''} ${appLang==='tl'?'nangangailangan ng pansin':'require attention'} &mdash; ${problemConsultations.length} ${appLang==='tl'?'konsultasyon':'consultation'}${problemConsultations.length!==1&&appLang!=='tl'?'s':''}, ${problemPostings.length} ${appLang==='tl'?'post':'posting'}${problemPostings.length!==1&&appLang!=='tl'?'s':''}</span>
@@ -2975,6 +3744,9 @@ if(activeSidebarItem==='Postings') {
 
       // ── DASHBOARD ──
       return `
+${overdueBanner()}
+${followUpPanel()}
+${moodCard()}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
   ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="megaphone" style="width:20px;height:20px;color:${config.primary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('postings')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?postings.length:postings.filter(p=>p.author===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalPosted'):tr('yourPosts')}</p></div>`:''}
   ${currentRole!=='admin'?`<div class="p-6 rounded-xl card-hover" style="background:${config.surface_color}"><div class="flex items-center gap-3 mb-2"><i data-lucide="users" style="width:20px;height:20px;color:${config.secondary_action_color}"></i><span class="font-semibold" style="color:${config.text_color}">${tr('consultations')}</span></div><p class="text-3xl font-bold" style="color:${config.text_color}">${isGuidance?consultationPostings.length:consultationPostings.filter(c=>c.author===currentUserEmail||c.studentEmail===currentUserEmail).length}</p><p class="text-sm mt-1" style="color:${config.text_color}66">${isGuidance?tr('totalRequests'):tr('yourRequests')}</p></div>`:''}
@@ -2985,6 +3757,7 @@ if(activeSidebarItem==='Postings') {
   <h3 class="font-bold mb-1" style="color:${config.text_color}">${tr('welcomeMsg')}</h3>
   <p style="color:${config.text_color}88;font-size:14px">${currentRole==='student'?tr('dashHint_student'):isGuidance?tr('dashHint_guidance'):tr('dashHint_admin')}</p>
 </div>
+${announcementsBoard()}
 ${isGuidance?`
 <div class="p-6 rounded-xl mt-6" style="background:${config.surface_color};border:1px solid #90caf933">
   <div class="flex items-center gap-3 mb-4">
@@ -3088,7 +3861,9 @@ ${isGuidance?`
       try {
         if (user && !isAuthenticated) {
           const savedRole = localStorage.getItem('qh_saved_role');
-          if (savedRole) {
+          if (user.isAnonymous) {
+            if (savedRole === 'student') { _lastActive = Date.now(); enterAnonymous(user); }
+          } else if (savedRole) {
             const email = (user.email || '').toLowerCase();
             // ── Authoritative role from Firestore (not email string heuristics) ──
             const actualRole = await resolveRoleFromFirestore(user.uid, email);
@@ -3098,6 +3873,7 @@ ${isGuidance?`
               isAuthenticated = true;
               activeSidebarItem = localStorage.getItem('qh_last_page') || 'Dashboard';
               if (actualRole === 'guidance') registerAsCounselor();
+              _lastActive = Date.now(); loadSeen(); startOverdueWatch();
               loadDataFromFirestore();
               setTimeout(handleDeepLink, 1000);
             }

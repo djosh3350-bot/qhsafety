@@ -538,6 +538,18 @@
     /\bkill yourself\b|\bgo die\b|\byou should (?:just )?die\b|\bmamatay ka na\b|\bmagpakamatay ka na\b/,
     /\bi (?:am|was|get|got|keep getting|am always|have been) (?:being )?(?:bullied|cyberbullied|harassed|humiliated|mocked|picked on|body ?shamed|outed)\b/,
   ];
+  // Reports about someone else ("my friend says she wants to die") — the reporter is not the one at risk,
+  // but the counselor must see it just as fast.
+  var OTHER = "(?:he|she|they|my (?:best ?)?friend|my classmate|my seatmate|my sister|my brother|my cousin|my (?:bf|gf|boyfriend|girlfriend)|a friend(?: of mine)?|someone i know|one of my (?:friends|classmates))";
+  var thirdPersonPatterns = [
+    new RegExp("\\b" + OTHER + "\\b[^.!?]{0,40}?\\b(?:wants? to|is going to|are going to|will|said (?:he|she|they) (?:will|would|wants? to|is going to)|tried to|is planning to|plans? to|keeps? saying (?:he|she|they) (?:will|wants? to)|talks? about|is thinking (?:of|about)|thinks? (?:of|about)) (?:kill(?:ing)? (?:himself|herself|themselves|themself)|die\\b|dying|suicide|end(?:ing)? (?:his|her|their) (?:own )?life|hurt(?:ing)? (?:himself|herself|themselves)|jump(?:ing)? off)"),
+    /\b(?:cuts?|cutting|hurts?|hurting|harms?|harming|starves?|starving|burns?|burning) (?:himself|herself|themselves)\b/,
+    /\b(?:he|she|my friend|my classmate|my sister|my brother|my cousin)\b[^.!?]{0,30}?\b(?:is|was|keeps?|got|gets|has been) (?:being )?(?:abused|beaten|hit|molested|raped|touched|harassed|threatened|bullied|hurt) by\b/,
+    /\b(?:gusto|balak|plano)(?:ng)? (?:na |nang )?(?:niya|nya|niyang|nyang|nila|nilang) (?:na |nang )?(?:mamatay|magpakamatay|magpatiwakal)\b/,
+    /\b(?:magpapakamatay|nagpakamatay|magpakamatay|naglalaslas|naglaslas|nagbigti|magbibigti|nagtangkang magpakamatay)(?: (?:daw|raw|na|po|rin|din))* (?:siya|sya|sila|(?:ang|yung|ung|si) (?:kaibigan|kaklase|kapatid|pinsan|bestfriend|best friend) ko)\b/,
+    /\b(?:kaibigan|kaklase|kapatid|pinsan|bestfriend|best friend) ko\b[^.!?]{0,45}?\b(?:magpakamatay|magpapakamatay|mamatay|naglalaslas|sinasaktan (?:niya |nya )?(?:ang )?sarili|ayaw na (?:niya |nya )?(?:ng |nang )?mabuhay)\b/,
+    /\b(?:binubugbog|sinasaktan|inaabuso|minomolestiya|ginagahasa|hinihipuan|binubully|tinatakot) (?:po |daw |raw |na |lagi |palagi )*(?:siya|sya|sila|(?:ang|yung|ung|si) (?:kaibigan|kaklase|kapatid|pinsan) ko)\b/,
+  ];
   var pornAddictionPatterns = [
     /\b(?:addicted|adik|hooked|na-?adik|naadik)(?: na)?(?: ako)? (?:to|sa|on) (?:porn\w*|masturbat\w*|sex|jakol|salsal|bold)\b/,
     /\b(?:can't|cannot) stop (?:watching porn\w*|masturbating)\b|\bhindi ko (?:na )?(?:mapigilan|mapigil|matigil)(?: ang)?(?: pag)?(?: ?nood ng)? (?:porn\w*|bold|pagma-?masturbate|pagjajakol|pagsasalsal)\b/,
@@ -566,6 +578,7 @@
     group(planPatterns,             6, 'Possible plan or method', 18);
     group(planExtraPatterns,        7, 'Possible plan or method', 14);
     group(dangerPatterns,          10, 'Threatened or in danger from someone', 20);
+    group(thirdPersonPatterns,     12, 'Concern about another student', 24);
     group(physicalAbusePatterns,    8, 'Possible abuse or danger', 16);
     group(abusePatterns,            7, 'Possible abuse or danger', 14);
     group(sexualDisclosurePatterns, 9, 'Sexual harassment, assault, or exploitation', 18);

@@ -290,6 +290,19 @@ module.exports = {
     { t: "natalo kami sa laro kahapon", max: 'Low-Medium', threat: false },
     { t: "I want to shoot my shot with my crush", max: 'Low-Medium', threat: false },
     { t: "the teacher killed the mood", max: 'Low-Medium', threat: false },
+
+    // ── Reports about someone else ──
+    { t: 'my friend told me she wants to kill herself', min: 'Medium' },
+    { t: 'my classmate is cutting herself in the cr', min: 'Medium' },
+    { t: 'my best friend said he will end his life', min: 'Medium' },
+    { t: 'gusto na daw niyang mamatay', min: 'Medium' },
+    { t: 'naglalaslas yung kaibigan ko', min: 'Medium' },
+    { t: 'binubugbog siya ng tatay niya', min: 'Medium' },
+    { t: 'my friend is being abused by her uncle', min: 'Medium' },
+    { t: 'ayaw na daw mabuhay ng kaibigan ko, gusto niyang magpakamatay', min: 'Medium' },
+    { t: 'my friend wants to join the dance club', max: 'Low', threat: false },
+    { t: 'she said she will die of embarrassment', max: 'Low-Medium', threat: false },
+    { t: 'ang kaibigan ko ay lumipat ng section', max: 'Low', threat: false },
   ],
 
   // Should the language filter see profanity here?

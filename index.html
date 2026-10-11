@@ -4,7 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#2c3e50">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c3e50'/%3E%3Ctext x='32' y='42' font-family='monospace' font-weight='700' font-size='26' text-anchor='middle' fill='%23ffee58'%3EQH%3C/text%3E%3C/svg%3E">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="QHsafety">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232c3e50'/%3E%3Cg transform='translate(8 8)'%3E%3Cpath d='M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z' fill='%23ffee58' stroke='%23ffee58' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M17.5 14.5h13a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-5.2l-5.3 4.6V28.5h-2.5a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4Z' fill='%232c3e50'/%3E%3Ccircle cx='19.5' cy='21.5' r='1.6' fill='%23ffee58'/%3E%3Ccircle cx='24' cy='21.5' r='1.6' fill='%23ffee58'/%3E%3Ccircle cx='28.5' cy='21.5' r='1.6' fill='%23ffee58'/%3E%3C/g%3E%3C/svg%3E">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta name="description" content="QHsafety — a private line between Quirino High School students and the guidance office.">
   <meta name="color-scheme" content="light dark">
@@ -289,7 +295,7 @@ input::placeholder, textarea::placeholder {
   @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none !important;transition:none !important}}
   /* long lists: skip layout/paint of off-screen cards */
   [data-post-id]{content-visibility:auto;contain-intrinsic-size:auto 220px}
-  #qh-boot{height:100%;display:flex;align-items:center;justify-content:center;background:var(--qh-bg);color:var(--qh-text);font-weight:700;font-size:20px;font-family:'Space Mono',ui-monospace,monospace}
+  #qh-boot{height:100%;display:flex;align-items:center;justify-content:center;background:var(--qh-bg);color:var(--qh-text);font-weight:700;font-size:20px}
   #qh-boot>span{animation:bootPulse 1.4s ease-in-out infinite}
   @keyframes bootPulse{0%,100%{opacity:1}50%{opacity:.45}}
 
@@ -353,6 +359,96 @@ input::placeholder, textarea::placeholder {
   .chat-scroll{display:flex;flex-direction:column-reverse;overflow-y:auto}
   .chat-list{display:flex;flex-direction:column;gap:8px}
 
+  /* ── logo ── */
+  .qh-logo{display:inline-flex;align-items:center;gap:.45em;font-family:'DM Sans',sans-serif;font-weight:500;letter-spacing:-.01em;line-height:1;white-space:nowrap}
+  .qh-logo b{font-weight:700}
+  :root[data-theme="dark"] #qh-boot svg path:first-child{fill:#ffee58;stroke:#ffee58}
+  :root[data-theme="dark"] #qh-boot svg path:nth-child(2){fill:#2c3e50}
+  :root[data-theme="dark"] #qh-boot svg circle{fill:#ffee58}
+
+  /* ── help, anonymous, badges, chips ── */
+  .help-btn{display:flex;align-items:center;justify-content:center;gap:8px;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:700;background:rgba(255,238,88,.14);color:#ffee58;border:1px solid rgba(255,238,88,.45)}
+  .help-btn:hover{background:rgba(255,238,88,.24)}
+  .help-btn.compact{padding:7px 12px}
+  @media(max-width:420px){.help-btn.compact span{display:none}}
+  .anon-btn{display:flex;align-items:center;justify-content:center;gap:10px;padding:10px 16px;margin-top:10px;border-radius:8px;background:transparent;border:1px solid;font-weight:600;font-size:14px}
+  .nav-badge{min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#ffee58;color:#2c3e50;font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;line-height:1}
+  .mobile-bottom-nav .nav-badge{position:absolute;top:-6px;right:-10px;min-width:16px;height:16px;font-size:10px}
+  .status-chip,.assign-btn{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid;background:transparent;white-space:nowrap}
+  .assign-btn{color:var(--qh-muted);border-color:var(--qh-line)}
+  .assign-btn.mine{color:#1b5e20;border-color:#66bb6a;background:#e8f5e9}
+  .assign-btn.other{color:#0d47a1;border-color:#90caf9;background:#e3f2fd}
+  .new-chip{display:inline-block;vertical-align:middle;margin-left:4px;padding:1px 7px;border-radius:999px;background:#ffee58;color:#2c3e50;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+  .typing-line{font-size:12px;font-style:italic;color:var(--qh-muted);margin:-4px 0 8px 4px}
+  .link-btn{background:none;border:none;padding:0;color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font:inherit;overflow-wrap:anywhere;text-align:left}
+  .filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px}
+  .filter-chips{display:flex;flex-wrap:wrap;gap:6px}
+  .filter-chip{padding:6px 12px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--qh-line);background:var(--qh-surface);color:var(--qh-text)}
+  .filter-chip.on{background:#2c3e50;border-color:#2c3e50;color:#fff}
+  :root[data-theme="dark"] .filter-chip.on{background:#ffee58;border-color:#ffee58;color:#2c3e50}
+  .overdue-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;margin-bottom:16px;border-radius:12px;background:#fdecea;color:#8e1b1b;border:1px solid #ef9a9a;font-size:14px}
+  .overdue-banner span{flex:1 1 200px}
+  .overdue-banner button{padding:6px 14px;border-radius:8px;background:#c62828;color:#fff;font-weight:700;font-size:13px}
+
+  /* ── v10: after-hours note, library, mood, slots ── */
+  .after-hours{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;margin-bottom:16px;border-radius:10px;background:#fff8e1;color:#5d4200;border:1px solid #ffe082;font-size:13px;line-height:1.5}
+  .after-hours svg{margin-top:2px}
+  .assign-btn.due{color:#8e1b1b;border-color:#ef9a9a;background:#fdecea}
+  select.assign-btn{-webkit-appearance:none;appearance:none;cursor:pointer;font-family:inherit;max-width:240px;text-overflow:ellipsis}
+  select.filter-chip{-webkit-appearance:none;appearance:none;cursor:pointer;font-family:inherit}
+  .lib-item{border-radius:12px;overflow:hidden}
+  .lib-item>summary{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;list-style:none}
+  .lib-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .lib-item[open] .lib-chev{transform:rotate(180deg)}
+  .lib-chev{transition:transform .15s ease}
+  .lib-item>ul{list-style:disc;padding:0 20px 16px 48px;font-size:14px;line-height:1.6}
+  .lib-item>ul>li+li{margin-top:8px}
+  .mood-strip{display:flex;align-items:flex-end;gap:4px;height:34px;margin-top:14px;max-width:320px}
+  .mood-strip>span{flex:1;border-radius:3px;min-height:4px}
+  .slot-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;border:1px solid;background:transparent;font-size:12px;font-weight:600;min-height:36px}
+
+  /* ── sheets: help screen and case history ── */
+  .qh-sheet-wrap{position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;opacity:0;transition:opacity .18s ease}
+  .qh-sheet-wrap.open{opacity:1}
+  .qh-sheet{background:var(--qh-surface);color:var(--qh-text);border-radius:20px;padding:22px;width:100%;max-width:440px;max-height:calc(100dvh - 32px);overflow-y:auto;box-shadow:0 24px 48px rgba(0,0,0,.25)}
+  .qh-sheet.wide{max-width:640px}
+  .qh-sheet-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+  .qh-sheet-head h2{flex:1;font-size:20px;font-weight:700}
+  .qh-help-icon{width:40px;height:40px;border-radius:50%;background:#ffee58;color:#2c3e50;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .qh-sheet-x{width:36px;height:36px;border-radius:50%;background:var(--qh-chip);color:var(--qh-text);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  .qh-sheet-lead{font-size:14px;line-height:1.55;color:var(--qh-muted);margin-bottom:14px}
+  .qh-line{padding:12px 0;border-top:1px solid var(--qh-line)}
+  .qh-line-name{font-weight:700;font-size:15px}
+  .qh-line-note{font-size:13px;color:var(--qh-muted);margin-top:2px}
+  .qh-line-nums{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .qh-line-nums a{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;background:var(--qh-chip);color:var(--qh-text);text-decoration:none;flex:1 1 150px;min-height:44px}
+  .qh-line-nums a b{display:block;font-size:15px}
+  .qh-line-nums a small{display:block;font-size:11px;color:var(--qh-muted)}
+  .qh-sheet-close{width:100%;margin-top:14px;padding:12px;border-radius:10px;background:var(--qh-chip);color:var(--qh-text);font-weight:700;font-size:14px;text-align:center}
+  .qh-timeline{display:flex;flex-direction:column}
+  .qh-tl-row{display:flex;gap:12px;padding:12px 0;border-top:1px solid var(--qh-line)}
+  .qh-tl-dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex-shrink:0}
+  .qh-tl-meta{font-size:11px;color:var(--qh-muted)}
+  .qh-tl-title{font-weight:700;font-size:14px;overflow-wrap:anywhere}
+  .qh-tl-body{font-size:13px;color:var(--qh-muted);white-space:pre-wrap;overflow-wrap:anywhere;margin-top:2px}
+  .qh-tl-extra{font-size:12px;margin-top:4px;overflow-wrap:anywhere}
+
+  /* ── report ── */
+  .rep-bars{display:flex;flex-direction:column;gap:10px}
+  .rep-row{display:grid;grid-template-columns:minmax(90px,38%) 1fr 32px;align-items:center;gap:10px;font-size:13px}
+  .rep-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .rep-track{display:block;height:8px;border-radius:4px;background:var(--qh-chip);overflow:hidden}
+  .rep-fill{display:block;height:100%;border-radius:4px}
+  .rep-val{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+  .rep-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:8px;border:1px solid;font-size:13px;font-weight:600;background:transparent}
+  @media(min-width:768px){.md\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}}
+  @media print{
+    .desktop-sidebar,.mobile-topbar,.mobile-bottom-nav,.drawer-panel,.drawer-overlay,.rep-btn,input[type="month"],#qh-toasts{display:none !important}
+    .screen,#app,body,html,#main-scroll{height:auto !important;overflow:visible !important}
+    body,#main-scroll{background:#fff !important}
+    .rep-fill{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  }
+
   /* thin, quiet scrollbars inside cards */
   #app *{scrollbar-width:thin;scrollbar-color:rgba(128,128,128,.35) transparent}
   details>summary::-webkit-details-marker{display:none}
@@ -370,9 +466,9 @@ input::placeholder, textarea::placeholder {
       <div class="qh-modal-btns" id="qh-modal-btns"></div>
     </div>
   </div>
-  <div id="app" class="h-full w-full"><div id="qh-boot" data-key="boot"><span><span style="color:#fbc02d">QH</span>safety</span></div></div>
+  <div id="app" class="h-full w-full"><div id="qh-boot" data-key="boot"><span class="qh-logo" style="font-size:26px"><svg width="44" height="44" viewBox="0 0 48 48" aria-hidden="true"><path d="M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z" fill="#2c3e50" stroke="#2c3e50" stroke-width="3" stroke-linejoin="round"/><path d="M17.5 14.5h13a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-5.2l-5.3 4.6V28.5h-2.5a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4Z" fill="#ffee58"/><circle cx="19.5" cy="21.5" r="1.6" fill="#2c3e50"/><circle cx="24" cy="21.5" r="1.6" fill="#2c3e50"/><circle cx="28.5" cy="21.5" r="1.6" fill="#2c3e50"/></svg><span><b>QH</b>safety</span></span></div></div>
     <noscript><p style="padding:24px;text-align:center">QHsafety needs JavaScript to run. Please enable it and reload.</p></noscript>
-    <script defer src="/risk-engine.js?v=8"></script>
-    <script defer src="/app.js?v=8"></script>
+    <script defer src="/risk-engine.js?v=10"></script>
+    <script defer src="/app.js?v=10"></script>
 </body>
 </html>
