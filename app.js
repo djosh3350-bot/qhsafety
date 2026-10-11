@@ -141,7 +141,7 @@
     }
 
     const defaultConfig = {
-      hero_title:'QHsafety', hero_subtitle:'Protecting Quirino High School Students',
+      hero_title:'QHsafety', hero_subtitle:'For the Junior and Senior High School students of Quirino High School',
       welcome_text:'Welcome Back', background_color:'#f8f6f1', surface_color:'#ffffff',
       text_color:'#2c3e50', primary_action_color:'#ffee58', secondary_action_color:'#80deea',
       font_family:'DM Sans', font_size:16
@@ -152,6 +152,51 @@
     let postings=[], showPostingForm=false, postingTitle='', postingContent='', postingError='', postingPriority='Medium';
     let consultationPostings=[], showConsultationForm=false, consultationReason='', consultationDescription='', consultationPriority='Medium', consultationError='', consultationGradeLevel='';
     let consultationContactPref='chat', consultationMoodLevel=3;
+    // The student's grade is asked once and remembered on this device (per account); both forms share it.
+    let postingContactPref='chat';
+    const GRADES = [7, 8, 9, 10, 11, 12];                      // Junior and Senior High School, as in the paper
+    const STRANDS = ['STEM', 'ABM', 'HUMSS', 'GAS', 'TVL'];    // EDIT: the strands your school offers (asked only for Grades 11 and 12)
+    const isSHS = (g) => /^Grade (11|12)$/.test(g || '');
+    const AGE_MIN = 15, AGE_MAX = 21;                          // the last one is shown as "21+"
+    const GRADE_RE = /^Grade (7|8|9|10|11|12)$/;
+    let studentStrand = '', studentAge = 0, _profFor = null;
+    function profGet(k) { try { return localStorage.getItem('qh_' + k + '_' + (currentUserEmail || 'guest')) || ''; } catch (e) { return ''; } }
+    function profSet(k, v) { try { localStorage.setItem('qh_' + k + '_' + (currentUserEmail || 'guest'), String(v)); } catch (e) {} }
+    function pickStrand(v) { studentStrand = (studentStrand === v || !STRANDS.includes(v)) ? '' : v; profSet('strand', studentStrand); render(); }
+    function pickAge(v) { const n = parseInt(v, 10); studentAge = n >= AGE_MIN && n <= AGE_MAX ? n : 0; profSet('age', studentAge || ''); }
+    function ageLabel(n) { n = Number(n) || 0; return !n ? '' : n >= AGE_MAX ? AGE_MAX + '+' : String(n); }
+    // "Grade 12 · STEM · 17 yrs" — what staff see on a card
+    function demoLabel(i) { return [i.gradeLevel, i.strand, i.age ? ageLabel(i.age) + ' yrs' : ''].filter(Boolean).join(' · '); }
+    function gradeKey() { return 'qh_grade_' + (currentUserEmail || 'guest'); }
+    function savedGrade() {
+      try { const g = localStorage.getItem(gradeKey()) || ''; if (GRADE_RE.test(g)) return g; } catch (e) {}
+      const last = consultationPostings.concat(postings).filter(i => i.authorId === currentUserEmail && GRADE_RE.test(i.gradeLevel || '')).sort((a, b) => b.timestamp - a.timestamp)[0];
+      return last ? last.gradeLevel : '';
+    }
+    function pickGrade(g) { if (!GRADE_RE.test(g)) return; consultationGradeLevel = g; try { localStorage.setItem(gradeKey(), g); } catch (e) {} render(); }
+    function ensureGrade() {
+      if (currentRole !== 'student') return '';
+      if (!GRADE_RE.test(consultationGradeLevel)) consultationGradeLevel = savedGrade();
+      if (_profFor !== currentUserEmail) {
+        _profFor = currentUserEmail;
+        const st = profGet('strand'); studentStrand = STRANDS.includes(st) ? st : '';
+        const a = parseInt(profGet('age'), 10); studentAge = a >= AGE_MIN && a <= AGE_MAX ? a : 0;
+      }
+      return '';
+    }
+    // Grade (needed for a consultation), strand and age (both optional) — shared by the two student forms
+    function aboutYouFields() {
+      ensureGrade();
+      const c = config, lab = 'display:block;font-size:13px;font-weight:600;color:' + c.text_color + ';margin-bottom:8px';
+      const chip = (on) => 'flex:1;min-width:64px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ' + (on ? c.primary_action_color : c.text_color + '22') + ';background:' + (on ? c.primary_action_color + '22' : 'transparent') + ';color:' + c.text_color + ';text-align:center';
+      const opt = ' <span style="font-weight:400;color:' + c.text_color + '88">(' + tr('pOptional') + ')</span>';
+      return '<div class="mb-3"><label style="' + lab + '">' + tr('cGrade') + '</label><div class="flex gap-2 flex-wrap" role="group" aria-label="' + tr('cGrade') + '">' +
+        GRADES.map(g => '<button aria-pressed="' + (consultationGradeLevel === 'Grade ' + g) + '" data-grade="' + g + '" onclick="pickGrade(\'Grade ' + g + '\')" style="' + chip(consultationGradeLevel === 'Grade ' + g) + '">Grade ' + g + '</button>').join('') + '</div></div>' +
+        (!isSHS(consultationGradeLevel) ? '' : '<div class="mb-3"><label style="' + lab + '">' + tr('pStrand') + opt + '</label><div class="flex gap-2 flex-wrap" role="group" aria-label="' + tr('pStrand') + '">' +
+        STRANDS.map(v => '<button aria-pressed="' + (studentStrand === v) + '" data-strand="' + _esc(v) + '" onclick="pickStrand(\'' + _esc(v) + '\')" style="' + chip(studentStrand === v) + '">' + _esc(v) + '</button>').join('') + '</div></div>') +
+        '<div class="mb-4"><label for="qh-age" style="' + lab + '">' + tr('pAge') + opt + '</label><select id="qh-age" data-keep onchange="pickAge(this.value)" style="padding:9px 12px;border:1px solid ' + c.text_color + '22;border-radius:8px;background:' + c.background_color + ';color:' + c.text_color + ';font-size:14px;min-width:120px"><option value="">—</option>' +
+        Array.from({ length: AGE_MAX - AGE_MIN + 1 }, (_, k) => AGE_MIN + k).map(a => '<option value="' + a + '"' + (studentAge === a ? ' selected' : '') + '>' + ageLabel(a) + '</option>').join('') + '</select></div>';
+    }
     let showMeetScheduler={}, consultMeetDraft={date:'',time:'',link:'',notes:''};
     // Attachment limits (Firebase free tier safe)
     const ATTACH_MAX_SIZE_BYTES = 1 * 1024 * 1024; // 1MB
@@ -207,7 +252,7 @@
         termsPrivacy:'Terms & Privacy', termsDesc:'Your data stays confidential and is only accessible to authorized guidance staff.',
         weCare:'We Care', weCareDesc:'Every report is reviewed. Every student matters. Help is always one click away.',
         aboutMission:'About Our Mission',
-        aboutDesc:'Supporting Quirino High School students through accessible guidance consultations, safety reporting, and proactive mental health awareness.',
+        aboutDesc:'QHsafety is an AI-powered web-based system for student mental health monitoring and crisis intervention, made for the Junior and Senior High School (Grade 7 to 12) students of Quirino High School. Report a concern anonymously or with your name, request a consultation, and message the guidance office directly.',
         langSetting:'Language / Wika',
         logs:'Logs', users:'Users', by:'By', markDone:'Mark Done', storage:'Storage',
         'low-medium':'Low-Medium', loading:'Loading…', noMatch:'No postings match your search.',
@@ -247,7 +292,7 @@
         termsPrivacy:'Mga Tuntunin at Privacy', termsDesc:'Ang iyong data ay kumpidensyal at accessible lamang ng mga awtorisadong tauhan ng gabay.',
         weCare:'Nagmamalasakit Kami', weCareDesc:'Ang bawat ulat ay sinusuri. Mahalaga ang bawat estudyante. Laging isang click lang ang tulong.',
         aboutMission:'Tungkol sa Aming Misyon',
-        aboutDesc:'Sinusuportahan ang mga estudyante ng Quirino High School sa pamamagitan ng accessible na gabay, pag-uulat ng kaligtasan, at kamalayan sa mental health.',
+        aboutDesc:'Ang QHsafety ay isang AI-powered na web-based system para sa pagsubaybay sa mental health ng mga estudyante at agarang pagtugon sa krisis, para sa mga estudyante ng Junior at Senior High School (Grade 7 hanggang 12) ng Quirino High School. Mag-ulat nang hindi nagpapakilala o may pangalan, humiling ng konsultasyon, at direktang makipag-usap sa guidance office.',
         langSetting:'Language / Wika',
         logs:'Mga Log', users:'Mga User', storage:'Storage',
         'low-medium':'Mababa-Katamtaman', loading:'Naglo-load…', noMatch:'Walang post na tumutugma.',
@@ -389,12 +434,14 @@ function cleanDoc(d, kind) {
   d.priority  = PRIORITIES.includes(str(d.priority).trim()) ? str(d.priority).trim() : 'Medium';
   d.riskLevel = window.QHRisk.LEVELS.includes(str(d.riskLevel).trim()) ? str(d.riskLevel).trim() : 'Low';
   d.aiScore   = Number(d.aiScore) || 0;
+  d.strand    = str(d.strand).slice(0, 24);
+  { const ag = Math.round(Number(d.age)); d.age = ag >= 10 && ag <= 30 ? ag : 0; }
   d.reasons   = Array.isArray(d.reasons) ? d.reasons.map(str) : [];
   d.timestamp = Number(d.timestamp) || 0;
   d.author    = str(d.author);
   d.authorId  = str(d.authorId);
   d.chatMessages = Array.isArray(d.chatMessages) ? d.chatMessages.filter(m => m && typeof m === 'object') : [];
-  if (kind === 'posting') { d.title = str(d.title); d.content = str(d.content); }
+  if (kind === 'posting') { d.title = str(d.title); d.content = str(d.content); d.gradeLevel = str(d.gradeLevel); }
   else {
     d.reason = str(d.reason); d.description = str(d.description);
     d.status = str(d.status).trim() === 'Done' ? 'Done' : 'Pending';
@@ -1066,7 +1113,7 @@ function logout() {
   booting = false; loginError = ''; selectedRoleForLogin = null; _threatMemo.clear(); _attStore.clear();
   _seen = null; clearTimeout(_seenTimer); _seenTimer = null; clearInterval(_overdueTimer); _overdueTold.clear();
   staffFilter = { risk: 'all', needsReply: false, mine: false, grade: '', q: '' }; reportCache = {}; storageStats = null;
-  postingAbout = 'me'; postingAboutWho = '';
+  postingAbout = 'me'; postingAboutWho = ''; postingContactPref = 'chat'; consultationGradeLevel = ''; studentStrand = ''; studentAge = 0; _profFor = null;
   closeSheet('qh-help'); closeSheet('qh-history');
   slots = []; announcements = []; replyTemplates = null; templatesEditing = null; slotDraft = { date: '', time: '' };
   render();
@@ -1127,6 +1174,18 @@ function logout() {
       const cleanTitle = passLanguageGate(title, local), cleanContent = passLanguageGate(content, local);
       if (cleanTitle === null || cleanContent === null) { postingError = LANGUAGE_REFUSAL; render(); return; }
 
+      if (postingContactPref !== 'chat') {
+        if (!consultationGradeLevel) { postingError = tr('pNeedGrade'); render(); return; }
+        const extra = { fromProblemForm: true };
+        if (postingAbout === 'other') { extra.aboutOther = true; extra.aboutWho = postingAboutWho.trim().slice(0, 80); }
+        consultationReason = title; consultationDescription = content; consultationPriority = postingPriority || 'Medium';
+        consultationContactPref = postingContactPref; consultationMoodLevel = 0;   // 0 = the student was not asked
+        postingTitle = ''; postingContent = ''; postingPriority = 'Medium'; showPostingForm = false; postingError = '';
+        postingAbout = 'me'; postingAboutWho = ''; postingContactPref = 'chat';
+        activeSidebarItem = 'Consultations';
+        addConsultation(extra, tr('pSentConsult'));
+        return;
+      }
       const chosen = postingPriority || 'Medium';
       const authorLabel = isAnonymous ? 'Anonymous' : currentUserEmail;
       const newPosting = {
@@ -1143,6 +1202,9 @@ function logout() {
         isAnonymous: isAnonymous,
         timestamp: Date.now()
       };
+      if (consultationGradeLevel) newPosting.gradeLevel = consultationGradeLevel;
+      if (studentStrand && isSHS(consultationGradeLevel)) newPosting.strand = studentStrand;
+      if (studentAge) newPosting.age = studentAge;
       const aboutOther = postingAbout === 'other';
       if (aboutOther) { newPosting.aboutOther = true; newPosting.aboutWho = postingAboutWho.trim().slice(0, 80); }
       const write = db.collection('postings').doc(String(newPosting.id)).set(newPosting);
@@ -1374,7 +1436,7 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
 }
   
     // ── CONSULTATIONS ──
-    function addConsultation() {
+    function addConsultation(extra, sentMsg) {
       const reason = consultationReason.trim(), details = consultationDescription.trim();
       if (!reason || !details) { consultationError = 'Reason and details are required'; render(); return; }
       if (!consultationGradeLevel) { consultationError = 'Please select your grade level'; render(); return; }
@@ -1393,20 +1455,23 @@ async function sendOneSignalPush(title, message, postId, postType, riskLevel, ri
         riskLevel: local.level, aiScore: local.score, flagged: !!local.flagged, reasons: local.reasons,
         timestamp: Date.now(), messages: []
       };
+      if (studentStrand && isSHS(consultationGradeLevel)) newConsult.strand = studentStrand;
+      if (studentAge) newConsult.age = studentAge;
+      if (extra && typeof extra === 'object') Object.assign(newConsult, extra);
       const write = db.collection('consultations').doc(String(newConsult.id)).set(newConsult);
 
       consultationReason = ''; consultationDescription = ''; consultationPriority = 'Medium';
       consultationGradeLevel = ''; consultationContactPref = 'chat'; consultationMoodLevel = 3; showConsultationForm = false; consultationError = '';
       render();
-      toast((appLang === 'tl' ? 'Naipadala ang kahilingan' : 'Request sent') + (isAfterHours() ? ' — ' + tr('afterHours').toLowerCase() : ''));
-      maybeShowSupport(local, false);
+      toast((sentMsg || (appLang === 'tl' ? 'Naipadala ang kahilingan' : 'Request sent')) + (isAfterHours() ? ' — ' + tr('afterHours').toLowerCase() : ''));
+      maybeShowSupport(local, !!newConsult.aboutOther);
 
       write.then(() => {
         addLog('Consultation submitted', authorLabel, 'info');
         return refineRiskInBackground('consultations', newConsult, fullText, local, 'Consultation', cleanReason, cleanDesc, chosen);
       }).catch(e => {
         consultationReason = reason; consultationDescription = details; consultationPriority = chosen;
-        consultationGradeLevel = saved.grade; consultationContactPref = saved.pref; consultationMoodLevel = saved.mood;
+        consultationGradeLevel = saved.grade; consultationContactPref = saved.pref; consultationMoodLevel = saved.mood || 3;
         showConsultationForm = true;
         consultationError = 'Could not submit: ' + _esc((e && e.message) || 'check your connection and try again');
         activeSidebarItem = 'Consultations';
@@ -2242,6 +2307,8 @@ function renderConsultChatMsg(m, c) {
     Object.assign(T.en, {
       reports:'Reports', storagePage:'Storage', getHelp:'Get help now', continueAnonLong:'Continue without an account',
       anonHint:'No name, no email. Your posts stay on this device\'s session.',
+      pOptional:'optional', pStrand:'Strand', pAge:'Age',
+      pHelpHow:'How would you like to be helped?', pMeetNote:'This will be sent as a consultation request so a counselor can schedule it with you. You will find it under Consultations.', pNeedGrade:'Please pick your grade level so the counselor can schedule you.', pSentConsult:'Sent as a consultation request — a counselor will schedule it with you',
       aboutMe:'About me', aboutOther:'About someone else', aboutWho:'Who are you worried about? (optional — a name, nickname or section)',
       stSent:'Sent — not seen yet', stSeen:'Seen by a counselor', stReplied:'A counselor replied', typing:'Counselor is typing…', isNew:'New',
       cGuide:'<strong>How this works:</strong> Tell us what is going on. A counselor will read it and reply here. What you write stays between you and the guidance office.',
@@ -2260,6 +2327,8 @@ function renderConsultChatMsg(m, c) {
     Object.assign(T.tl, {
       reports:'Mga Ulat', storagePage:'Storage', getHelp:'Humingi ng tulong ngayon', continueAnonLong:'Magpatuloy nang walang account',
       anonHint:'Walang pangalan, walang email. Mananatili ang iyong mga post sa session ng device na ito.',
+      pOptional:'opsyonal', pStrand:'Strand', pAge:'Edad',
+      pHelpHow:'Paano mo gustong matulungan?', pMeetNote:'Ipapadala ito bilang kahilingan sa konsultasyon para ma-iskedyul ka ng counselor. Makikita mo ito sa Consultations.', pNeedGrade:'Pakipili ang iyong baitang para ma-iskedyul ka ng counselor.', pSentConsult:'Naipadala bilang kahilingan sa konsultasyon — iiskedyul ka ng counselor',
       aboutMe:'Tungkol sa akin', aboutOther:'Tungkol sa ibang tao', aboutWho:'Sino ang inaalala mo? (opsyonal — pangalan, palayaw o section)',
       stSent:'Naipadala — hindi pa nababasa', stSeen:'Nabasa na ng counselor', stReplied:'Sumagot na ang counselor', typing:'Nagta-type ang counselor…', isNew:'Bago',
       cGuide:'<strong>Paano ito gumagana:</strong> Sabihin sa amin ang nangyayari. Babasahin ito ng counselor at sasagot dito. Mananatili ito sa pagitan mo at ng guidance office.',
@@ -2460,9 +2529,10 @@ function renderConsultChatMsg(m, c) {
         (!f.mine || i.assignedTo === currentUserEmail) &&
         (!f.follow || (i.followUpAt && dayStart(i.followUpAt) <= dayStart(Date.now()))) &&
         (kind !== 'c' || !f.grade || i.gradeLevel === f.grade) &&
+        (kind !== 'c' || !f.strand || i.strand === f.strand) &&
         (!q || ((i.reason || '') + ' ' + (i.description || '') + ' ' + (i.author || '')).toLowerCase().includes(q)));
     }
-    function filterActive(kind) { const f = staffFilter; return f.risk !== 'all' || f.needsReply || f.mine || f.follow || (kind === 'c' && (f.grade || f.q)); }
+    function filterActive(kind) { const f = staffFilter; return f.risk !== 'all' || f.needsReply || f.mine || f.follow || (kind === 'c' && (f.grade || f.strand || f.q)); }
     function staffFilterBar(kind, shown, total) {
       if (currentRole !== 'guidance') return '';
       const f = staffFilter, c = config;
@@ -2470,13 +2540,14 @@ function renderConsultChatMsg(m, c) {
       return '<div data-key="filters-' + kind + '" class="filter-bar">' +
         (kind === 'c' ? '<div class="flex items-center gap-2 px-3 py-2 rounded-lg" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '22;flex:1 1 220px"><i data-lucide="search" style="width:16px;height:16px;color:' + c.text_color + '88"></i><input type="text" aria-label="Search consultations" placeholder="Search consultations…" value="' + _esc(f.q) + '" oninput="staffFilter.q=this.value;render()" autocomplete="off" style="flex:1;min-width:0;background:transparent;border:none;outline:none;color:' + c.text_color + ';font-size:14px" /></div>' : '') +
         '<div class="filter-chips" role="group" aria-label="Filters">' +
-        chip(f.risk === 'all' && !f.needsReply && !f.mine && !f.grade && !f.follow, 'All', "staffFilter={risk:'all',needsReply:false,mine:false,grade:'',q:staffFilter.q}") +
+        chip(f.risk === 'all' && !f.needsReply && !f.mine && !f.grade && !f.strand && !f.follow, 'All', "staffFilter={risk:'all',needsReply:false,mine:false,grade:'',q:staffFilter.q}") +
         chip(f.risk === 'high', 'High risk', "staffFilter.risk=staffFilter.risk==='high'?'all':'high'") +
         chip(f.risk === 'attention', 'High + Medium', "staffFilter.risk=staffFilter.risk==='attention'?'all':'attention'") +
         chip(f.needsReply, 'Needs reply', 'staffFilter.needsReply=!staffFilter.needsReply') +
         chip(f.mine, 'Assigned to me', 'staffFilter.mine=!staffFilter.mine') +
         chip(!!f.follow, 'Follow-up due', 'staffFilter.follow=!staffFilter.follow') +
-        (kind === 'c' ? '<select aria-label="Grade level" onchange="staffFilter.grade=this.value;render()" class="filter-chip' + (f.grade ? ' on' : '') + '">' + ['', 'Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12'].map(g => '<option value="' + g + '"' + (f.grade === g ? ' selected' : '') + '>' + (g || 'Any grade') + '</option>').join('') + '</select>' : '') +
+        (kind === 'c' ? '<select aria-label="Grade level" onchange="staffFilter.grade=this.value;render()" class="filter-chip' + (f.grade ? ' on' : '') + '">' + [''].concat(GRADES.map(g => 'Grade ' + g)).map(g => '<option value="' + g + '"' + (f.grade === g ? ' selected' : '') + '>' + (g || 'Any grade') + '</option>').join('') + '</select>' +
+          '<select aria-label="Strand" onchange="staffFilter.strand=this.value;render()" class="filter-chip' + (f.strand ? ' on' : '') + '">' + [''].concat(STRANDS).map(g => '<option value="' + _esc(g) + '"' + (f.strand === g ? ' selected' : '') + '>' + (_esc(g) || 'Any strand') + '</option>').join('') + '</select>' : '') +
         '</div>' + (filterActive(kind) ? '<div class="text-xs" style="flex-basis:100%;color:' + c.text_color + '99">Showing ' + shown + ' of ' + total + '</div>' : '') + '</div>';
     }
 
@@ -2562,7 +2633,7 @@ function renderConsultChatMsg(m, c) {
       const replies = all.map(firstReplyMinutes).filter(v => v !== null).sort((a, b) => a - b);
       const reasons = {}; all.forEach(i => (i.reasons || []).forEach(r => { const k = r.replace(/\s*\(A4\)/, ''); reasons[k] = (reasons[k] || 0) + 1; }));
       return { all, total: all.length, postings: d.postings.length, consultations: d.consultations.length,
-        risk: count(all, x => x.riskLevel), grade: count(d.consultations, c => c.gradeLevel), reasons,
+        risk: count(all, x => x.riskLevel), grade: count(all, x => GRADE_RE.test(x.gradeLevel) ? x.gradeLevel : ''), strand: count(all, x => x.strand), age: count(all, x => ageLabel(x.age)), reasons,
         resolved: d.consultations.filter(c => c.status === 'Done').length,
         unanswered: all.filter(i => firstReplyMinutes(i) === null && !hasCounselorReply(i)).length,
         medianReply: replies.length ? replies[Math.floor(replies.length / 2)] : null, replied: replies.length };
@@ -2571,8 +2642,8 @@ function renderConsultChatMsg(m, c) {
     function exportReportCsv() {
       const s = reportStats(reportMonth); if (!s) return;
       const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""').replace(/^([=+\-@])/, "'$1") + '"';
-      const rows = [['Date', 'Type', 'Risk level', 'AI score', 'Priority', 'Grade', 'Status', 'Categories', 'First reply (minutes)', 'Assigned to']];
-      s.all.sort((a, b) => a.timestamp - b.timestamp).forEach(i => { const fr = firstReplyMinutes(i); rows.push([new Date(i.timestamp).toISOString().slice(0, 10), i._k, i.riskLevel, i.aiScore, i.priority, i.gradeLevel || '', i._k === 'Consultation' ? i.status : '', (i.reasons || []).join('; '), fr === null ? '' : Math.round(fr), i.assignedTo || '']); });
+      const rows = [['Date', 'Type', 'Risk level', 'AI score', 'Priority', 'Grade', 'Strand', 'Age', 'Status', 'Categories', 'First reply (minutes)', 'Assigned to']];
+      s.all.sort((a, b) => a.timestamp - b.timestamp).forEach(i => { const fr = firstReplyMinutes(i); rows.push([new Date(i.timestamp).toISOString().slice(0, 10), i._k, i.riskLevel, i.aiScore, i.priority, i.gradeLevel || '', i.strand || '', ageLabel(i.age), i._k === 'Consultation' ? i.status : '', (i.reasons || []).join('; '), fr === null ? '' : Math.round(fr), i.assignedTo || '']); });
       const blob = new Blob(['\ufeff' + rows.map(r => r.map(q).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'qhsafety-report-' + reportMonth + '.csv';
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -2596,7 +2667,7 @@ function renderConsultChatMsg(m, c) {
         (!d || d.loading ? '<p style="color:' + c.text_color + '99">' + tr('loading') + '</p>' : d.error ? '<div class="p-4 rounded-lg text-sm" role="alert" style="background:#fdecea;color:#b71c1c">Could not load this month: ' + _esc(d.error) + '</div>' :
         !s.total ? '<div class="p-8 rounded-xl text-center text-sm" style="background:' + c.surface_color + ';border:1px dashed ' + c.text_color + '33;color:' + c.text_color + '99">Nothing was submitted in this month.</div>' :
         '<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 rep-tiles">' + tile('Submissions', s.total, s.postings + ' postings · ' + s.consultations + ' consultations') + tile('Flagged Medium or High', (s.risk.High || 0) + (s.risk.Medium || 0), (s.risk.High || 0) + ' high') + tile('Typical first reply', fmtDuration(s.medianReply), 'median of ' + s.replied + ' replied') + tile('Still unanswered', s.unanswered, s.resolved + ' consultations resolved') + '</div>' +
-        '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + reportBars('By risk level', s.risk, ['High', 'Medium', 'Low-Medium', 'Low'], true) + reportBars('By grade (consultations)', s.grade, ['Grade 7', 'Grade 8', 'Grade 9', 'Grade 10', 'Grade 11', 'Grade 12']) + '</div>' +
+        '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">' + reportBars('By risk level', s.risk, ['High', 'Medium', 'Low-Medium', 'Low'], true) + reportBars('By grade level', s.grade, GRADES.map(g => 'Grade ' + g)) + reportBars('By strand', s.strand, STRANDS) + reportBars('By age', s.age, Array.from({ length: AGE_MAX - AGE_MIN + 1 }, (_, k) => ageLabel(AGE_MIN + k))) + '</div>' +
         '<div class="mt-4">' + reportBars('Most common concerns', s.reasons) + '</div>' +
         '<p class="text-xs mt-4" style="color:' + c.text_color + '88">Counts only. The CSV has one row per submission with dates, levels and categories — no names and no message text.</p>') + '</div>';
     }
@@ -2912,6 +2983,7 @@ function renderConsultChatMsg(m, c) {
       'Private Guidance Note':'Pribadong tala ng Guidance','Save note':'I-save ang tala','Refer Student':'I-refer ang estudyante','Session History':'Kasaysayan ng session','Send reminder':'Magpadala ng paalala','Confirm and notify student':'Kumpirmahin at abisuhan ang estudyante',
       'Schedule Google Meet':'Mag-iskedyul ng Google Meet','Schedule Phone Call':'Mag-iskedyul ng tawag','Reschedule Meeting':'Baguhin ang iskedyul','Reschedule Call':'Baguhin ang iskedyul ng tawag','Scheduled meeting':'Nakaiskedyul na pagkikita','Scheduled phone call':'Nakaiskedyul na tawag',
       '🚨 Mark Urgent':'🚨 Markahang apurahan','🔕 Unmark Urgent':'🔕 Alisin ang apurahan','URGENT':'APURAHAN','Pending':'Nakabinbin','Confirmed':'Kumpirmado','⏳ Pending':'⏳ Nakabinbin','✅ Confirmed':'✅ Kumpirmado','🎉 Done':'🎉 Tapos',
+      'By grade level':'Ayon sa baitang','By strand':'Ayon sa strand','By age':'Ayon sa edad','Any strand':'Kahit anong strand',
       'Monthly report':'Buwanang ulat','Submissions':'Mga isinumite','Flagged Medium or High':'Na-flag na Katamtaman o Mataas','Typical first reply':'Karaniwang unang sagot','Still unanswered':'Wala pang sagot','By risk level':'Ayon sa antas ng panganib','By grade (consultations)':'Ayon sa baitang (konsultasyon)','Most common concerns':'Pinakakaraniwang alalahanin','Print':'I-print',
       'Send announcement to students':'Magpadala ng anunsyo sa mga estudyante','Push notification delivered to all subscribed students':'Push notification para sa lahat ng naka-subscribe na estudyante','Send to all students':'Ipadala sa lahat ng estudyante',
       'Follow-ups due':'Mga follow-up ngayon','My open times':'Mga bakante kong oras','Add time':'Idagdag','No open times yet.':'Wala pang bakanteng oras.','Case history':'Kasaysayan ng kaso','Close':'Isara',
@@ -3118,6 +3190,14 @@ if(activeSidebarItem==='Postings') {
     <div class="mb-3"><label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('priority')}</label><div class="flex gap-2">${['Low','Medium','High'].map(lv=>`<button onclick="postingPriority='${lv}';render()" aria-pressed="${postingPriority===lv}" class="px-2 py-2 rounded-lg flex-1 text-sm font-bold" style="text-align:center;white-space:nowrap;background:${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):config.text_color+'18'};color:${postingPriority===lv?'#fff':config.text_color};border:2px solid ${postingPriority===lv?(lv==='High'?'#ef5350':lv==='Medium'?'#ff9800':'#66bb6a'):'transparent'}">${lv==='High'?'🔴':lv==='Medium'?'🟠':'🟢'} ${tr(lv.toLowerCase())}</button>`).join('')}</div></div>
     <textarea id="postingContentTA" placeholder="${tr('content')}" aria-label="${tr('content')}" maxlength="1800" oninput="postingContent=this.value;onFieldInput()" 
               style="width:100%;padding:12px;margin-bottom:12px;border:1px solid ${config.text_color}22;border-radius:8px;background:${config.background_color};color:${config.text_color};min-height:100px;resize:vertical">${_esc(postingContent)}</textarea>
+    ${aboutYouFields()}
+    <div class="mb-4">
+      <label style="display:block;font-size:13px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('pHelpHow')}</label>
+      <div class="flex gap-2 flex-wrap" role="group" aria-label="${tr('pHelpHow')}">
+        ${[{v:'chat',l:tr('cChat')},{v:'meet',l:tr('cMeet')},{v:'facetoface',l:tr('cFace')},{v:'phone',l:tr('cPhone')}].map(o=>`<button aria-pressed="${postingContactPref===o.v}" data-help="${o.v}" onclick="postingContactPref='${o.v}';render()" style="flex:1;min-width:80px;padding:8px 6px;border-radius:8px;font-size:12px;font-weight:600;border:2px solid ${postingContactPref===o.v?config.primary_action_color:config.text_color+'22'};background:${postingContactPref===o.v?config.primary_action_color+'22':'transparent'};color:${config.text_color};text-align:center">${o.l}</button>`).join('')}
+      </div>
+      ${postingContactPref!=='chat'?`<div class="mt-2 text-xs" style="color:${config.text_color}99">${tr('pMeetNote')}</div>`:''}
+    </div>
     <div class="flex gap-3">
       <button onclick="addPosting()" class="px-4 py-2 rounded-lg font-semibold" 
               style="background:${config.primary_action_color};color:#2c3e50">${tr('publish')}</button>
@@ -3145,6 +3225,7 @@ if(activeSidebarItem==='Postings') {
           <div class="flex-1">
             <h3 class="font-bold" style="font-size:${fs*1.1}px;color:${config.text_color}">${_esc(p.title)} ${newChip(p,'p')}</h3>
             ${p.aboutOther?`<div class="mt-2"><span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:#e3f2fd;color:#0d47a1">${tr('aboutOther')}${p.aboutWho?': '+_esc(p.aboutWho):''}</span></div>`:''}
+            ${demoLabel(p)&&currentRole!=='student'?`<div class="mt-2"><span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}aa">${_esc(demoLabel(p))}</span></div>`:''}
             
             ${currentRole==='guidance' ? `
             <div class="flex items-center gap-2 mt-2 flex-wrap">
@@ -3259,21 +3340,8 @@ if(activeSidebarItem==='Postings') {
     ${afterHoursNote()}
     <h3 class="font-bold mb-5" style="font-size:${fs*1.1}px;color:${config.text_color}">${tr('cNew')}</h3>
 
-    <!-- Grade Level -->
-    <div class="mb-5">
-      <label style="display:block;font-size:14px;font-weight:600;color:${config.text_color};margin-bottom:8px">${tr('cGrade')}</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
-          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#e3f2fd;color:#1565c0;text-transform:uppercase;letter-spacing:.05em">${tr('cJHS')}</div>
-          ${[7,8,9,10].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#1565c0':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
-        </div>
-        <div style="border:2px solid ${config.text_color}22;border-radius:10px;overflow:hidden">
-          <div style="padding:6px 10px;font-size:11px;font-weight:700;background:#fce4ec;color:#c62828;text-transform:uppercase;letter-spacing:.05em">${tr('cSHS')}</div>
-          ${[11,12].map(g=>`<button onclick="consultationGradeLevel='Grade ${g}';render()" style="display:block;width:100%;text-align:left;padding:8px 12px;font-size:13px;font-weight:600;border-top:1px solid ${config.text_color}11;background:${consultationGradeLevel==='Grade '+g?'#c62828':'transparent'};color:${consultationGradeLevel==='Grade '+g?'#fff':config.text_color}">Grade ${g}</button>`).join('')}
-        </div>
-      </div>
-      ${consultationGradeLevel?`<div class="mt-2 text-xs font-semibold" style="color:${darkMode?'#a5d6a7':'#2e7d32'}">${_esc(consultationGradeLevel)} ${tr('cSelected')}</div>`:`<div class="mt-2 text-xs" style="color:${config.text_color}88">${tr('cPickGrade')}</div>`}
-    </div>
+    <!-- Grade, strand, age -->
+    ${aboutYouFields()}
 
     <!-- Reason + Priority -->
     <div class="mb-4">
@@ -3332,7 +3400,8 @@ if(activeSidebarItem==='Postings') {
             </span>
             ${c.urgent?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#b71c1c;color:#fff">URGENT</span>`:''}
             ${isGuidance&&c.riskLevel&&isPending?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:${c.riskLevel==='High'?'#ef5350':c.riskLevel==='Medium'?'#ff9800':'#66bb6a'};color:#fff">${c.riskLevel==='High'?'🔴':c.riskLevel==='Medium'?'🟠':'🟢'} AI Risk: ${c.riskLevel} · ${c.aiScore}</span>`:''}
-            ${c.gradeLevel?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#fce4ec':'#e3f2fd'};color:${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'#c62828':'#1565c0'}">${parseInt(c.gradeLevel.replace('Grade ',''))>=11?'SHS':'JHS'} · ${_esc(c.gradeLevel)}</span>`:''}
+            ${demoLabel(c)?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:#e3f2fd;color:#1565c0">${_esc(demoLabel(c))}</span>`:''}
+            ${c.aboutOther?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:#e3f2fd;color:#0d47a1">${tr('aboutOther')}${c.aboutWho?': '+_esc(c.aboutWho):''}</span>`:''}
             ${c.contactPref?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone Call':'💬 Chat'}</span>`:''}
             ${c.studentMood?`<span class="text-xs px-2 py-1 rounded-md font-semibold" style="background:${config.text_color}11;color:${config.text_color}88">${['😞','😕','😐','🙂','😊'][c.studentMood-1]} ${['Very sad','Sad','Neutral','Good','Great'][c.studentMood-1]}</span>`:''}
             ${c.meetDateTime?`<span class="text-xs px-2 py-1 rounded-md font-bold" style="background:#e8f5e9;color:#2e7d32">${c.contactPref==='phone'?'Call':'Meet'}: ${new Date(c.meetDateTime).toLocaleDateString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span>`:''}
@@ -3488,6 +3557,8 @@ if(activeSidebarItem==='Postings') {
             <div style="padding:10px 14px;font-size:12px;color:${config.text_color}77;line-height:1.7">
               <div><strong>Submitted:</strong> ${c.timestamp?new Date(c.timestamp).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}):'-'}</div>
               ${c.gradeLevel?`<div><strong>Grade:</strong> ${_esc(c.gradeLevel)}</div>`:''}
+              ${c.strand?`<div><strong>Strand:</strong> ${_esc(c.strand)}</div>`:''}
+              ${c.age?`<div><strong>Age:</strong> ${ageLabel(c.age)}</div>`:''}
               ${c.contactPref?`<div><strong>Preferred Contact:</strong> ${c.contactPref==='meet'?'📹 Google Meet':c.contactPref==='facetoface'?'🏫 Face to Face':c.contactPref==='phone'?'📱 Phone':' 💬 Chat'}</div>`:''}
               ${c.referredTo?`<div><strong>Referred to:</strong> ${_esc(c.referredTo)}</div>`:''}
               ${c.meetScheduledAt?`<div><strong>Meet scheduled by:</strong> ${_esc(c.meetScheduledBy||'Guidance')} on ${new Date(c.meetScheduledAt).toLocaleDateString()}</div>`:''}

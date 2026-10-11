@@ -39,6 +39,7 @@ The updated `firestore.rules` already allows anonymous students to see only thei
 - `HELP_CONTACTS.school` — the guidance office's phone number, room and hours shown on the help screen (phone is blank now).
 - `HELP_CONTACTS.lines` — hotline numbers. Checked October 2026; re-check them once a year.
 - `IDLE_LIMIT_MIN` — minutes before an idle session is signed out (students 15, staff 30).
+- `STRANDS` (near the top of `app.js`) — the Senior High strands your school offers (asked only for Grades 11 and 12). Set to STEM, ABM, HUMSS, GAS, TVL; change the list if yours differ.
 - `OVERDUE_MIN` — how long a High (30 min) or Medium (4 h) item may wait before counselors are reminded.
 
 ## What was added in v9
@@ -67,6 +68,19 @@ mostly in English; attachments still live inside Firestore documents (now much s
 - **Server-side reminders** — `api/remind.js`.
 
 Also editable near the top of the v10 section in `app.js`: `SCHOOL_HOURS` and `DEFAULT_TEMPLATES`.
+
+## What was added in v12
+
+- **Grade level and "How would you like to be helped?" on the Postings form.** Chat stays a normal posting (the grade is saved with it and shown to staff). Google Meet, Face to face or Phone call is filed as a **consultation request** instead, because scheduling, open times and reminders live on the Consultations page. The student is taken there after sending.
+- **The grade is remembered** per account on the device (and picked up from the student's earlier requests on a new device), so it is asked once. It can be changed on either form.
+
+## What was added in v13 (matches the research paper)
+
+- **Grade 7 to 12**, as in the paper's Population of the Study. Both student forms use the same six grade buttons.
+- **Demographic profile from the paper: grade, strand, age.** Strand is asked only when Grade 11 or 12 is chosen. Strand and age are optional, so an anonymous report cannot be narrowed down to one student. All three are remembered per account on the device.
+- **Counselors** see a line like "Grade 12 · STEM · 17 yrs" on each card and can filter consultations by grade and strand.
+- **Monthly report** shows counts by grade level, by strand and by age, and the CSV has Strand and Age columns.
+- Landing page and About text use the paper's title wording.
 
 ## Server-side reminders — optional setup
 `/api/remind` emails and pushes the guidance office about High (30 min) and Medium (4 h) items nobody has answered,
