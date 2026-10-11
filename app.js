@@ -274,6 +274,14 @@ async function detectRiskAI(text) {
     const parsed = await response.json();
     if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
       parsed.flagged = (typeof parsed.flagged === 'boolean') ? parsed.flagged : (parsed.score >= 3 || parsed.level !== 'Low');
+      // Hard floor: a threat to harm others is ALWAYS High, whatever the AI says
+      if (detectThreatToOthers(text)) {
+        parsed.level = 'High';
+        parsed.score = Math.max(parsed.score, 16);
+        parsed.flagged = true;
+        parsed.reasons = [...new Set([...(parsed.reasons || []), 'Threat of violence against others (A4)'])];
+        return parsed;
+      }
       // Safety net: if the local rules see a High risk but the AI says Low, never let it pass silently
       if (regexRisk.level === 'High' && (parsed.level === 'Low' || parsed.level === 'Low-Medium')) {
         parsed.level = 'Medium';
@@ -297,12 +305,34 @@ function detectRisk(text) {
   return detectRiskRegex(text);
 }
 
+function detectThreatToOthers(text) {
+  const t = String(text || '').toLowerCase();
+  const patterns = [
+    // English: stated intent to harm others ("myself" is excluded - that is self-harm, handled elsewhere)
+    /\b(i|we)\s*(will|'ll|'?m going to|am going to|'?m gonna|am gonna|gonna|going to|want to|wanna|plan to|am planning to|'?m planning to|should|might|could|can)\s+(kill|murder|shoot|stab|massacre|slaughter|bomb|blow up|burn down|attack|hurt|harm|beat up|rape|poison)\b(?!\s*(my ?self|it\b|this (exam|test|quiz)|that (exam|test|quiz)|the (exam|test|quiz)))/i,
+    /\b(kill|murder|shoot|stab|massacre|slaughter)\s+(all|every ?one|every ?body|them|him|her|you|some ?one|some ?body|any ?one|students?|teachers?|people|classmates?|kids|everyone)\b/i,
+    /\b(shoot(ing)? up|bomb(ing)?|blow(ing)? up|burn(ing)? down|attack(ing)?)\s+(the |this |our |my )?(school|campus|classroom|class|canteen|gym|building)\b/i,
+    /\bschool shooting\b|\bmass (shooting|murder|killing)\b|\bmake them pay\b/i,
+    // Tagalog / Taglish
+    /\b(papatayin|patayin|susugatan|sasaksakin|sasaksak|babarilin|bubugbugin|sasaktan|sisirain|pasasabugin)\s+ko\b(?!\s+(na\s+)?(ang\s+)?(sarili|sarili ko))/i,
+    /\b(papatay|mamamatay[- ]?tao|mamamaril|mamaril|manaksak|manakit|mananakit|pumatay)\b(?!\s+ng\s+sarili)/i,
+    /\bpapatay\s+(ako|ng)\b/i,
+  ];
+  return patterns.some(p => p.test(t));
+}
+
 function detectRiskRegex(text) {
   if (!text) return { score: 0, level: "Low", flagged: false, reasons: [] };
 
   const t = text.toLowerCase().trim();
   let score = 0;
   let reasons = [];
+
+  // === THREAT TO OTHERS (homicidal ideation) — always High ===
+  if (detectThreatToOthers(t)) {
+    score += 14;
+    reasons.push('Threat of violence against others (A4)');
+  }
 
   // === HIGH RISK: Direct suicidal / homicidal intent ===
   const highRiskPatterns = [
