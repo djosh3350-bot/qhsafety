@@ -2142,7 +2142,7 @@ function renderConsultChatMsg(m, c) {
   ${showLandingSettings?`<div style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);padding:16px" onclick="if(event.target===this){showLandingSettings=false;render()}"><div class="fade-in" style="background:${c.surface_color};border:1px solid ${c.text_color}14;border-radius:20px;padding:24px;width:360px;max-width:100%;box-shadow:0 24px 60px rgba(0,0,0,0.25)"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px"><h2 style="font-weight:700;font-size:18px;color:${c.text_color};margin:0">${tr('settings')}</h2><button onclick="showLandingSettings=false;render()" aria-label="Close" style="width:32px;height:32px;border-radius:50%;background:${c.text_color}12;display:flex;align-items:center;justify-content:center;color:${c.text_color}"><i data-lucide="x" style="width:16px;height:16px"></i></button></div><div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-radius:14px;background:${c.text_color}07;margin-bottom:12px"><div style="display:flex;align-items:center;gap:12px"><i data-lucide="${on?'moon':'sun'}" style="width:18px;height:18px;color:${c.text_color}"></i><div><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('darkMode')}</div><div style="font-size:11px;color:${c.text_color}88;margin-top:1px">${on?'On':'Off'}</div></div></div><button role="switch" aria-checked="${on}" aria-label="${tr('darkMode')}" onclick="darkMode=!darkMode;localStorage.setItem('qh_dark_mode',darkMode);render()" class="qh-switch ${on?'on':''}"><span></span></button></div><div style="padding:14px 16px;border-radius:14px;background:${c.text_color}07"><div style="display:flex;align-items:center;gap:12px;margin-bottom:12px"><i data-lucide="languages" style="width:18px;height:18px;color:${c.text_color}"></i><div style="font-weight:600;font-size:14px;color:${c.text_color}">${tr('langSetting')}</div></div><div style="display:flex;gap:8px">${[['en','English'],['tl','Filipino']].map(l=>`<button onclick="appLang='${l[0]}';localStorage.setItem('qh_lang','${l[0]}');render()" style="flex:1;padding:10px 0;border-radius:10px;font-weight:700;font-size:13px;text-align:center;border:2px solid ${appLang===l[0]?c.primary_action_color:'transparent'};background:${appLang===l[0]?c.primary_action_color+'22':'transparent'};color:${c.text_color}">${l[1]}</button>`).join('')}</div></div></div></div>`:''}
   <section class="flex flex-col items-center justify-center text-center px-6 hero fade-in">
     <div class="inline-block px-3 py-1 rounded-full text-xs font-semibold mb-6 mono" style="background:${c.secondary_action_color}33;color:${c.text_color}">School Safety Platform</div>
-    <div class="mb-4">${logoMark(72, darkMode)}</div>
+    <div class="mb-4">${logoMark(88, darkMode)}</div>
     <h1 class="font-bold leading-tight mb-4 hero-title" style="color:${c.text_color}"><span style="color:${darkMode?c.primary_action_color:'#f9a825'}">QH</span>safety</h1>
     <p class="max-w-lg mb-8" style="font-size:${fs}px;color:${c.text_color}aa">${c.hero_subtitle}</p>
     ${loginError?`<div class="p-3 rounded-lg mb-6 text-sm max-w-sm w-full" role="alert" style="background:#fdecea;color:#b71c1c;border:1px solid #ef9a9a">${loginError}</div>`:''}
@@ -2279,11 +2279,9 @@ function renderConsultChatMsg(m, c) {
 
     // ── LOGO ── a shield with a speech bubble inside: "a safe place to speak up"
     function logoMark(size, onDark) {
-      const shield = onDark ? '#ffee58' : '#2c3e50', bubble = onDark ? '#2c3e50' : '#ffee58';
-      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 48 48" aria-hidden="true" style="flex-shrink:0;display:block">' +
-        '<path d="M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z" fill="' + shield + '" stroke="' + shield + '" stroke-width="3" stroke-linejoin="round"/>' +
-        '<path d="M17.5 14.5h13a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-5.2l-5.3 4.6V28.5h-2.5a4 4 0 0 1-4-4v-6a4 4 0 0 1 4-4Z" fill="' + bubble + '"/>' +
-        '<circle cx="19.5" cy="21.5" r="1.6" fill="' + shield + '"/><circle cx="24" cy="21.5" r="1.6" fill="' + shield + '"/><circle cx="28.5" cy="21.5" r="1.6" fill="' + shield + '"/></svg>';
+      // flat QH shield: navy with yellow lettering on light backgrounds, inverted on dark ones
+      const inner = onDark ? "<path d=\"M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z\" fill=\"#ffee58\" stroke=\"#ffee58\" stroke-width=\"3\" stroke-linejoin=\"round\"/><path d=\"M24 6.9 37.6 11.9v10.6c0 8.5-5.5 15.3-13.6 18.6-8.1-3.3-13.6-10.1-13.6-18.6V11.9Z\" fill=\"none\" stroke=\"#2c3e50\" stroke-width=\"1.1\" stroke-linejoin=\"round\" opacity=\".5\"/><g fill=\"none\" stroke=\"#2c3e50\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"18\" cy=\"21.9\" rx=\"4.2\" ry=\"5.1\"/><path d=\"M19.9 24.3l2.5 3\"/><path d=\"M27.2 17.1v9.6M34.2 17.1v9.6M27.2 21.9h7\"/></g>" : "<path d=\"M24 3.5 40.5 9.6v12.9c0 10.2-6.7 18.3-16.5 22-9.8-3.7-16.5-11.8-16.5-22V9.6Z\" fill=\"#2c3e50\" stroke=\"#2c3e50\" stroke-width=\"3\" stroke-linejoin=\"round\"/><path d=\"M24 6.9 37.6 11.9v10.6c0 8.5-5.5 15.3-13.6 18.6-8.1-3.3-13.6-10.1-13.6-18.6V11.9Z\" fill=\"none\" stroke=\"#ffee58\" stroke-width=\"1.1\" stroke-linejoin=\"round\" opacity=\".5\"/><g fill=\"none\" stroke=\"#ffee58\" stroke-width=\"2.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><ellipse cx=\"18\" cy=\"21.9\" rx=\"4.2\" ry=\"5.1\"/><path d=\"M19.9 24.3l2.5 3\"/><path d=\"M27.2 17.1v9.6M34.2 17.1v9.6M27.2 21.9h7\"/></g>";
+      return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 48 48" role="img" aria-label="QHsafety logo" style="flex-shrink:0;display:block">' + inner + '</svg>';
     }
     function logoLockup(size, onDark) {
       const ink = onDark ? '#fff' : config.text_color;
@@ -2926,6 +2924,45 @@ function renderConsultChatMsg(m, c) {
       const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       let n; while ((n = w.nextNode())) { const raw = n.nodeValue, key = raw.trim(); if (key && TL_UI[key]) n.nodeValue = raw.replace(key, TL_UI[key]); }
       root.querySelectorAll('[placeholder],[aria-label]').forEach(el => { ['placeholder', 'aria-label'].forEach(a => { const v = el.getAttribute(a); if (v && TL_UI[v]) el.setAttribute(a, TL_UI[v]); }); });
+    }
+
+    // ── SERIOUS CASES SUMMARY (counselor dashboard) ── who needs attention today / this week / this month
+    let severeRange = 'day';
+    function severeSummary() {
+      if (currentRole !== 'guidance') return '';
+      const c = config, now = Date.now();
+      const since = severeRange === 'day' ? dayStart(now) : severeRange === 'week' ? dayStart(now - 6 * 86400000) : dayStart(now - 29 * 86400000);
+      const rows = [];
+      postings.forEach(p => { if (p.timestamp >= since && (p.riskLevel === 'High' || p.riskLevel === 'Medium')) rows.push({ i: p, kind: 'p', title: p.title }); });
+      consultationPostings.forEach(x => { if (x.timestamp >= since && (x.riskLevel === 'High' || x.riskLevel === 'Medium')) rows.push({ i: x, kind: 'c', title: x.reason }); });
+      const byStudent = new Map();
+      rows.forEach(r => { const k = r.i.authorId || r.i.author || '?'; if (!byStudent.has(k)) byStudent.set(k, []); byStudent.get(k).push(r); });
+      const students = Array.from(byStudent.entries()).map(([who, list]) => {
+        list.sort((x, y) => y.i.timestamp - x.i.timestamp);
+        const high = list.filter(r => r.i.riskLevel === 'High').length;
+        const waiting = list.filter(r => needsReply(r.i, r.kind)).length;
+        const reasons = []; list.forEach(r => (r.i.reasons || []).forEach(x => { const t = x.replace(/\s*\(A4\)/, ''); if (reasons.indexOf(t) < 0) reasons.push(t); }));
+        return { who, list, high, waiting, reasons, latest: list[0].i.timestamp, grade: (list.find(r => r.i.gradeLevel) || { i: {} }).i.gradeLevel || '' };
+      }).sort((x, y) => (y.high > 0) - (x.high > 0) || y.waiting - x.waiting || y.latest - x.latest);
+      const highItems = rows.filter(r => r.i.riskLevel === 'High').length, waitingAll = rows.filter(r => needsReply(r.i, r.kind)).length;
+      const label = { day: 'Today', week: 'Last 7 days', month: 'Last 30 days' };
+      const tile = (n, text, col) => '<div class="sev-tile" style="background:' + c.text_color + '08"><div class="sev-num" style="color:' + (n ? col : c.text_color + '88') + '">' + n + '</div><div class="sev-lab" style="color:' + c.text_color + 'aa">' + text + '</div></div>';
+      const name = (w) => String(w).startsWith('anon_') ? 'Anonymous student' : _esc(w);
+      const when = (t) => new Date(t).toLocaleString('en-US', severeRange === 'day' ? { hour: 'numeric', minute: '2-digit' } : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+      return '<div data-key="severe" class="p-6 rounded-xl mb-6" style="background:' + c.surface_color + ';border:1px solid ' + c.text_color + '11">' +
+        '<div class="flex items-center justify-between gap-3 flex-wrap mb-4"><div class="flex items-center gap-2"><i data-lucide="alert-triangle" style="width:18px;height:18px;color:#d32f2f"></i><h3 class="font-bold" style="color:' + c.text_color + '">Students with serious concerns</h3></div>' +
+        '<div class="filter-chips" role="group" aria-label="Period">' + ['day', 'week', 'month'].map(k => '<button aria-pressed="' + (severeRange === k) + '" class="filter-chip' + (severeRange === k ? ' on' : '') + '" onclick="severeRange=\'' + k + '\';render()">' + label[k] + '</button>').join('') + '</div></div>' +
+        '<div class="sev-tiles">' + tile(students.length, students.length === 1 ? 'student' : 'students', c.text_color) + tile(highItems, 'high-risk ' + (highItems === 1 ? 'item' : 'items'), '#d32f2f') + tile(rows.length - highItems, 'medium-risk ' + (rows.length - highItems === 1 ? 'item' : 'items'), '#e65100') + tile(waitingAll, 'still waiting for a reply', '#d32f2f') + '</div>' +
+        (students.length ? '<div class="sev-list">' + students.slice(0, 12).map(st => { const first = st.list[0];
+          return '<div class="sev-row" style="border-color:' + c.text_color + '14"><div style="min-width:0;flex:1 1 220px"><div class="flex items-center gap-2 flex-wrap"><span class="sev-level" style="background:' + (st.high ? '#d32f2f' : '#e65100') + '">' + (st.high ? 'High' : 'Medium') + '</span><span class="font-semibold text-sm" style="color:' + c.text_color + ';overflow-wrap:anywhere">' + name(st.who) + '</span>' + (st.grade ? '<span class="text-xs" style="color:' + c.text_color + '88">' + _esc(st.grade) + '</span>' : '') + '</div>' +
+            '<div class="text-xs mt-1" style="color:' + c.text_color + 'aa;overflow-wrap:anywhere">' + st.list.length + (st.list.length === 1 ? ' item' : ' items') + ' · latest ' + when(st.latest) + ' · “' + _esc(String(first.title).slice(0, 60)) + '”</div>' +
+            (st.reasons.length ? '<div class="text-xs mt-1" style="color:' + (darkMode ? '#ef9a9a' : '#b71c1c') + ';overflow-wrap:anywhere">' + _esc(st.reasons.slice(0, 3).join(' · ')) + '</div>' : '') + '</div>' +
+            '<div class="flex gap-2 items-center flex-wrap">' + (st.waiting ? '<span class="status-chip" style="color:#b71c1c;border-color:#ef9a9a">Needs reply</span>' : '<span class="status-chip" style="color:' + (darkMode ? '#a5d6a7' : '#2e7d32') + ';border-color:#a5d6a7">Replied</span>') +
+            '<button class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:' + c.text_color + '14;color:' + c.text_color + '" onclick="openHistory(\'' + first.kind + '\',\'' + first.i.id + '\')">History</button>' +
+            '<button class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:' + c.primary_action_color + ';color:#2c3e50" onclick="staffFilter={risk:\'attention\',needsReply:false,mine:false,grade:\'\',q:\'\'};goTo(\'' + (first.kind === 'c' ? 'Consultations' : 'Postings') + '\')">Open</button></div></div>'; }).join('') +
+          (students.length > 12 ? '<div class="text-xs mt-2" style="color:' + c.text_color + '88">and ' + (students.length - 12) + ' more — see the Problems page.</div>' : '') + '</div>'
+          : '<p class="text-sm" style="color:' + c.text_color + '99">No Medium or High risk submissions ' + (severeRange === 'day' ? 'today' : 'in the ' + label[severeRange].toLowerCase()) + '.</p>') +
+        '<p class="text-xs mt-3" style="color:' + c.text_color + '77">Based on the 150 most recent postings and consultations. Risk levels come from the automatic check — read the message before acting on a label.</p></div>';
     }
 
     function renderDashboard() {
@@ -3745,6 +3782,7 @@ if(activeSidebarItem==='Postings') {
       // ── DASHBOARD ──
       return `
 ${overdueBanner()}
+${severeSummary()}
 ${followUpPanel()}
 ${moodCard()}
 <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">

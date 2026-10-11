@@ -104,5 +104,5 @@ To change the rules, edit `risk-engine.js`, add a sentence to `tests/corpus.js`,
 - API routes require a signed-in Firebase user (`Authorization: Bearer <idToken>`); mass broadcasts,
   stats and student emails are staff-only.
 - `OneSignalSDKWorker.js` must stay at the site root (no rewrite needed).
-- When you deploy a change, bump `?v=10` on the two script tags at the bottom of `index.html`.
+- When you deploy a change, bump `?v=11` on the two script tags at the bottom of `index.html`.
 - Icons: Lucide v0.263 (ISC License), inlined in `app.js`.
