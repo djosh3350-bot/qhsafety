@@ -1,5 +1,16 @@
 const { getUser, readBody } = require('./_auth');
 
+const THREAT_PATTERNS = [
+  /\b(i|we)\s*(will|'ll|'?m going to|am going to|'?m gonna|am gonna|gonna|going to|want to|wanna|plan to|am planning to|'?m planning to|should|might|could|can)\s+(kill|murder|shoot|stab|massacre|slaughter|bomb|blow up|burn down|attack|hurt|harm|beat up|rape|poison)\b(?!\s*(my ?self|it\b|this (exam|test|quiz)|that (exam|test|quiz)|the (exam|test|quiz)))/i,
+  /\b(kill|murder|shoot|stab|massacre|slaughter)\s+(all|every ?one|every ?body|them|him|her|you|some ?one|some ?body|any ?one|students?|teachers?|people|classmates?|kids|everyone)\b/i,
+  /\b(shoot(ing)? up|bomb(ing)?|blow(ing)? up|burn(ing)? down|attack(ing)?)\s+(the |this |our |my )?(school|campus|classroom|class|canteen|gym|building)\b/i,
+  /\bschool shooting\b|\bmass (shooting|murder|killing)\b|\bmake them pay\b/i,
+  /\b(papatayin|patayin|susugatan|sasaksakin|sasaksak|babarilin|bubugbugin|sasaktan|sisirain|pasasabugin)\s+ko\b(?!\s+(na\s+)?(ang\s+)?(sarili|sarili ko))/i,
+  /\b(papatay|mamamatay[- ]?tao|mamamaril|mamaril|manaksak|manakit|mananakit|pumatay)\b(?!\s+ng\s+sarili)/i,
+  /\bpapatay\s+(ako|ng)\b/i,
+];
+const hasThreat = (txt) => THREAT_PATTERNS.some(p => p.test(String(txt||'').toLowerCase()));
+
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -71,7 +82,7 @@ CATEGORY A — IMMEDIATE LIFE THREAT (score +10 each)
 A1. Active suicidal ideation — direct statements of wanting to die, kill oneself, end one's life
 A2. Suicide plan or method — mentions of specific methods, means, timing, or location
 A3. Active self-harm — currently cutting, burning, hitting, or injuring oneself
-A4. Homicidal ideation — wanting to hurt, kill, or seriously harm another person
+A4. Homicidal ideation or threats — ANY statement of wanting or intending to hurt, kill, shoot, stab, bomb or seriously harm other people, including threats against the school, classmates or teachers (e.g. \"I will kill all students\", \"papatayin ko kayo\"). This is NEVER profanity or venting: always score 14-20, level High
 A5. Immediate danger — student is in active danger right now (being attacked, abused, threatened)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -148,7 +159,8 @@ SPECIAL RULES
 - 2+ Category A items detected: multiply total score by 2
 - Any Category A + any Category B together: add +5 bonus
 - Cap final score at 20
-- Profanity or lewd words alone with NO distress: score must be 0
+- Threats of violence against others are NOT profanity: any threat to kill or harm others = level High, score at least 14, regardless of tone, capital letters, or \"joke lang\"
+- Profanity or lewd words alone with NO distress and NO threat: score must be 0
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SCORING SCALE
@@ -194,6 +206,13 @@ Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation.
     if (typeof parsed.score === 'number' && parsed.level && Array.isArray(parsed.reasons)) {
       parsed.score = Math.max(0, Math.min(Math.round(parsed.score), 20));
       if (typeof parsed.flagged !== 'boolean') parsed.flagged = parsed.score >= 3 || parsed.level !== 'Low';
+      // Hard floor: threats against others are always High, even if the model under-scores them
+      if (hasThreat(text)) {
+        parsed.level = 'High';
+        parsed.score = Math.max(parsed.score, 16);
+        parsed.flagged = true;
+        if (!parsed.reasons.some(r => /violence|homicid|A4/i.test(String(r)))) parsed.reasons.push('Threat of violence against others (A4)');
+      }
       return res.status(200).json(parsed);
     } else {
       throw new Error('Unexpected response shape from Groq');
