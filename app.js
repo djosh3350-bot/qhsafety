@@ -157,7 +157,7 @@
     const GRADES = [7, 8, 9, 10, 11, 12];                      // Junior and Senior High School, as in the paper
     const STRANDS = ['STEM', 'ABM', 'HUMSS', 'GAS', 'TVL'];    // EDIT: the strands your school offers (asked only for Grades 11 and 12)
     const isSHS = (g) => /^Grade (11|12)$/.test(g || '');
-    const AGE_MIN = 15, AGE_MAX = 21;                          // the last one is shown as "21+"
+    const AGE_MIN = 11, AGE_MAX = 21;                          // the last one is shown as "21+"
     const GRADE_RE = /^Grade (7|8|9|10|11|12)$/;
     let studentStrand = '', studentAge = 0, _profFor = null;
     function profGet(k) { try { return localStorage.getItem('qh_' + k + '_' + (currentUserEmail || 'guest')) || ''; } catch (e) { return ''; } }
@@ -2650,7 +2650,7 @@ function renderConsultChatMsg(m, c) {
       toast('Report downloaded (no names or message text included)', 'success');
     }
     function reportBars(title, obj, order, status) {
-      const c = config, keys = (order || Object.keys(obj).sort((a, b) => obj[b] - obj[a])).filter(k => obj[k]).slice(0, 8);
+      const c = config, keys = (order || Object.keys(obj).sort((a, b) => obj[b] - obj[a])).filter(k => obj[k]).slice(0, order ? 20 : 8);
       if (!keys.length) return '';
       const max = Math.max.apply(null, keys.map(k => obj[k]));
       const statusCol = { High: '#d32f2f', Medium: '#e65100', 'Low-Medium': '#b28900', Low: '#2e7d32' };
